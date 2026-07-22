@@ -93,7 +93,21 @@ class LLMTool:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                content = response.choices[0].message.content or ""
+
+                choice = response.choices[0] if response.choices else None
+                message = choice.message if choice else None
+
+                # 优先取 content，如果为空则尝试 reasoning_content（推理模型兼容）
+                content = ""
+                if message:
+                    content = getattr(message, "content", None) or ""
+                    # 推理模型（如 deepseek-r1）可能把结果放在 reasoning_content
+                    if not content.strip():
+                        reasoning = getattr(message, "reasoning_content", None) or ""
+                        if reasoning.strip():
+                            logger.info(f"LLM 使用 reasoning_content（推理模型模式）| model={model}")
+                            content = reasoning
+
                 usage = response.usage
                 if usage:
                     logger.info(
@@ -101,6 +115,10 @@ class LLMTool:
                         f"prompt_tokens={usage.prompt_tokens} | "
                         f"completion_tokens={usage.completion_tokens}"
                     )
+
+                if not content.strip():
+                    logger.warning(f"LLM 返回空内容 | model={model} | message={message}")
+
                 return content.strip()
 
             except Exception as e:

@@ -83,6 +83,8 @@ async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
 
 # ==================== 数据分析 Agent ====================
 
+# 数据分析Agent使用独立的路由器，避免与智能客服路由混淆
+analyst_router = APIRouter()
 nl2sql_service = NL2SQLService()
 
 
