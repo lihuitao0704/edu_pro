@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/edu_pro.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="搭建基础框架">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/config/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config/database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/model/entities.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/entities.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/model/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/schemas.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/utils/exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/utils/exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/utils/logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/utils/logger.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/utils/response.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/utils/response.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -14,8 +18,25 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="feature" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "lihuitao0704"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/lihuitao0704/edu_pro.git",
+    "accountId": "80e01530-5095-42ab-aea0-88215949251d"
+  }
+}]]></component>
   <component name="ProjectColorInfo"><![CDATA[{
   "associatedIndex": 6,
   "fromUser": false
@@ -49,7 +70,31 @@
       <option name="presentableId" value="Default" />
       <updated>1784683628332</updated>
     </task>
+    <task id="LOCAL-00001" summary="搭建基础框架">
+      <option name="closed" value="true" />
+      <created>1784684299485</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1784684299485</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="搭建基础框架" />
+    <option name="LAST_COMMIT_MESSAGE" value="搭建基础框架" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

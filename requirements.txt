@@ -1,0 +1,51 @@
+# ============================================================
+# 智能财富管家系统 - Python 依赖
+# 安装方式：pip install -r requirements.txt
+# ============================================================
+
+# Web 框架
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+sse-starlette>=2.0.0
+
+# 配置管理
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# 数据库
+sqlalchemy[asyncio]>=2.0.30
+aiomysql>=0.2.0
+pymysql>=1.1.0
+
+# Redis
+redis>=5.0.0
+
+# Neo4j 图数据库
+neo4j>=5.22.0
+
+# Milvus 向量数据库
+pymilvus>=2.4.0
+
+# 对象存储
+minio>=7.2.0
+
+# LLM & AI
+openai>=1.30.0
+langchain>=0.2.0
+langchain-openai>=0.1.0
+
+# 嵌入模型（本地备用）
+# sentence-transformers>=3.0.0
+
+# JWT 认证
+pyjwt>=2.8.0
+
+# 数据校验
+pydantic>=2.7.0
+
+# 定时任务（批量校准、漂移检测等）
+apscheduler>=3.10.0
+
+# 工具
+httpx>=0.27.0
+python-multipart>=0.0.9

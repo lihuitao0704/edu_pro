@@ -1,0 +1,58 @@
+"""画像 API 路由"""
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.config.database import get_db
+from app.service.profile_service import ProfileService
+from app.model.schemas import (
+    ProfileAssessRequest, ProfileUpdateRequest, ApiResponse,
+)
+from app.utils.response import success, error
+from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
+
+router = APIRouter()
+
+
+@router.get("/{customer_id}")
+async def get_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
+    """查询客户画像（Cache-Aside）"""
+    service = ProfileService(db)
+    profile = await service.get_profile(customer_id)
+    if not profile:
+        return error(404, f"客户 {customer_id} 的画像不存在")
+
+    return success(data={
+        "customer_id": profile.customer_id,
+        "risk_level": profile.risk_level,
+        "risk_score": profile.risk_score,
+        "confidence_score": str(profile.confidence_score) if profile.confidence_score else None,
+        "basic_score": str(profile.basic_score) if profile.basic_score else None,
+        "experience_score": str(profile.experience_score) if profile.experience_score else None,
+        "risk_pref_score": str(profile.risk_pref_score) if profile.risk_pref_score else None,
+        "behavior_score": str(profile.behavior_score) if profile.behavior_score else None,
+        "total_assets": str(profile.total_assets) if profile.total_assets else None,
+        "investment_experience": profile.investment_experience,
+        "annual_income_range": profile.annual_income_range,
+        "updated_at": str(profile.updated_at) if profile.updated_at else None,
+    })
+
+
+@router.put("/{customer_id}")
+async def update_profile(customer_id: int, req: ProfileUpdateRequest, db: AsyncSession = Depends(get_db)):
+    """增量更新客户画像标签"""
+    service = ProfileService(db)
+    result = await service.update_tags(customer_id, req.tags)
+    return success(data=result, message=f"已更新 {result['updated_tags']} 个标签")
+
+
+@router.post("/{customer_id}/assess")
+async def assess_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
+    """执行画像研判打分"""
+    service = ProfileService(db)
+    try:
+        result = await service.assess(customer_id)
+        return success(data=result.model_dump())
+    except ProfileNotFound as e:
+        return error(e.code, e.message)
+    except CircuitBreakerTriggered as e:
+        return error(e.code, e.message)
