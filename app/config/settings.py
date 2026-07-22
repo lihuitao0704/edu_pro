@@ -68,6 +68,8 @@ class LLMSettings(BaseSettings):
     openai_max_tokens: int = Field(default=2048, alias="OPENAI_MAX_TOKENS")
     openai_timeout: int = Field(default=30, alias="OPENAI_TIMEOUT")
     openai_max_retries: int = Field(default=3, alias="OPENAI_MAX_RETRIES")
+    # Ollama 本地嵌入模型
+    ollama_embed_url: str = Field(default="http://127.0.0.1:11434", alias="OLLAMA_EMBED_URL")
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
