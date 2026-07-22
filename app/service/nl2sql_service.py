@@ -5,8 +5,11 @@ NL2SQL 数据分析服务 — 自然语言 → SQL → 执行 → 解读
 from app.config.database import SessionLocal
 from app.tool.llm_client import LLMClient
 from app.model import entities
+from app.config.redis_client import get_redis_client
 from sqlalchemy import text
 from typing import List, Dict, Optional, Tuple
+import hashlib
+import json
 import re
 import logging
 
@@ -196,9 +199,23 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
             db.close()
 
     def query_and_explain(self, query: str) -> Dict:
-        """完整流程：生成 SQL → 校验 → 执行 → 解读"""
+        """完整流程：生成 SQL → 校验 → 执行 → 解读（带 Redis 缓存）"""
         logger.info(f"===== NL2SQL 完整流程开始 =====")
         logger.info(f"用户问题: {query}")
+
+        # 生成缓存 key：nl2sql:{md5(query)}
+        cache_key = f"nl2sql:{hashlib.md5(query.encode('utf-8')).hexdigest()}"
+
+        # 尝试从 Redis 读取缓存
+        try:
+            r = get_redis_client()
+            if r:
+                cached = r.get(cache_key)
+                if cached:
+                    logger.info(f"命中缓存: {cache_key}")
+                    return json.loads(cached)
+        except Exception as e:
+            logger.warning(f"Redis 读取缓存失败（不影响查询）: {e}")
 
         try:
             sql = self.generate_sql(query)
@@ -225,14 +242,24 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
 
             explanation = self.llm.explain_result(query, result["rows"])
 
-            logger.info(f"===== NL2SQL 完整流程完成 =====")
-            return {
+            response = {
                 "success": True,
                 "sql": sql,
                 "query_result": result["rows"],
                 "explanation": explanation,
                 "error": None,
             }
+
+            # 写入 Redis 缓存，TTL=600 秒
+            try:
+                if r:
+                    r.setex(cache_key, 600, json.dumps(response, ensure_ascii=False, default=str))
+                    logger.info(f"写入缓存: {cache_key} (TTL=600s)")
+            except Exception as e:
+                logger.warning(f"Redis 写入缓存失败（不影响查询）: {e}")
+
+            logger.info(f"===== NL2SQL 完整流程完成 =====")
+            return response
         except Exception as e:
             logger.error(f"NL2SQL 流程异常: {e}")
             return {

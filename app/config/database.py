@@ -155,3 +155,29 @@ def get_minio_client():
             secure=settings.minio.secure,
         )
     return _minio_client
+
+
+# ==================== MySQL 同步引擎（NL2SQL 用） ====================
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+_sync_url = (
+    f"mysql+pymysql://{settings.mysql.user}:{settings.mysql.password}"
+    f"@{settings.mysql.host}:{settings.mysql.port}/{settings.mysql.database}"
+    f"?charset=utf8mb4"
+)
+
+sync_engine = create_engine(
+    _sync_url,
+    pool_size=settings.mysql.pool_size,
+    pool_recycle=settings.mysql.pool_recycle,
+    echo=settings.mysql.echo,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=sync_engine,
+)

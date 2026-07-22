@@ -17,14 +17,19 @@ class LLMClient:
     def __init__(self):
         """初始化 LLM 客户端，从环境变量读取 API Key"""
         api_key = os.getenv("OPENAI_API_KEY", "")
+        self.model = os.getenv("OPENAI_MODEL_CHAT", "deepseek-v4-pro")
+        self.base_url = os.getenv("OPENAI_BASE_URL", None)
         if api_key:
             self.mock_mode: bool = False
-            self.client = OpenAI(api_key=api_key)
-            logger.info("LLMClient 初始化完成，使用 OpenAI API")
+            client_kwargs = {"api_key": api_key}
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+            self.client = OpenAI(**client_kwargs)
+            logger.info(f"LLMClient 初始化完成，模型: {self.model}，Base URL: {self.base_url or '默认'}")
         else:
             self.mock_mode: bool = True
             self.client = None
-            print("⚠️ 未配置OpenAI API Key，使用模拟模式")
+            print("[WARN] 未配置OpenAI API Key，使用模拟模式")
             logger.warning("未配置OpenAI API Key，使用模拟模式")
 
     def chat(
@@ -47,7 +52,7 @@ class LLMClient:
             try:
                 logger.info(f"LLM 调用中... (第 {attempt + 1}/{max_retries} 次)")
                 response = self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model=self.model,
                     messages=messages,
                     temperature=0.3,
                 )
@@ -71,7 +76,17 @@ class LLMClient:
         if self.mock_mode:
             return "SELECT * FROM `fin_product` WHERE `status` = '在售'"
 
-        prompt = f"""你是一个SQL专家。根据以下表结构，将自然语言转为SQL语句。
+        # 兜底：schema 为空或太短
+        if not schema_text or len(schema_text.strip()) < 10:
+            logger.warning("schema_text 为空或过短，返回兜底 SQL")
+            return "SELECT 1"
+
+        logger.info(f"生成 SQL，用户查询: {user_query}")
+        logger.debug(f"schema_text 前 200 字符: {schema_text[:200]}")
+
+        prompt = f"""请直接返回 SQL 语句，不要返回任何解释、问候语或对话内容。只返回 SQL。
+
+你是一个SQL专家。根据以下表结构，将自然语言转为SQL语句。
 
 【表结构】
 {schema_text}
@@ -94,9 +109,22 @@ SQL：SELECT `product_type`, AVG(`expected_return`) FROM `fin_product` GROUP BY 
 用户问：{user_query}
 SQL："""
 
-        logger.info(f"生成 SQL，用户查询: {user_query}")
         result = self.chat(prompt)
+        # 清理 markdown 代码块标记
         result = result.replace("```sql", "").replace("```", "").strip()
+
+        # 强制提取 SQL：如果结果不以 SELECT 开头，尝试正则提取
+        if not result.upper().startswith("SELECT"):
+            logger.warning(f"LLM 未返回纯 SQL，尝试正则提取。原始返回前 100 字符: {result[:100]}")
+            import re as _re
+            match = _re.search(r"(SELECT\b[\s\S]*?)(?:;|\s*$)", result, _re.IGNORECASE)
+            if match:
+                result = match.group(1).strip() + ";"
+                logger.info(f"正则提取成功: {result[:100]}")
+            else:
+                logger.error("无法从 LLM 返回值中提取 SQL，返回兜底")
+                return "SELECT 1"
+
         logger.info(f"生成 SQL: {result}")
         return result
 

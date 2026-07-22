@@ -86,7 +86,7 @@ async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
 nl2sql_service = NL2SQLService()
 
 
-@router.post("/chat/analyst", response_model=ApiResponse, tags=["数据分析Agent"])
+@router.post("/analyst", response_model=ApiResponse, tags=["数据分析Agent"])
 async def chat_analyst(request: QueryRequest):
     """
     数据分析Agent对话接口
@@ -122,7 +122,7 @@ async def chat_analyst(request: QueryRequest):
         )
 
 
-@router.get("/chat/session/{session_id}/history", tags=["数据分析Agent"])
+@router.get("/analyst/session/{session_id}/history", tags=["数据分析Agent"])
 async def get_session_history(session_id: str):
     """获取会话历史（预留接口）"""
     return success(
