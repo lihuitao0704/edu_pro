@@ -1,20 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="搭建基础框架">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/database.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/rules_config.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/circuit_breaker.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/circuit_breaker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/confidence.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/confidence.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/dimension_calculator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/dimension_calculator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/score_mapper.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/score_mapper.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/memory/long_term.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/long_term.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/memory/session_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/session_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/advisor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/advisor_service.py" afterDir="false" />
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="">
+      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/model/entities.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/entities.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -36,6 +26,31 @@
     &quot;assignee&quot;: &quot;lihuitao0704&quot;
   }
 }</component>
+  <component name="GitToolBoxStore">
+    <option name="recentBranches">
+      <RecentBranches>
+        <option name="branchesForRepo">
+          <list>
+            <RecentBranchesForRepo>
+              <option name="branches">
+                <list>
+                  <RecentBranch>
+                    <option name="branchName" value="feature-lhg" />
+                    <option name="lastUsedInstant" value="1784700775" />
+                  </RecentBranch>
+                  <RecentBranch>
+                    <option name="branchName" value="master" />
+                    <option name="lastUsedInstant" value="1784700774" />
+                  </RecentBranch>
+                </list>
+              </option>
+              <option name="repositoryRootUrl" value="file://$PROJECT_DIR$" />
+            </RecentBranchesForRepo>
+          </list>
+        </option>
+      </RecentBranches>
+    </option>
+  </component>
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/lihuitao0704/edu_pro.git&quot;,
@@ -51,15 +66,16 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "feature-lhg",
+    "last_opened_file_path": "C:/Users/Windows/Desktop/edu_pro"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\edu_pro\app\engine" />

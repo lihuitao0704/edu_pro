@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能财富管家 - Phase 4</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+:root {
+  --primary: #4f46e5;
+  --primary-light: #818cf8;
+  --primary-bg: #eef2ff;
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --text-secondary: #64748b;
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.07), 0 4px 6px rgba(0,0,0,.04);
+  --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+
+/* ====== Header ====== */
+.header { background: white; border-bottom: 1px solid var(--border); padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.header-left { display: flex; align-items: center; gap: 16px; }
+.logo { font-size: 18px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+.logo svg { width: 28px; height: 28px; }
+.header-badge { background: var(--primary-bg); color: var(--primary); padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+.header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-secondary); }
+.header-status { display: flex; align-items: center; gap: 5px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+/* ====== Nav Tabs ====== */
+.nav-tabs { background: white; border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; gap: 0; overflow-x: auto; }
+.nav-tab { padding: 12px 20px; font-size: 14px; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all .2s; display: flex; align-items: center; gap: 6px; }
+.nav-tab:hover { color: var(--primary); background: var(--primary-bg); }
+.nav-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.nav-tab .tab-icon { font-size: 16px; }
+
+/* ====== Layout ====== */
+.main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* ====== Cards ====== */
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 16px; }
+.card-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.card-body { padding: 20px; }
+
+/* ====== Dashboard ====== */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.stat-card { background: white; border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 16px; }
+.stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.stat-icon.blue { background: #dbeafe; color: #2563eb; }
+.stat-icon.green { background: #d1fae5; color: #059669; }
+.stat-icon.purple { background: #ede9fe; color: #7c3aed; }
+.stat-icon.orange { background: #ffedd5; color: #ea580c; }
+.stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+/* ====== Graph ====== */
+#graphChart { width: 100%; height: 500px; }
+.graph-controls { display: flex; gap: 8px; align-items: center; }
+.graph-controls select { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; outline: none; }
+.graph-controls select:focus { border-color: var(--primary); }
+
+/* ====== Buttons ====== */
+.btn { padding: 8px 16px; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { background: #4338ca; }
+.btn-outline { background: white; border: 1px solid var(--border); color: var(--text); }
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-success { background: var(--success); color: white; }
+.btn-danger { background: var(--danger); color: white; }
+
+/* ====== Forms ====== */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group.full { grid-column: 1 / -1; }
+.form-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.form-input, .form-select, .form-textarea {
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+  outline: none; transition: border-color .15s; background: white; font-family: inherit;
+}
+.form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,.1); }
+.form-textarea { resize: vertical; min-height: 80px; }
+
+/* ====== Chat ====== */
+.chat-container { display: flex; flex-direction: column; height: calc(100vh - 200px); min-height: 500px; }
+.chat-toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: #fafbfc; }
+.chat-toolbar-label { font-size: 12px; color: var(--text-secondary); }
+.role-chip { padding: 4px 12px; border: 1px solid var(--border); border-radius: 20px; background: white; cursor: pointer; font-size: 12px; transition: all .15s; }
+.role-chip.active { background: var(--primary); color: white; border-color: var(--primary); }
+.role-chip:hover:not(.active) { border-color: var(--primary-light); }
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px; }
+.chat-msg { margin-bottom: 16px; display: flex; gap: 10px; max-width: 85%; }
+.chat-msg.user { margin-left: auto; flex-direction: row-reverse; }
+.chat-msg-avatar { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; font-weight: 600; }
+.chat-msg.user .chat-msg-avatar { background: var(--primary); color: white; }
+.chat-msg.bot .chat-msg-avatar { background: var(--primary-bg); color: var(--primary); }
+.chat-msg-bubble { padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+.chat-msg.user .chat-msg-bubble { background: var(--primary); color: white; border-bottom-right-radius: 4px; }
+.chat-msg.bot .chat-msg-bubble { background: white; border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.chat-msg-meta { font-size: 11px; color: var(--text-secondary); margin-top: 6px; padding-top: 6px; border-top: 1px solid #f0f0f0; }
+.chat-input-area { display: flex; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--border); background: #fafbfc; }
+.chat-input-area input { flex: 1; padding: 10px 16px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; outline: none; }
+.chat-input-area input:focus { border-color: var(--primary); }
+.chat-input-area button { padding: 10px 24px; background: var(--primary); color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.chat-input-area button:hover { background: #4338ca; }
+.chat-input-area button:disabled { background: #94a3b8; cursor: not-allowed; }
+.chat-hints { padding: 8px 16px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--border); }
+.hint-chip { padding: 4px 10px; background: white; border: 1px solid var(--border); border-radius: 16px; font-size: 11px; color: var(--text-secondary); cursor: pointer; transition: all .15s; }
+.hint-chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-bg); }
+
+/* ====== Test Panel ====== */
+.test-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.test-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: all .15s; background: white; display: flex; align-items: center; gap: 12px; }
+.test-card:hover { border-color: var(--primary); box-shadow: var(--shadow); }
+.test-card.running { border-color: var(--primary); background: var(--primary-bg); }
+.test-card .test-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.test-card .test-info { flex: 1; }
+.test-card .test-name { font-size: 13px; font-weight: 600; }
+.test-card .test-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.test-card .test-status { font-size: 18px; }
+
+.result-list { margin-top: 16px; }
+.result-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; margin-bottom: 6px; font-size: 13px; }
+.result-row.ok { background: #f0fdf4; border-left: 3px solid var(--success); }
+.result-row.fail { background: #fef2f2; border-left: 3px solid var(--danger); }
+.result-row.running { background: var(--primary-bg); border-left: 3px solid var(--primary); }
+.result-row .result-name { font-weight: 500; flex: 1; }
+.result-row .result-msg { color: var(--text-secondary); font-size: 12px; }
+
+.summary-bar { display: flex; gap: 20px; padding: 14px 20px; background: white; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 16px; }
+.summary-item { text-align: center; }
+.summary-num { font-size: 24px; font-weight: 700; }
+.summary-num.green { color: var(--success); }
+.summary-num.red { color: var(--danger); }
+.summary-num.blue { color: var(--primary); }
+.summary-label { font-size: 12px; color: var(--text-secondary); }
+
+/* ====== Tables ====== */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { text-align: left; padding: 10px 12px; background: #f8fafc; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+.data-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+.data-table tr:hover td { background: #fafbfc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+.badge-blue { background: #dbeafe; color: #1d4ed8; }
+.badge-green { background: #d1fae5; color: #047857; }
+.badge-red { background: #fee2e2; color: #b91c1c; }
+.badge-yellow { background: #fef3c7; color: #92400e; }
+
+/* ====== Loading ====== */
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e2e8f0; border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-overlay { display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--text-secondary); gap: 10px; }
+
+/* ====== Responsive ====== */
+@media (max-width: 1024px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ====== Header ====== -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">
+      <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" fill="#4f46e5"/><path d="M10 16l4 4 8-8" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      智能财富管家
+    </div>
+    <span class="header-badge">Phase 4</span>
+  </div>
+  <div class="header-right">
+    <div class="header-status"><span class="status-dot"></span> <span id="statusText">服务运行中</span></div>
+    <span>|</span>
+    <span id="llmModel">--</span>
+  </div>
+</div>
+
+<!-- ====== Nav ====== -->
+<div class="nav-tabs">
+  <div class="nav-tab active" onclick="switchPage('dashboard', this)"><span class="tab-icon">📊</span> 仪表盘</div>
+  <div class="nav-tab" onclick="switchPage('graph', this)"><span class="tab-icon">🔗</span> 知识图谱</div>
+  <div class="nav-tab" onclick="switchPage('operation', this)"><span class="tab-icon">⚡</span> 业务操作</div>
+  <div class="nav-tab" onclick="switchPage('chat', this)"><span class="tab-icon">💬</span> NL2API 对话</div>
+  <div class="nav-tab" onclick="switchPage('test', this)"><span class="tab-icon">✅</span> 接口测试</div>
+</div>
+
+<div class="main">
+
+<!-- ==================== Page 1: Dashboard ==================== -->
+<div class="page active" id="page-dashboard">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">📦</div>
+      <div><div class="stat-value" id="statNodes">--</div><div class="stat-label">图谱节点</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">🔗</div>
+      <div><div class="stat-value" id="statEdges">--</div><div class="stat-label">图谱关系</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon purple">📋</div>
+      <div><div class="stat-value" id="statProducts">--</div><div class="stat-label">在售产品</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon orange">⚡</div>
+      <div><div class="stat-value">8</div><div class="stat-label">业务接口</div></div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔗 知识图谱概览</div></div>
+      <div class="card-body"><div id="dashGraphChart" style="height:320px"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">📦 在售产品</div></div>
+      <div class="card-body" id="productList" style="max-height:320px;overflow-y:auto">
+        <div class="loading-overlay"><span class="spinner"></span> 加载中...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Page 2: Graph ==================== -->
+<div class="page" id="page-graph">
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">🔗 客户知识图谱可视化</div>
+      <div class="graph-controls">
+        <select id="graphCustomer" onchange="loadGraph()">
+          <option value="">选择客户...</option>
+          <option value="3">张三 (ID:3)</option>
+          <option value="4">李四 (ID:4)</option>
+          <option value="5">王五 (ID:5)</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="loadGraph()">刷新</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div id="graphChart"></div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><div class="card-title">📋 客户持仓查询</div></div>
+      <div class="card-body" id="holdingResult">
+        <div style="text-align:center;color:var(--text-secondary);padding:20px;font-size:13px">选择客户后查看持仓</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🏭 行业分布</div></div>
+      <div class="card-body" id="industryResult">
+        <div style="text-align:center;color:var(--text-secondary);padding:20px;font-size:13px">选择客户后查看行业分布</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Page 3: Operation ==================== -->
+<div class="page" id="page-operation">
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><div class="card-title">🛒 产品申购</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="purchase_cid" type="number" placeholder="如: 4" value="4"></div>
+          <div class="form-group"><label class="form-label">产品ID</label><input class="form-input" id="purchase_pid" type="number" placeholder="如: 2" value="2"></div>
+          <div class="form-group"><label class="form-label">申购金额 (元)</label><input class="form-input" id="purchase_amount" type="number" placeholder="如: 500" value="500"></div>
+          <div class="form-group"><label class="form-label">操作员ID</label><input class="form-input" id="purchase_oid" type="number" value="1"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doPurchase()">确认申购</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">💰 产品赎回</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="redeem_cid" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">产品ID</label><input class="form-input" id="redeem_pid" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">赎回份额</label><input class="form-input" id="redeem_shares" type="number" value="100"></div>
+          <div class="form-group"><label class="form-label">操作员ID</label><input class="form-input" id="redeem_oid" type="number" value="1"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doRedeem()">确认赎回</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔄 转账</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">转出客户ID</label><input class="form-input" id="transfer_from" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">转入客户ID</label><input class="form-input" id="transfer_to" type="number" value="4"></div>
+          <div class="form-group"><label class="form-label">金额 (元)</label><input class="form-input" id="transfer_amount" type="number" value="1000"></div>
+          <div class="form-group"><label class="form-label">操作员ID</label><input class="form-input" id="transfer_oid" type="number" value="1"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doTransfer()">确认转账</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">📝 风评重做</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="assess_cid" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">操作员ID</label><input class="form-input" id="assess_oid" type="number" value="1"></div>
+          <div class="form-group full"><label class="form-label">答题 (逗号分隔, 如 1,2,3)</label><input class="form-input" id="assess_answers" value="1,2,3"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doAssessment()">提交风评</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">👤 信息更新</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="contact_cid" type="number" value="3"></div>
+          <div class="form-group">
+            <label class="form-label">更新字段</label>
+            <select class="form-select" id="contact_field">
+              <option value="phone">手机号</option>
+              <option value="email">邮箱</option>
+              <option value="occupation">职业</option>
+              <option value="education">学历</option>
+            </select>
+          </div>
+          <div class="form-group full"><label class="form-label">新值</label><input class="form-input" id="contact_value" placeholder="如: 13800001234"></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doContact()">确认更新</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">🚨 可疑交易上报</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="report_cid" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">上报人ID</label><input class="form-input" id="report_rid" type="number" value="1"></div>
+          <div class="form-group full"><label class="form-label">上报原因</label><textarea class="form-textarea" id="report_reason" placeholder="描述可疑行为..."></textarea></div>
+        </div>
+        <button class="btn btn-danger" style="margin-top:16px;width:100%" onclick="doReport()">提交上报</button>
+      </div>
+    </div>
+    <div class="card" style="grid-column: 1 / -1">
+      <div class="card-header"><div class="card-title">📋 创建工单</div></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">客户ID</label><input class="form-input" id="wo_cid" type="number" value="3"></div>
+          <div class="form-group"><label class="form-label">提交人ID</label><input class="form-input" id="wo_sid" type="number" value="1"></div>
+          <div class="form-group">
+            <label class="form-label">工单类型</label>
+            <select class="form-select" id="wo_type">
+              <option value="咨询">咨询</option>
+              <option value="投诉">投诉</option>
+              <option value="建议">建议</option>
+              <option value="业务办理">业务办理</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">工单内容</label><input class="form-input" id="wo_content" placeholder="工单描述..."></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:16px;width:100%" onclick="doWorkorder()">创建工单</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Page 4: NL2API Chat ==================== -->
+<div class="page" id="page-chat">
+  <div class="card" style="overflow:hidden">
+    <div class="chat-container">
+      <div class="chat-toolbar">
+        <span class="chat-toolbar-label">当前角色:</span>
+        <span class="role-chip active" onclick="setChatRole(this,'理财顾问')">理财顾问</span>
+        <span class="role-chip" onclick="setChatRole(this,'客户经理')">客户经理</span>
+        <span class="role-chip" onclick="setChatRole(this,'风控专员')">风控专员</span>
+        <span class="role-chip" onclick="setChatRole(this,'管理员')">管理员</span>
+        <span style="flex:1"></span>
+        <span style="font-size:11px;color:var(--text-secondary)">会话: <span id="sessionId"></span></span>
+      </div>
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-msg bot">
+          <div class="chat-msg-avatar">AI</div>
+          <div>
+            <div class="chat-msg-bubble">您好！我是业务操作智能助手 🤖\n\n我可以通过自然语言帮您完成以下操作：\n• 查询客户持仓、产品信息\n• 办理申购、赎回、转账\n• 更新客户信息、重做风评\n• 创建工单、上报可疑交易\n\n请问需要什么帮助？</div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-hints">
+        <span class="hint-chip" onclick="sendHint(this)">帮我查一下张三的持仓</span>
+        <span class="hint-chip" onclick="sendHint(this)">有哪些R3风险等级的产品？</span>
+        <span class="hint-chip" onclick="sendHint(this)">帮客户4申购产品2，金额500</span>
+        <span class="hint-chip" onclick="sendHint(this)">查询客户3的关联图谱</span>
+        <span class="hint-chip" onclick="sendHint(this)">给客户3做风评，答案1,2,3</span>
+      </div>
+      <div class="chat-input-area">
+        <input type="text" id="chatInput" placeholder="输入自然语言指令，如：帮我查一下张三持有什么产品..." onkeypress="if(event.key==='Enter')sendChat()">
+        <button id="chatSendBtn" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Page 5: Test ==================== -->
+<div class="page" id="page-test">
+  <div class="summary-bar" id="testSummary" style="display:none">
+    <div class="summary-item"><div class="summary-num blue" id="testTotal">0</div><div class="summary-label">总测试</div></div>
+    <div class="summary-item"><div class="summary-num green" id="testPass">0</div><div class="summary-label">通过</div></div>
+    <div class="summary-item"><div class="summary-num red" id="testFail">0</div><div class="summary-label">失败</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">✅ 接口自动化测试</div>
+      <div>
+        <button class="btn btn-primary" onclick="runAllTests()">🚀 全部测试（13项）</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">🔗 知识图谱接口</div>
+        <div class="test-grid" id="testGraph"></div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">⚡ 业务操作接口</div>
+        <div class="test-grid" id="testOps"></div>
+      </div>
+      <div class="result-list" id="testResults"></div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<!-- ====== Toast ====== -->
+<div id="toast" style="position:fixed;top:70px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px"></div>
+
+<script>
+const API = window.location.origin;
+let chatRole = '理财顾问';
+let chatSession = 'web-' + Math.random().toString(36).slice(2, 10);
+document.getElementById('sessionId').textContent = chatSession;
+
+// ====== Nav ======
+function switchPage(name, el) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('page-' + name).classList.add('active');
+  if (name === 'graph') loadGraph();
+}
+
+// ====== Toast ======
+function toast(msg, type = 'info') {
+  const colors = { info: '#4f46e5', success: '#10b981', error: '#ef4444' };
+  const el = document.createElement('div');
+  el.style.cssText = `background:${colors[type]};color:white;padding:10px 18px;border-radius:10px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);animation:slideIn .3s;max-width:340px;`;
+  el.textContent = msg;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ====== API Call ======
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  return r.json();
+}
+
+// ====== Dashboard ======
+async function loadDashboard() {
+  try {
+    const stats = await api('/api/graph/stats');
+    if (stats.code === 200) {
+      document.getElementById('statNodes').textContent = stats.data.node_count || 0;
+      document.getElementById('statEdges').textContent = stats.data.relationship_count || 0;
+    }
+  } catch(e) {}
+
+  try {
+    const prods = await api('/api/operation/product/list');
+    if (prods.code === 200) {
+      document.getElementById('statProducts').textContent = prods.data.length;
+      document.getElementById('llmModel').textContent = prods.data.length + ' 产品';
+      renderProductList(prods.data);
+    }
+  } catch(e) {}
+}
+
+function renderProductList(products) {
+  const html = `<table class="data-table"><thead><tr><th>产品名</th><th>类型</th><th>风险</th><th>预期收益</th><th>起投</th></tr></thead><tbody>` +
+    products.map(p => `<tr>
+      <td style="font-weight:500">${p.product_name}</td>
+      <td>${p.product_type}</td>
+      <td><span class="badge badge-${p.risk_level <= 'R2' ? 'green' : p.risk_level <= 'R3' ? 'blue' : 'red'}">${p.risk_level}</span></td>
+      <td>${p.expected_return}%</td>
+      <td>${p.min_amount}元</td>
+    </tr>`).join('') +
+    `</tbody></table>`;
+  document.getElementById('productList').innerHTML = html;
+}
+
+// ====== ECharts Graph ======
+let graphChart = null;
+let dashGraphChart = null;
+
+function initCharts() {
+  graphChart = echarts.init(document.getElementById('graphChart'));
+  dashGraphChart = echarts.init(document.getElementById('dashGraphChart'));
+  window.addEventListener('resize', () => { graphChart.resize(); dashGraphChart.resize(); });
+}
+
+async function loadGraph() {
+  const cid = document.getElementById('graphCustomer').value;
+  if (!cid) { showPlaceholder(); return; }
+
+  try {
+    const [vizRes, holdRes, indRes] = await Promise.all([
+      api('/api/graph/visualization/' + cid),
+      api('/api/graph/query', 'POST', { query_type: 'customer_products', params: { customer_name: cid === '3' ? '张三' : cid === '4' ? '李四' : '王五' } }),
+      api('/api/graph/query', 'POST', { query_type: 'industry_distribution', params: { customer_name: cid === '3' ? '张三' : cid === '4' ? '李四' : '王五' } }),
+    ]);
+
+    // Render ECharts graph
+    if (vizRes.code === 200) {
+      const { nodes, edges } = vizRes.data;
+      const colorMap = { customer: '#4f46e5', product: '#10b981', industry: '#f59e0b', risk_level: '#ef4444' };
+      const sizeMap = { customer: 55, product: 40, industry: 35, risk_level: 30 };
+
+      const chartNodes = nodes.map(n => ({
+        id: n.id,
+        name: n.label,
+        symbolSize: sizeMap[n.type] || 30,
+        itemStyle: { color: colorMap[n.type] || '#94a3b8' },
+        category: n.type,
+        label: { show: true, fontSize: 11, color: n.type === 'customer' ? '#fff' : '#333' },
+      }));
+
+      const chartEdges = edges.map(e => ({
+        source: e.source,
+        target: e.target,
+        label: { show: true, formatter: e.type.replace('_', '\n'), fontSize: 9, color: '#94a3b8' },
+        lineStyle: { color: '#cbd5e1', curveness: 0.1 },
+      }));
+
+      const categories = [
+        { name: '客户' }, { name: '产品' }, { name: '行业' }, { name: '风险等级' }
+      ];
+
+      graphChart.setOption({
+        tooltip: { trigger: 'item', formatter: p => p.dataType === 'node' ? `${p.data.name}<br/>${p.data.category}` : `${p.data.source} → ${p.data.target}` },
+        legend: { data: categories.map(c => c.name), bottom: 10 },
+        series: [{
+          type: 'graph',
+          layout: 'force',
+          data: chartNodes,
+          links: chartEdges,
+          categories: categories,
+          roam: true,
+          draggable: true,
+          force: { repulsion: 300, edgeLength: [100, 200], gravity: 0.1 },
+          labelLayout: { hideOverlap: true },
+          emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
+        }],
+      }, true);
+
+      // also render in dashboard
+      dashGraphChart.setOption({
+        series: [{
+          type: 'graph', layout: 'force',
+          data: chartNodes.map(n => ({ ...n, label: { show: true, fontSize: 9 } })),
+          links: chartEdges.map(e => ({ ...e, label: { show: false } })),
+          categories, roam: false, draggable: true,
+          force: { repulsion: 200, edgeLength: [60, 120], gravity: 0.15 },
+        }],
+      }, true);
+    }
+
+    // Holdings
+    if (holdRes.code === 200 && holdRes.data) {
+      const prods = holdRes.data.products || [];
+      if (prods.length) {
+        document.getElementById('holdingResult').innerHTML = `<table class="data-table"><thead><tr><th>产品</th><th>风险</th><th>持有份额</th><th>市值</th></tr></thead><tbody>` +
+          prods.map(p => `<tr><td>${p.product_name}</td><td><span class="badge badge-blue">${p.risk_level}</span></td><td>${p.shares}</td><td>${p.current_value || p.holding_value || '--'}</td></tr>`).join('') +
+          `</tbody></table>`;
+      } else {
+        document.getElementById('holdingResult').innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">暂无持仓数据</div>`;
+      }
+    }
+
+    // Industry
+    if (indRes.code === 200 && indRes.data) {
+      const inds = indRes.data.industries || (Array.isArray(indRes.data) ? indRes.data : []);
+      if (inds.length) {
+        document.getElementById('industryResult').innerHTML = `<table class="data-table"><thead><tr><th>行业</th><th>占比</th></tr></thead><tbody>` +
+          inds.map(i => `<tr><td>${i.name || i.industry_name}</td><td>${i.ratio || i.percentage || '--'}</td></tr>`).join('') +
+          `</tbody></table>`;
+      } else {
+        document.getElementById('industryResult').innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">暂无行业数据</div>`;
+      }
+    }
+  } catch(e) {
+    toast('图谱加载失败: ' + e.message, 'error');
+  }
+}
+
+function showPlaceholder() {
+  graphChart.clear();
+  graphChart.setOption({ title: { text: '请选择客户查看图谱', left: 'center', top: 'center', textStyle: { color: '#94a3b8', fontSize: 16 } } });
+}
+
+// ====== Operations ======
+async function doPurchase() {
+  const r = await api('/api/operation/purchase', 'POST', {
+    customer_id: +document.getElementById('purchase_cid').value,
+    product_id: +document.getElementById('purchase_pid').value,
+    amount: +document.getElementById('purchase_amount').value,
+    operator_id: +document.getElementById('purchase_oid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doRedeem() {
+  const r = await api('/api/operation/redeem', 'POST', {
+    customer_id: +document.getElementById('redeem_cid').value,
+    product_id: +document.getElementById('redeem_pid').value,
+    shares: +document.getElementById('redeem_shares').value,
+    operator_id: +document.getElementById('redeem_oid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doTransfer() {
+  const r = await api('/api/operation/transfer', 'POST', {
+    from_customer_id: +document.getElementById('transfer_from').value,
+    to_customer_id: +document.getElementById('transfer_to').value,
+    amount: +document.getElementById('transfer_amount').value,
+    operator_id: +document.getElementById('transfer_oid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doAssessment() {
+  const ans = document.getElementById('assess_answers').value.split(',').map(Number);
+  const r = await api('/api/operation/assessment', 'POST', {
+    customer_id: +document.getElementById('assess_cid').value,
+    answers: ans,
+    operator_id: +document.getElementById('assess_oid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doContact() {
+  const r = await api('/api/operation/contact', 'PUT', {
+    customer_id: +document.getElementById('contact_cid').value,
+    field: document.getElementById('contact_field').value,
+    value: document.getElementById('contact_value').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doReport() {
+  const r = await api('/api/operation/suspicious', 'POST', {
+    customer_id: +document.getElementById('report_cid').value,
+    reason: document.getElementById('report_reason').value,
+    reporter_id: +document.getElementById('report_rid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+async function doWorkorder() {
+  const r = await api('/api/operation/workorder', 'POST', {
+    customer_id: +document.getElementById('wo_cid').value,
+    content: document.getElementById('wo_content').value,
+    order_type: document.getElementById('wo_type').value,
+    submitter_id: +document.getElementById('wo_sid').value,
+  });
+  toast(r.message, r.code === 200 ? 'success' : 'error');
+}
+
+// ====== Chat ======
+function setChatRole(el, role) {
+  chatRole = role;
+  document.querySelectorAll('.role-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function addChatMsg(text, isUser) {
+  const el = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + (isUser ? 'user' : 'bot');
+  div.innerHTML = `<div class="chat-msg-avatar">${isUser ? '我' : 'AI'}</div><div><div class="chat-msg-bubble">${escHtml(text)}</div></div>`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  return div;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function sendHint(el) {
+  document.getElementById('chatInput').value = el.textContent;
+  sendChat();
+}
+
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  addChatMsg(msg, true);
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="border-top-color:white;border-color:rgba(255,255,255,.3);width:16px;height:16px"></span>';
+
+  const botDiv = document.createElement('div');
+  botDiv.className = 'chat-msg bot';
+  botDiv.innerHTML = `<div class="chat-msg-avatar">AI</div><div><div class="chat-msg-bubble"><span class="spinner"></span> 正在分析意图...</div></div>`;
+  document.getElementById('chatMessages').appendChild(botDiv);
+  document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+
+  try {
+    const r = await api('/api/chat/operator', 'POST', {
+      message: msg, session_id: chatSession, user_id: 1, user_role: chatRole,
+    });
+    let replyText = r.reply || '(无回复)';
+    let metaHtml = '';
+    if (r.action) {
+      metaHtml = `<div class="chat-msg-meta">意图: <b>${r.action}</b> | 状态: ${r.status || '--'}</div>`;
+    }
+    botDiv.querySelector('div:last-child').innerHTML = `<div class="chat-msg-bubble">${escHtml(replyText)}</div>${metaHtml}`;
+  } catch(e) {
+    botDiv.querySelector('.chat-msg-bubble').textContent = '请求失败: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '发送';
+  document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+}
+
+// ====== Tests ======
+const TESTS = [
+  // Graph
+  { group: 'graph', name: '图谱统计', desc: 'GET /api/graph/stats', icon: '📊', path: '/api/graph/stats', method: 'GET' },
+  { group: 'graph', name: '图谱可视化', desc: 'GET /api/graph/visualization/3', icon: '🔗', path: '/api/graph/visualization/3', method: 'GET' },
+  { group: 'graph', name: '客户持仓', desc: 'POST /api/graph/query', icon: '📦', path: '/api/graph/query', method: 'POST', body: { query_type: 'customer_products', params: { customer_name: '张三' } } },
+  { group: 'graph', name: '适当性匹配', desc: 'POST /api/graph/query', icon: '🎯', path: '/api/graph/query', method: 'POST', body: { query_type: 'suitable_products', params: { risk_level: 'R3' } } },
+  // Operations
+  { group: 'ops', name: '产品列表', desc: 'GET /api/operation/product/list', icon: '📋', path: '/api/operation/product/list', method: 'GET' },
+  { group: 'ops', name: '产品详情', desc: 'GET /api/operation/product/1', icon: '📄', path: '/api/operation/product/1', method: 'GET' },
+  { group: 'ops', name: '产品申购', desc: 'POST /api/operation/purchase', icon: '🛒', path: '/api/operation/purchase', method: 'POST', body: { customer_id: 4, product_id: 2, amount: 500, operator_id: 1 } },
+  { group: 'ops', name: '产品赎回', desc: 'POST /api/operation/redeem', icon: '💰', path: '/api/operation/redeem', method: 'POST', body: { customer_id: 3, product_id: 3, shares: 100, operator_id: 1 } },
+  { group: 'ops', name: '资金转账', desc: 'POST /api/operation/transfer', icon: '🔄', path: '/api/operation/transfer', method: 'POST', body: { from_customer_id: 3, to_customer_id: 4, amount: 1000, operator_id: 1 } },
+  { group: 'ops', name: '风评重做', desc: 'POST /api/operation/assessment', icon: '📝', path: '/api/operation/assessment', method: 'POST', body: { customer_id: 3, answers: [1,2,3], operator_id: 1 } },
+  { group: 'ops', name: '信息更新', desc: 'PUT /api/operation/contact', icon: '👤', path: '/api/operation/contact', method: 'PUT', body: { customer_id: 3, field: 'phone', value: '13800001234' } },
+  { group: 'ops', name: '可疑上报', desc: 'POST /api/operation/suspicious', icon: '🚨', path: '/api/operation/suspicious', method: 'POST', body: { customer_id: 3, reason: '大额转账测试', reporter_id: 1 } },
+  { group: 'ops', name: '工单创建', desc: 'POST /api/operation/workorder', icon: '📋', path: '/api/operation/workorder', method: 'POST', body: { customer_id: 3, content: '测试工单', submitter_id: 1 } },
+];
+
+function renderTestCards() {
+  const graphEl = document.getElementById('testGraph');
+  const opsEl = document.getElementById('testOps');
+  graphEl.innerHTML = TESTS.filter(t => t.group === 'graph').map((t, i) => testCardHtml(t, 'g' + i)).join('');
+  opsEl.innerHTML = TESTS.filter(t => t.group === 'ops').map((t, i) => testCardHtml(t, 'o' + i)).join('');
+}
+
+function testCardHtml(t, idx) {
+  return `<div class="test-card" id="tc-${idx}" onclick="runSingleTest('${idx}')">
+    <div class="test-icon" style="background:var(--primary-bg);color:var(--primary)">${t.icon}</div>
+    <div class="test-info"><div class="test-name">${t.name}</div><div class="test-desc">${t.desc}</div></div>
+    <div class="test-status" id="ts-${idx}">○</div>
+  </div>`;
+}
+
+let tPass = 0, tFail = 0;
+
+async function runSingleTest(idx) {
+  const t = TESTS.find((_, i) => ('g' + i === idx || 'o' + i === idx)) || TESTS[+idx] || TESTS.find(t => t.name === idx);
+  if (!t) return;
+  const realIdx = TESTS.indexOf(t);
+  const prefix = realIdx < 4 ? 'g' + realIdx : 'o' + realIdx;
+
+  const card = document.getElementById('tc-' + prefix);
+  const status = document.getElementById('ts-' + prefix);
+  card.classList.add('running');
+  status.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const r = await api(t.path, t.method, t.body);
+    const ok = r.code === 200;
+    status.textContent = ok ? '✅' : '❌';
+    card.classList.remove('running');
+    addResultRow(t.name, ok, r.message);
+    if (ok) tPass++; else tFail++;
+  } catch(e) {
+    status.textContent = '❌';
+    card.classList.remove('running');
+    addResultRow(t.name, false, e.message);
+    tFail++;
+  }
+  updateTestSummary();
+}
+
+async function runAllTests() {
+  tPass = 0; tFail = 0;
+  document.getElementById('testResults').innerHTML = '';
+  updateTestSummary();
+  document.getElementById('testSummary').style.display = 'flex';
+
+  for (let i = 0; i < TESTS.length; i++) {
+    const t = TESTS[i];
+    const prefix = i < 4 ? 'g' + i : 'o' + i;
+    const card = document.getElementById('tc-' + prefix);
+    const status = document.getElementById('ts-' + prefix);
+
+    // reset
+    card.classList.remove('running');
+    status.textContent = '○';
+
+    card.classList.add('running');
+    status.innerHTML = '<span class="spinner"></span>';
+
+    try {
+      const r = await api(t.path, t.method, t.body);
+      const ok = r.code === 200;
+      status.textContent = ok ? '✅' : '❌';
+      addResultRow(t.name, ok, r.message);
+      if (ok) tPass++; else tFail++;
+    } catch(e) {
+      status.textContent = '❌';
+      addResultRow(t.name, false, e.message);
+      tFail++;
+    }
+    card.classList.remove('running');
+    updateTestSummary();
+    await new Promise(r => setTimeout(r, 150));
+  }
+}
+
+function addResultRow(name, ok, msg) {
+  const el = document.getElementById('testResults');
+  const div = document.createElement('div');
+  div.className = 'result-row ' + (ok ? 'ok' : 'fail');
+  div.innerHTML = `<span>${ok ? '✅' : '❌'}</span><span class="result-name">${name}</span><span class="result-msg">${msg || ''}</span>`;
+  el.insertBefore(div, el.firstChild);
+}
+
+function updateTestSummary() {
+  document.getElementById('testSummary').style.display = 'flex';
+  document.getElementById('testTotal').textContent = tPass + tFail;
+  document.getElementById('testPass').textContent = tPass;
+  document.getElementById('testFail').textContent = tFail;
+}
+
+// ====== Init ======
+document.addEventListener('DOMContentLoaded', () => {
+  initCharts();
+  loadDashboard();
+  renderTestCards();
+  showPlaceholder();
+});
+</script>
+</body>
+</html>

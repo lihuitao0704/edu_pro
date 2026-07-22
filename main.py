@@ -62,6 +62,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- 静态文件（测试前端） ----
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/")
+async def index():
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
 # ---- 注册路由 ----
 try:
     from app.api.profile import router as profile_router
@@ -80,6 +93,44 @@ try:
     app.include_router(advisor_router, prefix="/api/chat", tags=["投顾对话"])
 except Exception as e:
     print(f"  [WARN] 投顾路由加载失败: {e}")
+
+try:
+    from app.api.chat import router as operator_router
+    app.include_router(operator_router, prefix="/api/chat", tags=["业务操作"])
+except Exception as e:
+    print(f"  [WARN] 业务操作路由加载失败: {e}")
+
+try:
+    from app.api.graph import router as graph_router
+    app.include_router(graph_router, prefix="/api/graph", tags=["知识图谱"])
+except Exception as e:
+    print(f"  [WARN] 图谱路由加载失败: {e}")
+
+try:
+    from app.api.operations.purchase import router as purchase_router
+    app.include_router(purchase_router, prefix="/api/operation", tags=["业务操作"])
+except Exception as e:
+    print(f"  [WARN] 申购路由加载失败: {e}")
+
+try:
+    from app.api.operations.product_query import router as pq_router
+    app.include_router(pq_router, prefix="/api/operation", tags=["业务操作"])
+except Exception as e:
+    print(f"  [WARN] 产品查询路由加载失败: {e}")
+
+for _name, _prefix in [
+    ("redeem", "/redeem"),
+    ("transfer", "/transfer"),
+    ("assessment", "/assessment"),
+    ("contact", "/contact"),
+    ("suspicious_report", "/suspicious"),
+    ("workorder", "/workorder"),
+]:
+    try:
+        mod = __import__(f"app.api.operations.{_name}", fromlist=["router"])
+        app.include_router(mod.router, prefix="/api/operation", tags=["业务操作"])
+    except Exception as e:
+        print(f"  [WARN] {_name}路由加载失败: {e}")
 
 
 @app.get("/api/health")

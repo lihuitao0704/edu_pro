@@ -128,6 +128,81 @@ class RiskRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class FinProduct(Base):
+    """基金产品表"""
+    __tablename__ = "fin_product"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    product_code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    product_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[Optional[str]] = mapped_column(String(32), comment="货币型/债券型/混合型/股票型")
+    risk_level: Mapped[Optional[str]] = mapped_column(String(8), comment="R1-R5")
+    expected_return: Mapped[Optional[Decimal]] = mapped_column(Numeric(7, 4))
+    min_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 2))
+    term_days: Mapped[Optional[int]] = mapped_column(Integer)
+    fund_manager: Mapped[Optional[str]] = mapped_column(String(64))
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="在售")
+    create_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    update_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class FinHoldings(Base):
+    """客户持仓表"""
+    __tablename__ = "fin_holdings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    shares: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    cost_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
+    current_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
+    profit_loss: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
+    profit_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4))
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="持有")
+    create_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    update_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class FinTransaction(Base):
+    """交易流水表"""
+    __tablename__ = "fin_transaction"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    transaction_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(16), nullable=False, comment="purchase/redeem/transfer")
+    amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
+    shares: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    nav: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 6), comment="净值")
+    fee: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="已确认")
+    operator_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    remark: Mapped[Optional[str]] = mapped_column(String(255))
+    create_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    update_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class BizWorkOrder(Base):
+    """业务工单表"""
+    __tablename__ = "biz_work_order"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    work_order_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    order_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="投诉/建议/咨询/故障")
+    sub_type: Mapped[Optional[str]] = mapped_column(String(32))
+    customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    submitter_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    handler_id: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
+    current_node: Mapped[Optional[str]] = mapped_column(String(32), default="待处理")
+    priority: Mapped[Optional[str]] = mapped_column(String(8), default="普通")
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="待处理")
+    biz_content: Mapped[Optional[dict]] = mapped_column(JSON)
+    remark: Mapped[Optional[str]] = mapped_column(String(255))
+    create_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    update_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class ProductRecommendation(Base):
     """推荐结果表"""
     __tablename__ = "product_recommendation"
