@@ -5,6 +5,8 @@
 
 Agent 拥有一个工具箱：
   - profile_tool         → 查客户风险画像（四维度 + 熔断）
+  - compare_customers    → 对比两个客户的画像、持仓、行业偏好差异
+  - analysis_holdings    → 持仓分析（持仓分布、行业集中度、盈亏状态）
   - recommend_products   → 产品推荐打分排序
   - asset_allocation     → 资产配置建议
   - graphrag_search      → 知识图谱 + 向量文档检索
@@ -12,7 +14,7 @@ Agent 拥有一个工具箱：
 LLM 根据用户自然语言自动决定：
   调用哪个工具、按什么顺序调用、如何组合结果生成回复。
 
-这是 ProfileAgent 的同款模式 — 只是工具箱里从 1 个工具扩展到了 4 个。
+这是 ProfileAgent 的同款模式 — 只是工具箱里从 1 个工具扩展到了 6 个。
 """
 
 from typing import Optional
@@ -27,6 +29,8 @@ from langchain_core.tools import tool
 from app.agent.base_agent import BaseAgent
 from app.config.settings import get_settings
 from app.tool.profile_tool import ProfileTool
+from app.tool.holding_tool import HoldingTool
+from app.tool.comparison_tool import ComparisonTool
 from app.tool.graphrag_tool import graphrag_tool
 from app.utils.logger import get_logger
 
@@ -42,11 +46,13 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 # 核心能力 & 可用工具
 
-你有四个工具可以调用，根据用户意图**自行决定**调用哪些、按什么顺序调用：
+你有**六个**工具可以调用，根据用户意图**自行决定**调用哪些、按什么顺序调用：
 
 | 工具名 | 用途 | 何时调用 |
 |--------|------|----------|
 | `profile_tool` | 查询客户风险画像（四维度得分、C1-C5等级、熔断规则） | 用户提到客户、画像、风险等级、研判、评估 |
+| `compare_customers` | 对比两个客户的画像、持仓、行业偏好差异 | 用户要求对比两个客户、看有什么不同 |
+| `analysis_holdings` | 分析客户持仓分布、行业集中度、盈亏状态 | 用户要求分析持仓、看集中度、行业分布 |
 | `recommend_products` | 根据客户ID推荐匹配的产品列表 | 用户要求推荐产品、筛选基金、找合适的产品 |
 | `asset_allocation` | 给出该客户的资产配置比例建议 | 用户要求资产配置、仓位建议、比例分配 |
 | `graphrag_search` | 检索知识图谱和文档库（行业/产品/客户关联关系） | 用户问行业分布、产品关联、知识性问题 |
@@ -58,7 +64,11 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 2. **多工具组合**：用户可能一次提出复合需求，如"帮我看看张三的画像，推荐几款产品，
    再查查新能源行业有什么热门基金"——你需要依次调用 profile_tool → recommend_products → graphrag_search。
 3. **独立调用**：如果用户只想要资产配置，直接调 asset_allocation，不需要先查画像。
-4. **知识类问题**：如果用户问的是知识性问题（如"什么是R3风险等级"、"新能源行业前景如何"），
+4. **持仓分析**：如果用户要求看持仓、行业集中度、盈亏状态，调 analysis_holdings。
+   该工具会综合 MySQL 持仓明细和 Neo4j 行业关系图谱，返回完整持仓分析结果。
+5. **客户对比**：如果用户要求对比两个客户（如"比较张三和李四"），调 compare_customers。
+   该工具接收两个客户ID，返回画像差异、共同持仓、行业偏好对比等结构化报告。
+6. **知识类问题**：如果用户问的是知识性问题（如"什么是R3风险等级"、"新能源行业前景如何"），
    只调 graphrag_search，不要调其他工具。
 
 # 输出规范
@@ -68,6 +78,12 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 ```
 ## 📊 客户风险画像
 （如果调了 profile_tool，展示基本信息 + 四维度得分 + 风险等级 + 熔断告警）
+
+## 🔄 客户对比分析
+（如果调了 compare_customers，展示两客户画像差异 + 共同持仓 + 行业重叠度 + 对比摘要）
+
+## 💼 持仓分析
+（如果调了 analysis_holdings，展示持仓明细 + 行业分布 + 集中度 + 盈亏状态）
 
 ## 🎯 产品推荐
 （如果调了 recommend_products，列出推荐产品，含风险等级、预期收益、匹配度、推荐理由）
@@ -90,7 +106,18 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 - 不要给出具体的买卖操作指令（如"立即买入"）
 - 不要忽略 warnings 和熔断信息
 - 如果工具返回了错误，诚实告知用户并说明原因
-"""
+
+# 异常处理指南
+
+当工具返回特定状态时，你必须按以下方式处理，不得自行编造数据：
+
+| 工具 | 返回状态 | 处理方式 |
+|------|---------|----------|
+| `profile_tool` | `status=not_found` | 直接回复理财顾问："该客户暂无风险画像，建议先引导客户完成风险测评问卷。" 不要尝试编造画像数据。 |
+| `profile_tool` | `status=error` | 如实告知查询失败及具体错误原因，不要猜测或编造客户信息。 |
+| 任何工具 | 返回空或异常 | 诚实说明该工具暂时不可用，建议稍后重试或联系技术支持。 |
+
+关键原则：**宁可说"不知道"，也不编造数据。** 金融场景下的错误信息可能导致合规风险。"""
 
 
 class AdvisorAgent(BaseAgent):
@@ -123,17 +150,22 @@ class AdvisorAgent(BaseAgent):
 
         # ── 初始化内置工具（需要 db session 的动态工具） ──
         self._profile_tool = ProfileTool(db=db)
+        self._holding_tool = HoldingTool(db=db)
+        self._comparison_tool = ComparisonTool(db=db)
 
         # recommend_products 和 asset_allocation 需要 db session，
         # 在 __init__ 中用闭包创建 @tool 函数
         self._recommend_tool = self._make_recommend_tool(db)
         self._allocation_tool = self._make_allocation_tool(db)
+        self._holding_func_tool = self._make_holding_tool(db)
 
         # ── 创建 LangChain Agent ──
         self._agent = create_agent(
             model=self._llm,
             tools=[
                 self._profile_tool,
+                self._comparison_tool,
+                self._holding_func_tool,
                 self._recommend_tool,
                 self._allocation_tool,
                 graphrag_tool,       # 无状态，直接用模块级 @tool
@@ -155,7 +187,7 @@ class AdvisorAgent(BaseAgent):
 
         Returns:
             {"reply": str, "recommendations": list, "customer_profile": dict,
-             "reasoning": str, "session_id": str}
+             "holdings_analysis": dict, "reasoning": str, "session_id": str}
         """
         customer_id = kwargs.get("customer_id")
 
@@ -172,6 +204,7 @@ class AdvisorAgent(BaseAgent):
                 "reply": f"投顾服务暂时不可用，请稍后重试。错误详情：{str(e)}",
                 "recommendations": [],
                 "customer_profile": None,
+                "holdings_analysis": None,
                 "reasoning": None,
                 "session_id": self.session_id,
             }
@@ -179,12 +212,14 @@ class AdvisorAgent(BaseAgent):
         reply = self._extract_reply(result)
         recommendations = self._extract_tool_result(result, "recommend_products")
         customer_profile = self._extract_tool_result(result, "profile_tool")
+        holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
 
         return {
             "reply": reply,
             "recommendations": recommendations,
             "customer_profile": customer_profile,
+            "holdings_analysis": holdings_analysis,
             "reasoning": reasoning,
             "session_id": self.session_id,
         }
@@ -243,6 +278,34 @@ class AdvisorAgent(BaseAgent):
             return json.dumps(result, ensure_ascii=False, default=str)
 
         return asset_allocation
+
+    @staticmethod
+    def _make_holding_tool(db: AsyncSession):
+        """创建持仓分析工具（闭包捕获 db session，内部调用 Neo4j + MySQL）"""
+        holding_tool = HoldingTool(db)
+
+        @tool
+        async def analysis_holdings(customer_id: int) -> str:
+            """
+            分析客户持仓分布、行业集中度和盈亏状态。
+
+            该工具综合 MySQL 持仓明细和 Neo4j 行业关系图谱，返回：
+            - 持仓明细（产品ID、市值、盈亏、盈亏比例）
+            - 集中度分析（单产品占比、是否过度集中）
+            - 行业分布（各行业持仓产品数量和名称）
+            - 盈亏汇总（总市值、总盈亏、盈利/亏损产品数量）
+
+            Args:
+                customer_id: 客户ID
+
+            Returns:
+                JSON 格式的持仓综合分析结果
+            """
+            result = await holding_tool.analyze(customer_id)
+            import json
+            return json.dumps(result, ensure_ascii=False, default=str)
+
+        return analysis_holdings
 
     # ═══════════════════════════════════════════════════════════════
     # 内部辅助

@@ -1,6 +1,8 @@
 """
 Intent Service — 意图识别服务
-基于 LLM 的意图分类（5类：product_inquiry / policy_interpretation / faq / chitchat / transfer_human）
+基于 LLM 的意图分类：
+  - 客服意图（5类）：product_inquiry / policy_interpretation / faq / chitchat / transfer_human
+  - 投顾意图（4类）：product_recommend / portfolio_analysis / asset_allocation / comparison
 """
 
 from typing import Optional, Tuple
@@ -11,7 +13,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger("service.intent")
 
-# 意图优先级（用于多意图场景）
+# ── 客服意图（原有） ──
 INTENT_PRIORITY = {
     "transfer_human": 5,
     "faq": 4,
@@ -20,11 +22,32 @@ INTENT_PRIORITY = {
     "chitchat": 1,
 }
 
-# 意图到知识类型映射
 INTENT_TO_KNOWLEDGE_TYPE = {
     "product_inquiry": "product_knowledge",
     "policy_interpretation": "policy_knowledge",
     "faq": "faq_knowledge",
+}
+
+# ── 投顾意图（新增） ──
+ADVISOR_INTENT_PRIORITY = {
+    "portfolio_analysis": 4,
+    "asset_allocation": 3,
+    "product_recommend": 2,
+    "comparison": 1,
+}
+
+ADVISOR_INTENT_TO_AGENT_ACTION = {
+    "product_recommend": "recommend_products",
+    "portfolio_analysis": "analysis_holdings",
+    "asset_allocation": "asset_allocation",
+    "comparison": "compare_customers",
+}
+
+ADVISOR_INTENT_DESCRIPTIONS = {
+    "product_recommend": "产品推荐",
+    "portfolio_analysis": "持仓分析",
+    "asset_allocation": "资产配置",
+    "comparison": "对比分析",
 }
 
 
@@ -33,19 +56,23 @@ class IntentService:
 
     def __init__(self):
         self.llm = get_llm_tool()
-        self.prompt_template = self._load_prompt()
+        self.prompt_template = self._load_prompt("intent_classify.txt", self._default_prompt)
+        self.advisor_prompt_template = self._load_prompt(
+            "advisor_intent_classify.txt", self._default_advisor_prompt
+        )
 
-    def _load_prompt(self) -> str:
-        """加载意图识别 Prompt 模板"""
-        prompt_path = Path(__file__).parent.parent / "prompts" / "intent_classify.txt"
+    def _load_prompt(self, filename: str, fallback_fn) -> str:
+        """加载 Prompt 模板文件，不存在则回退为内联默认模板"""
+        prompt_dir = Path(__file__).parent.parent / "prompts"
+        prompt_path = prompt_dir / filename
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8")
         else:
-            logger.warning(f"意图识别 Prompt 文件不存在: {prompt_path}，使用默认模板")
-            return self._default_prompt()
+            logger.warning(f"Prompt 文件不存在: {prompt_path}，使用默认模板")
+            return fallback_fn()
 
     def _default_prompt(self) -> str:
-        """默认意图识别 Prompt"""
+        """默认客服意图识别 Prompt"""
         return """你是一个金融客服意图识别器。请根据用户输入判断其意图类别。
 
 可选类别：
@@ -65,6 +92,27 @@ class IntentService:
 请仅输出意图类别标识符，不要输出其他内容。
 
 用户输入："{user_message}"
+意图："""
+
+    def _default_advisor_prompt(self) -> str:
+        """默认投顾意图识别 Prompt"""
+        return """你是一个投顾意图分类专家。请分析用户输入，将其归类为以下四种投顾意图之一。
+
+可选类别：
+- product_recommend：用户要求推荐金融产品、筛选基金、找合适的产品
+- portfolio_analysis：用户要求分析持仓、看持仓结构、行业分布、集中度、盈亏情况
+- asset_allocation：用户要求资产配置建议、仓位比例调整、分配方案
+- comparison：用户要求对比两个客户、比较画像差异、看有什么不同
+
+示例：
+用户："给我推荐几款R3级别的基金" → product_recommend
+用户："帮我看看张三的持仓集中度怎么样" → portfolio_analysis
+用户："我的资产应该怎么分配比较合理" → asset_allocation
+用户："比较一下张三和李四的投资风格有什么不同" → comparison
+
+请仅输出意图类别标识符，不要输出其他内容。
+
+用户输入："{user_query}"
 意图："""
 
     async def classify(self, message: str, history: Optional[list] = None) -> Tuple[str, float]:
@@ -103,6 +151,66 @@ class IntentService:
     def get_knowledge_type(self, intent: str) -> Optional[str]:
         """获取意图对应的知识类型"""
         return INTENT_TO_KNOWLEDGE_TYPE.get(intent)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 投顾意图分类（新增）
+    # ═══════════════════════════════════════════════════════════════
+
+    async def classify_advisor(self, message: str, history: Optional[list] = None) -> Tuple[str, float]:
+        """
+        投顾意图分类（4类：product_recommend / portfolio_analysis / asset_allocation / comparison）
+
+        Args:
+            message: 用户消息
+            history: 对话历史（可选）
+        Returns:
+            (intent, confidence) 投顾意图类别和置信度
+        """
+        prompt = self.advisor_prompt_template.format(user_query=message)
+
+        try:
+            result = await self.llm.classify(prompt, temperature=0.1)
+            intent = result.strip().lower()
+
+            # 验证意图类别
+            if intent not in ADVISOR_INTENT_PRIORITY:
+                logger.warning(f"投顾意图识别结果无效: {intent}，降级为 product_recommend")
+                intent = "product_recommend"
+
+            # 置信度：显式匹配关键词加权重
+            confidence = self._calc_advisor_confidence(intent, message)
+
+            logger.info(
+                f"投顾意图识别完成 | message={message[:30]}... | intent={intent} | confidence={confidence}"
+            )
+            return intent, confidence
+
+        except Exception as e:
+            logger.error(f"投顾意图识别失败: {e}，降级为 product_recommend")
+            return "product_recommend", 0.5
+
+    def _calc_advisor_confidence(self, intent: str, message: str) -> float:
+        """计算投顾意图置信度（基于关键词匹配的启发式增强）"""
+        keywords = {
+            "product_recommend": ["推荐", "筛选", "找产品", "有什么好的", "挑", "选一只"],
+            "portfolio_analysis": ["持仓", "集中度", "盈亏", "仓位", "行业分布", "分析"],
+            "asset_allocation": ["配置", "比例", "分配", "怎么配", "资产配置", "仓位建议"],
+            "comparison": ["对比", "比较", "差异", "不同", "vs"],
+        }
+
+        base_confidence = 0.80
+        for kw in keywords.get(intent, []):
+            if kw in message:
+                base_confidence += 0.05  # 每个匹配关键词 +5%
+        return min(base_confidence, 0.95)
+
+    def get_agent_action(self, intent: str) -> Optional[str]:
+        """获取投顾意图对应的 Agent 工具名"""
+        return ADVISOR_INTENT_TO_AGENT_ACTION.get(intent)
+
+    def is_advisor_intent(self, intent: str) -> bool:
+        """判断是否为投顾意图"""
+        return intent in ADVISOR_INTENT_PRIORITY
 
 
 # 全局单例
