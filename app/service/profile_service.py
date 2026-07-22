@@ -138,11 +138,11 @@ class ProfileService:
                         old_tag.tag_value = tag["tag_value"]
                         old_tag.source = tag.get("source", old_tag.source)
                         old_tag.confidence = self.confidence.calc_single(tag.get("source", "default"))
-                        old_tag.updated_at = datetime.now()
+                        old_tag.update_time = datetime.now()
                 else:
                     old_tag.tag_value = tag["tag_value"]
                     old_tag.source = tag.get("source", old_tag.source)
-                    old_tag.updated_at = datetime.now()
+                    old_tag.update_time = datetime.now()
             else:
                 # 新标签
                 new_tag = CustomerTag(
@@ -178,7 +178,7 @@ class ProfileService:
         # 最近风评
         ra_stmt = select(RiskAssessment).where(
             RiskAssessment.customer_id == customer_id
-        ).order_by(RiskAssessment.created_at.desc()).limit(1)
+        ).order_by(RiskAssessment.create_time.desc()).limit(1)
         ra_result = await self.db.execute(ra_stmt)
         risk_assessment = ra_result.scalar_one_or_none()
 
@@ -226,7 +226,7 @@ class ProfileService:
             profile.experience_score = dimension_scores["experience"]["score"]
             profile.risk_pref_score = dimension_scores["risk_pref"]["score"]
             profile.behavior_score = dimension_scores["behavior"]["score"]
-            profile.updated_at = datetime.now()
+            profile.update_time = datetime.now()
         else:
             profile = FinCustomerProfile(
                 customer_id=customer_id,

@@ -45,7 +45,7 @@ class LongTermMemory:
         stmt = (
             select(RiskScoreRecord)
             .where(RiskScoreRecord.customer_id == customer_id)
-            .order_by(RiskScoreRecord.created_at.desc())
+            .order_by(RiskScoreRecord.create_time.desc())
             .limit(limit)
         )
         result = await self.db.execute(stmt)
