@@ -37,7 +37,20 @@ async def lifespan(app: FastAPI):
     print("  服务就绪，等待请求...\n")
     yield
 
+    # 启动风控周期校准
+    try:
+        from app.service.risk_scheduler import start_scheduler
+        start_scheduler()
+        print("  Scheduler: 风控周期校准已启动（每周日03:00）")
+    except Exception as e:
+        print(f"  Scheduler: 启动失败 ({e})")
+
     print("[关闭] 系统正在停止...")
+    try:
+        from app.service.risk_scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
     try:
         from app.config.database import close_redis, close_neo4j, close_milvus
         await close_redis()
