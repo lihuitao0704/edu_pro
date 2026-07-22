@@ -1,7 +1,7 @@
 """短期记忆 — Redis 会话管理"""
 
 import json
-from typing import List, Optional
+from typing import List
 from app.config.database import get_redis
 from app.config.settings import get_settings
 

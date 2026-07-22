@@ -3,7 +3,7 @@
 产品推荐 + 资产配置
 """
 
-from typing import List, Optional
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model.schemas import ProductRecommend, AllocationResult

@@ -1,14 +1,13 @@
 """
 数据库连接管理
-MySQL（SQLAlchemy）、Redis、Neo4j、Milvus、MinIO 连接池
+MySQL (SQLAlchemy Async) / Redis / Neo4j / Milvus / MinIO
 """
 
 import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from neo4j import AsyncGraphDatabase
-from pymilvus import connections as milvus_connections, Collection
-from minio import Minio
+from pymilvus import connections as milvus_connections
 from typing import Optional
 
 from app.config.settings import get_settings
@@ -18,9 +17,11 @@ settings = get_settings()
 
 # ==================== MySQL（SQLAlchemy Async） ====================
 
-# 构建异步数据库 URL
-_mysql_url = settings.mysql.url.replace("mysql+pymysql://", "mysql+aiomysql://")
-_mysql_url = _mysql_url.replace("?charset=utf8mb4", "")
+_mysql_url = (
+    f"mysql+aiomysql://{settings.mysql.user}:{settings.mysql.password}"
+    f"@{settings.mysql.host}:{settings.mysql.port}/{settings.mysql.database}"
+    f"?charset=utf8mb4"
+)
 
 engine = create_async_engine(
     _mysql_url,
@@ -42,7 +43,7 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncSession:
+async def get_db():
     """获取数据库会话（FastAPI 依赖注入用）"""
     async with async_session_factory() as session:
         try:
@@ -71,7 +72,7 @@ async def get_redis() -> aioredis.Redis:
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = aioredis.from_url(
-            settings.redis.url,
+            f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
             max_connections=settings.redis.max_connections,
             decode_responses=True,
         )
@@ -129,12 +130,6 @@ def init_milvus():
         _milvus_connected = True
 
 
-def get_milvus_collection(collection_name: str) -> Collection:
-    """获取 Milvus 集合"""
-    init_milvus()
-    return Collection(collection_name)
-
-
 def close_milvus():
     """关闭 Milvus 连接"""
     global _milvus_connected
@@ -145,20 +140,18 @@ def close_milvus():
 
 # ==================== MinIO ====================
 
-_minio_client: Optional[Minio] = None
+_minio_client = None
 
 
-def get_minio_client() -> Minio:
-    """获取 MinIO 客户端"""
+def get_minio_client():
+    """获取 MinIO 客户端（懒加载，避免强依赖）"""
     global _minio_client
     if _minio_client is None:
+        from minio import Minio
         _minio_client = Minio(
             settings.minio.endpoint,
             access_key=settings.minio.access_key,
             secret_key=settings.minio.secret_key,
             secure=settings.minio.secure,
         )
-        # 确保 bucket 存在
-        if not _minio_client.bucket_exists(settings.minio.bucket_docs):
-            _minio_client.make_bucket(settings.minio.bucket_docs)
     return _minio_client

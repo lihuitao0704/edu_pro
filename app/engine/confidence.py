@@ -4,7 +4,7 @@
 """
 
 from typing import Optional, List
-from datetime import datetime, date
+from datetime import datetime
 from app.config.rules_config import CONFIDENCE_SOURCE_INITIAL
 from app.config.settings import get_settings
 
