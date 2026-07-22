@@ -1,13 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="同步数据库表结构，实现四维度风险计算引擎">
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config/settings.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tool/embedding_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool/embedding_tool.py" afterDir="false" />
-    </list>
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善用户画像和投顾agent功能" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -42,15 +36,15 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "feature-lhg"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\edu_pro\app\engine" />
@@ -95,24 +89,11 @@
       <option name="project" value="LOCAL" />
       <updated>1784693550357</updated>
     </task>
-    <task id="LOCAL-00004" summary="构建架构图">
-      <option name="closed" value="true" />
-      <created>1784714873254</created>
-      <option name="number" value="00004" />
-      <option name="presentableId" value="LOCAL-00004" />
-      <option name="project" value="LOCAL" />
-      <updated>1784714873255</updated>
-    </task>
-    <task id="LOCAL-00005" summary="修改一些参数">
-      <option name="closed" value="true" />
-      <created>1784714989465</created>
-      <option name="number" value="00005" />
-      <option name="presentableId" value="LOCAL-00005" />
-      <option name="project" value="LOCAL" />
-      <updated>1784714989465</updated>
-    </task>
-    <option name="localTasksCounter" value="6" />
+    <option name="localTasksCounter" value="4" />
     <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
     <option name="TAB_STATES">
@@ -128,8 +109,6 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="搭建基础框架" />
     <MESSAGE value="完善用户画像和投顾agent功能" />
-    <MESSAGE value="构建架构图" />
-    <MESSAGE value="修改一些参数" />
-    <option name="LAST_COMMIT_MESSAGE" value="修改一些参数" />
+    <option name="LAST_COMMIT_MESSAGE" value="完善用户画像和投顾agent功能" />
   </component>
 </project>

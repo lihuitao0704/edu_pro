@@ -22,7 +22,7 @@ async def create_work_order(body: dict, db: AsyncSession = Depends(get_db)) -> A
     if not customer_id or not content:
         return ApiResponse(code=400, message="缺少客户ID或内容", trace_id=uuid.uuid4().hex[:8])
 
-    wo_no = f"WO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
+    wo_no = f"WO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
     biz_json = json.dumps({"content": content}, ensure_ascii=False)
     await db.execute(
         text("INSERT INTO biz_work_order (work_order_no,order_type,customer_id,submitter_id,status,remark,biz_content,create_time) VALUES (:n,:t,:c,:s,'待处理',:r,:b,NOW())"),

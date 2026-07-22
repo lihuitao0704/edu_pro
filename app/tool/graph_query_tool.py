@@ -26,8 +26,18 @@ async def resolve_customer_id(customer_name: str) -> Optional[int]:
 
 
 async def resolve_product_id(product_name: str) -> Optional[int]:
-    """根据产品名称查找 product_id（MySQL）"""
+    """根据产品名称查找 product_id（MySQL）
+    优先精确匹配，无结果时 fallback 到模糊匹配"""
     async with async_session_factory() as session:
+        # 精确匹配
+        result = await session.execute(
+            text("SELECT id FROM fin_product WHERE product_name = :name LIMIT 1"),
+            {"name": product_name},
+        )
+        row = result.first()
+        if row:
+            return row[0]
+        # 模糊匹配
         result = await session.execute(
             text("SELECT id FROM fin_product WHERE product_name LIKE :name LIMIT 1"),
             {"name": f"%{product_name}%"},
@@ -70,7 +80,7 @@ async def get_customer_products(customer_name: str) -> List[dict]:
 
 async def get_suitable_products(risk_level: str, limit: int = 10) -> List[dict]:
     """
-    适当性匹配产品查询
+    适当性匹配产品查询（通过图谱 SUITABLE_FOR 关系）
     入参: 风险等级（R1-R5），返回不超过该等级的在售产品
     返回: [{product_name, product_code, product_type, risk_level, expected_return}]
     """
@@ -79,10 +89,11 @@ async def get_suitable_products(risk_level: str, limit: int = 10) -> List[dict]:
     max_level = level_order.get(risk_level, 3)
     suitable_levels = [f"R{i}" for i in range(1, max_level + 1)]
 
+    # 使用图谱 SUITABLE_FOR 关系查询（RiskLevel → Product）
     results = await neo4j.run_query(
         """
-        MATCH (p:Product)
-        WHERE p.risk_level IN $levels AND p.status = '在售'
+        MATCH (r:RiskLevel)-[:SUITABLE_FOR]->(p:Product)
+        WHERE r.level IN $levels AND p.status = '在售'
         RETURN p.name AS product_name, p.code AS product_code,
                p.type AS product_type, p.risk_level AS risk_level,
                p.expected_return AS expected_return, p.min_amount AS min_amount
@@ -131,7 +142,7 @@ async def get_industry_distribution(customer_name: str) -> List[dict]:
 
     results = await neo4j.run_query(
         """
-        MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
+        MATCH (c:Customer {id: $cid})-[h:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
         RETURN i.name AS industry, count(p) AS product_count,
                sum(h.current_value) AS total_value
         ORDER BY total_value DESC

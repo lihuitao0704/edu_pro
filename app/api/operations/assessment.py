@@ -28,8 +28,26 @@ async def redo_assessment(body: dict, db: AsyncSession = Depends(get_db)) -> Api
     if not customer_id:
         return ApiResponse(code=400, message="缺少客户ID", trace_id=uuid.uuid4().hex[:8])
 
-    # 简化：根据答案数量计算分数（Mock）
-    total_score = min(len(answers) * 15, 100)
+    # 校验答案：必须是非空列表，每个元素为整数
+    if not answers or not isinstance(answers, list):
+        return ApiResponse(code=400, message="答案列表不能为空", trace_id=uuid.uuid4().hex[:8])
+
+    try:
+        answers = [int(a) for a in answers]
+    except (ValueError, TypeError):
+        return ApiResponse(code=400, message="答案必须为整数列表", trace_id=uuid.uuid4().hex[:8])
+
+    # 校验每题分值范围（每题 1-20 分）
+    for i, a in enumerate(answers):
+        if a < 1 or a > 20:
+            return ApiResponse(
+                code=400,
+                message=f"第 {i+1} 题分值 {a} 超出范围，每题应为 1-20 分",
+                trace_id=uuid.uuid4().hex[:8],
+            )
+
+    # 评分：各题分值求和，上限100
+    total_score = min(sum(answers), 100)
     risk_level = calc_risk_level(total_score)
     valid_until = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
 

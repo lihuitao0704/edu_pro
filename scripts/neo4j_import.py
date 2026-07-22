@@ -65,6 +65,25 @@ PRODUCT_INDUSTRY_MAP = {
     "HB": "IND004",    # 货币系列 → 金融
 }
 
+# 市场（Mock）
+MOCK_MARKETS = [
+    {"market_id": "MKT001", "name": "上海证券交易所"},
+    {"market_id": "MKT002", "name": "深圳证券交易所"},
+    {"market_id": "MKT003", "name": "北京证券交易所"},
+    {"market_id": "MKT004", "name": "场外市场"},
+]
+
+# 产品→市场 Mock 映射（按 product_code 前缀）
+PRODUCT_MARKET_MAP = {
+    "TXB": "MKT004",  # 天弘（货币/债券）→ 场外
+    "WF": "MKT001",    # Wealth系列 → 上交所
+    "HH": "MKT002",    # 混合系列 → 深交所
+    "GF": "MKT001",    # 广发系列 → 上交所
+    "YF": "MKT002",    # 易方达 → 深交所
+    "BF": "MKT004",    # 债券系列 → 场外
+    "HB": "MKT004",    # 货币系列 → 场外
+}
+
 
 async def import_risk_levels(driver):
     """导入风险等级节点"""
@@ -102,6 +121,17 @@ async def import_mock_managers(driver):
         print(f"  ✅ 基金经理节点 ({len(MOCK_FUND_MANAGERS)})")
 
 
+async def import_mock_markets(driver):
+    """导入 Mock 市场节点"""
+    async with driver.session(database=settings.neo4j.database) as session:
+        for mkt in MOCK_MARKETS:
+            await session.run(
+                "MERGE (m:Market {market_id: $id}) SET m.name = $name",
+                id=mkt["market_id"], name=mkt["name"],
+            )
+        print(f"  ✅ 市场节点 ({len(MOCK_MARKETS)})")
+
+
 async def import_products(driver):
     """从 MySQL 导入产品数据，创建 Product 节点 + BELONGS_TO/MANAGED_BY 关系"""
     async with async_session_factory() as mysql_session:
@@ -112,6 +142,14 @@ async def import_products(driver):
     # 列名映射
     col_map = {c: i for i, c in enumerate(columns)}
 
+    # 安全取值辅助函数：列不存在时返回 None 而非错误值
+    def safe_get(row, col_name, default=None):
+        idx = col_map.get(col_name)
+        if idx is None:
+            return default
+        val = row[idx]
+        return val if val is not None else default
+
     count = 0
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
         for row in rows:
@@ -119,12 +157,12 @@ async def import_products(driver):
             product_id = row[col_map["id"]]
             product_code = row[col_map["product_code"]]
             product_name = row[col_map["product_name"]]
-            product_type = row[col_map.get("product_type", -1)] or "混合型"
-            risk_level = row[col_map.get("risk_level", -1)] or "R3"
-            expected_return = float(row[col_map.get("expected_return", -1)] or 0)
-            min_amount = float(row[col_map.get("min_amount", -1)] or 1000)
-            fund_manager_name = row[col_map.get("fund_manager", -1)] or ""
-            status = row[col_map.get("status", -1)] or "在售"
+            product_type = safe_get(row, "product_type", "混合型")
+            risk_level = safe_get(row, "risk_level", "R3")
+            expected_return = float(safe_get(row, "expected_return", 0))
+            min_amount = float(safe_get(row, "min_amount", 1000))
+            fund_manager_name = safe_get(row, "fund_manager", "")
+            status = safe_get(row, "status", "在售")
 
             # 创建产品节点
             await neo4j_session.run(
@@ -176,6 +214,21 @@ async def import_products(driver):
                 "MATCH (p:Product {id: $pid}), (fm:FundManager {manager_id: $fm_id}) "
                 "MERGE (p)-[:MANAGED_BY]->(fm)",
                 pid=product_id, fm_id=fm_id,
+            )
+
+            # 风险等级 → 产品 (SUITABLE_FOR) — 适当性匹配：该风险等级适合这些产品
+            await neo4j_session.run(
+                "MATCH (r:RiskLevel {level: $level}), (p:Product {id: $pid}) "
+                "MERGE (r)-[:SUITABLE_FOR]->(p)",
+                level=risk_level, pid=product_id,
+            )
+
+            # 产品 → 市场 (TRADED_ON) — Mock 映射
+            market_id = PRODUCT_MARKET_MAP.get(prefix, "MKT004")
+            await neo4j_session.run(
+                "MATCH (p:Product {id: $pid}), (m:Market {market_id: $mid}) "
+                "MERGE (p)-[:TRADED_ON]->(m)",
+                pid=product_id, mid=market_id,
             )
 
             count += 1
@@ -275,7 +328,7 @@ async def show_stats(driver):
     """打印导入后的图谱统计"""
     async with driver.session(database=settings.neo4j.database) as session:
         # 节点统计
-        for label in ["Customer", "Product", "RiskLevel", "Industry", "FundManager"]:
+        for label in ["Customer", "Product", "RiskLevel", "Industry", "FundManager", "Market"]:
             result = await session.run(f"MATCH (n:{label}) RETURN count(n) AS cnt")
             data = await result.single()
             print(f"  {label}: {data['cnt']} 个节点")
@@ -290,46 +343,82 @@ async def show_stats(driver):
             print(f"    {rec['type']}: {rec['cnt']} 条")
 
 
+async def create_indexes(driver):
+    """创建索引（幂等），加速后续 MERGE 和查询"""
+    index_statements = [
+        "CREATE INDEX IF NOT EXISTS FOR (n:Customer) ON (n.id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Product) ON (n.id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Product) ON (n.code)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Industry) ON (n.industry_id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:RiskLevel) ON (n.level)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:FundManager) ON (n.manager_id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Market) ON (n.market_id)",
+    ]
+    async with driver.session(database=settings.neo4j.database) as session:
+        for stmt in index_statements:
+            await session.run(stmt)
+    print(f"  ✅ 索引 ({len(index_statements)})")
+
+
 async def main():
     """主入口"""
     print("=" * 50)
     print("🚀 Neo4j 知识图谱数据导入")
     print("=" * 50)
 
+    # 安全检查：必须传 --confirm 才执行清空操作
+    if "--confirm" not in sys.argv:
+        print("\n⚠️  警告：此脚本将清空 Neo4j 数据库中的全部数据后重新导入。")
+        print(f"   目标数据库: {settings.neo4j.database}")
+        print("\n   如需继续，请添加 --confirm 参数：")
+        print("   python -m scripts.neo4j_import --confirm")
+        sys.exit(1)
+
     driver = get_neo4j_driver()
 
-    # 先清空（开发阶段）
-    print("\n[1/7] 清空旧数据...")
-    async with driver.session(database=settings.neo4j.database) as session:
-        await session.run("MATCH (n) DETACH DELETE n")
-    print("  ✅ 已清空")
+    try:
+        # 先清空（开发阶段）
+        print("\n[1/9] 清空旧数据...")
+        async with driver.session(database=settings.neo4j.database) as session:
+            await session.run("MATCH (n) DETACH DELETE n")
+        print("  ✅ 已清空")
 
-    # 按顺序导入
-    print("\n[2/7] 导入风险等级...")
-    await import_risk_levels(driver)
+        # 创建索引（幂等，加速后续 MERGE 和查询）
+        print("\n[2/9] 创建索引...")
+        await create_indexes(driver)
 
-    print("\n[3/7] 导入 Mock 行业...")
-    await import_mock_industries(driver)
+        # 按顺序导入
+        print("\n[3/9] 导入风险等级...")
+        await import_risk_levels(driver)
 
-    print("\n[4/7] 导入 Mock 基金经理...")
-    await import_mock_managers(driver)
+        print("\n[4/9] 导入 Mock 行业...")
+        await import_mock_industries(driver)
 
-    print("\n[5/7] 导入产品数据 (MySQL → Neo4j)...")
-    await import_products(driver)
+        print("\n[5/9] 导入 Mock 基金经理...")
+        await import_mock_managers(driver)
 
-    print("\n[6/7] 导入客户数据 (MySQL → Neo4j)...")
-    await import_customers(driver)
+        print("\n[6/9] 导入 Mock 市场...")
+        await import_mock_markets(driver)
 
-    print("\n[6/7] 导入持仓关系 (MySQL → Neo4j)...")
-    await import_holdings(driver)
+        print("\n[7/9] 导入产品数据 (MySQL → Neo4j)...")
+        await import_products(driver)
 
-    # 统计
-    print("\n[7/7] 图谱统计:")
-    await show_stats(driver)
+        print("\n[8/9] 导入客户数据 (MySQL → Neo4j)...")
+        await import_customers(driver)
 
-    print("\n" + "=" * 50)
-    print("✅ 导入完成！")
-    print("=" * 50)
+        print("\n[9/9] 导入持仓关系 (MySQL → Neo4j)...")
+        await import_holdings(driver)
+
+        # 统计
+        print("\n图谱统计:")
+        await show_stats(driver)
+
+        print("\n" + "=" * 50)
+        print("✅ 导入完成！")
+        print("=" * 50)
+    finally:
+        # 确保连接池被清理
+        await driver.close()
 
 
 if __name__ == "__main__":
