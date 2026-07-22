@@ -9,9 +9,9 @@ from decimal import Decimal
 from typing import Optional
 from sqlalchemy import (
     BigInteger, String, Integer, Date, DateTime, Numeric,
-    JSON, Text, Index, Boolean,
+    JSON, Text, ForeignKey, Index,Boolean
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.config.database import Base
 
 
@@ -235,3 +235,40 @@ class ProductRecommendation(Base):
     score_detail: Mapped[Optional[dict]] = mapped_column(JSON, comment="评分明细")
     reasoning: Mapped[Optional[str]] = mapped_column(Text, comment="推荐理由")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, comment="推荐时间")
+
+
+class ConversationArchive(Base):
+    """会话归档表"""
+    __tablename__ = "conversation_archive"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    agent_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="customer_service/advisor/profile")
+    role: Mapped[str] = mapped_column(String(16), nullable=False, comment="user/assistant/system")
+    content: Mapped[Optional[str]] = mapped_column(Text)
+    tool_calls: Mapped[Optional[dict]] = mapped_column(JSON, comment="工具调用记录")
+    create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_session", "session_id"),
+        Index("idx_user", "user_id"),
+        Index("idx_agent", "agent_type"),
+    )
+
+
+class FinKnowledgeMeta(Base):
+    """金融知识元数据表"""
+    __tablename__ = "fin_knowledge_meta"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    knowledge_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True, comment="产品说明/政策法规/FAQ/操作指南")
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_file: Mapped[Optional[str]] = mapped_column(String(255))
+    minio_path: Mapped[Optional[str]] = mapped_column(String(512))
+    milvus_collection: Mapped[Optional[str]] = mapped_column(String(128))
+    version: Mapped[str] = mapped_column(String(32), default="v1")
+    status: Mapped[str] = mapped_column(String(16), default="有效", index=True, comment="有效/过期/草稿")
+    expire_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    update_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)

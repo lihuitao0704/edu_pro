@@ -177,6 +177,57 @@ class ApiResponse(BaseModel):
     trace_id: str
 
 
+# ==================== 智能客服Agent ====================
+
+class CustomerChatRequest(BaseModel):
+    """客服对话请求"""
+    session_id: str
+    message: str
+    user_id: int
+
+
+class SourceReference(BaseModel):
+    """来源引用"""
+    title: str
+    source_file: str
+    chunk_index: int = 0
+    score: float = 0.0
+    content_snippet: str = ""
+
+
+class CustomerChatResponse(BaseModel):
+    """客服对话响应"""
+    reply: str
+    sources: List[SourceReference] = []
+    session_id: str
+    intent: str = ""
+    confidence: float = 0.0
+
+
+class KnowledgeUploadResponse(BaseModel):
+    """知识上传响应"""
+    knowledge_id: int
+    title: str
+    chunk_count: int
+
+
+class KnowledgeListItem(BaseModel):
+    """知识列表项"""
+    id: int
+    knowledge_type: str
+    title: str
+    source_file: Optional[str] = None
+    status: str = "有效"
+    create_time: Optional[datetime] = None
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """知识检索请求"""
+    query: str
+    knowledge_type: Optional[str] = None  # faq / product / policy
+    top_k: int = 5
+
+
 # ==================== 风控监测（Phase 4） ====================
 
 

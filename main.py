@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import get_settings
+from app.utils.logger import setup_logger
 
+setup_logger()
 settings = get_settings()
 
 
@@ -93,6 +95,18 @@ try:
     app.include_router(advisor_router, prefix="/api/chat", tags=["投顾对话"])
 except Exception as e:
     print(f"  [WARN] 投顾路由加载失败: {e}")
+
+try:
+    from app.api.chat import router as customer_chat_router
+    app.include_router(customer_chat_router, prefix="/api/chat", tags=["智能客服"])
+except Exception as e:
+    print(f"  [WARN] 智能客服路由加载失败: {e}")
+
+try:
+    from app.api.knowledge import router as knowledge_router
+    app.include_router(knowledge_router, prefix="/api/knowledge", tags=["知识库管理"])
+except Exception as e:
+    print(f"  [WARN] 知识库路由加载失败: {e}")
 
 try:
     from app.api.chat import router as operator_router
