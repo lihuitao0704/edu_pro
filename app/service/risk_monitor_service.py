@@ -6,7 +6,6 @@
 
 import logging
 from datetime import datetime
-from decimal import Decimal
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +23,7 @@ class RiskMonitorService:
         self.rules = ALL_AML_RULES
 
     def evaluate_all(self, tx: dict) -> list[BaseAMLRule]:
-        """逐条匹配所有规则，返回触发的规则列表（纯CPU计算，不需async）"""
+        """逐条匹配所有规则，返回触发的规则列表（纯CPU计算）"""
         triggered = []
         for rule in self.rules:
             try:
@@ -54,43 +53,42 @@ class RiskMonitorService:
 
     def build_alert(self, tx: dict, triggered: list[BaseAMLRule], level: str, confidence: float) -> dict:
         """组装预警对象"""
-        now = datetime.now()
         rule_list = [{"rule_id": r.rule_id, "rule_name": r.rule_name, "risk_level": r.risk_level} for r in triggered]
         names = "、".join(r.rule_name for r in triggered)
         rec = {"low": "记录并持续关注", "medium": "1个工作日内核实", "high": "立即核实，必要时冻结上报"}
 
         return {
-            "alert_id": f"ALT{now.strftime('%Y%m%d%H%M%S')}",
             "customer_id": tx["customer_id"],
+            "transaction_id": tx.get("transaction_id", ""),
             "alert_level": level,
             "trigger_rules": rule_list,
             "confidence": round(confidence, 2),
             "summary": f"客户{tx['customer_id']}触发{len(triggered)}条规则：{names}",
             "recommendation": rec.get(level, ""),
             "status": "pending",
-            "created_at": now.isoformat(),
         }
 
     async def save_alert(self, db: AsyncSession, alert: dict):
-        """保存预警到 MySQL"""
+        """保存预警到 MySQL（字段对齐Excel DDL）"""
         entity = FinRiskAlert(
-            alert_id=alert["alert_id"],
             customer_id=alert["customer_id"],
+            alert_type="large_transaction",
             alert_level=alert["alert_level"],
-            trigger_rules=alert["trigger_rules"],
-            confidence=Decimal(str(alert["confidence"])),
             trigger_detail=alert["summary"],
-            status="pending",
+            transaction_ids={"tx_id": alert.get("transaction_id", ""), "trigger_rules": alert["trigger_rules"]},
+            status="未处理",
+            create_time=datetime.now(),
         )
         db.add(entity)
         await db.flush()
-        logger.info(f"预警已写入MySQL: {alert['alert_id']}")
+        await db.refresh(entity)
+        logger.info(f"预警已写入MySQL: id={entity.id}")
 
     async def get_alerts(self, db: AsyncSession, customer_id: int = None,
                          level: str = None, status: str = None,
                          days: int = 30, page: int = 1, pagesize: int = 20) -> tuple[int, list[dict]]:
         """查询历史预警（从 MySQL）"""
-        stmt = select(FinRiskAlert).order_by(FinRiskAlert.created_at.desc())
+        stmt = select(FinRiskAlert).order_by(FinRiskAlert.create_time.desc())
 
         if customer_id:
             stmt = stmt.where(FinRiskAlert.customer_id == customer_id)
@@ -101,43 +99,41 @@ class RiskMonitorService:
 
         result = await db.execute(stmt)
         all_alerts = result.scalars().all()
-
         total = len(all_alerts)
         start = (page - 1) * pagesize
-        page_alerts = all_alerts[start:start + pagesize]
-
-        return total, [_alert_to_dict(a) for a in page_alerts]
+        return total, [_to_dict(a) for a in all_alerts[start:start + pagesize]]
 
     async def get_alert(self, db: AsyncSession, alert_id: str) -> Optional[dict]:
-        """查询单条预警"""
-        stmt = select(FinRiskAlert).where(FinRiskAlert.alert_id == alert_id)
+        """查询单条预警（按主键id）"""
+        stmt = select(FinRiskAlert).where(FinRiskAlert.id == int(alert_id))
         result = await db.execute(stmt)
         alert = result.scalar_one_or_none()
-        return _alert_to_dict(alert) if alert else None
+        return _to_dict(alert) if alert else None
 
     async def handle_alert(self, db: AsyncSession, alert_id: str, action: str, handler_id: int, note: str) -> Optional[dict]:
         """处理预警"""
-        stmt = select(FinRiskAlert).where(FinRiskAlert.alert_id == alert_id)
+        stmt = select(FinRiskAlert).where(FinRiskAlert.id == int(alert_id))
         result = await db.execute(stmt)
         alert = result.scalar_one_or_none()
         if not alert:
             return None
         alert.status = action
         alert.handler_id = handler_id
-        alert.handle_note = note
-        alert.resolved_at = datetime.now()
+        alert.handle_result = note
+        alert.update_time = datetime.now()
         await db.flush()
-        return _alert_to_dict(alert)
+        return _to_dict(alert)
 
 
-def _alert_to_dict(a: FinRiskAlert) -> dict:
+def _to_dict(a: FinRiskAlert) -> dict:
+    """实体转字典"""
+    tx_ids = a.transaction_ids or {}
     return {
-        "alert_id": a.alert_id,
+        "alert_id": str(a.id),
         "customer_id": a.customer_id,
         "alert_level": a.alert_level,
-        "trigger_rules": a.trigger_rules,
-        "confidence": float(a.confidence) if a.confidence else 0.0,
+        "trigger_rules": tx_ids.get("trigger_rules", []),
         "summary": a.trigger_detail,
         "status": a.status,
-        "created_at": a.created_at.isoformat() if a.created_at else "",
+        "created_at": a.create_time.isoformat() if a.create_time else "",
     }

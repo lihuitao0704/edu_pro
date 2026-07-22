@@ -136,19 +136,16 @@ class FinRiskAlert(Base):
     __tablename__ = "fin_risk_alert"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    alert_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, comment="预警编号")
     customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    transaction_id: Mapped[Optional[str]] = mapped_column(String(64))
     alert_type: Mapped[str] = mapped_column(String(32), default="large_transaction")
     alert_level: Mapped[str] = mapped_column(String(8), nullable=False, comment="low/medium/high")
-    trigger_rules: Mapped[Optional[dict]] = mapped_column(JSON, comment="触发的规则列表")
-    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 2))
     trigger_detail: Mapped[Optional[str]] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(16), default="pending", comment="pending/processing/resolved/false_positive")
+    transaction_ids: Mapped[Optional[dict]] = mapped_column(JSON, comment="关联交易ID+触发的规则")
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="pending", comment="pending/processing/resolved/false_positive")
     handler_id: Mapped[Optional[int]] = mapped_column(BigInteger)
-    handle_note: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    handle_result: Mapped[Optional[str]] = mapped_column(Text)
+    create_time: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="创建时间")
+    update_time: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="更新时间")
 
 
 class ProductRecommendation(Base):

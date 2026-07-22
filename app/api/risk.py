@@ -47,7 +47,6 @@ async def check_suitability(req: SuitabilityCheckRequest, db: AsyncSession = Dep
 
 from app.service.risk_monitor_service import RiskMonitorService
 from app.engine.confidence import ConfidenceCalculator
-from app.config.database import get_db
 
 _monitor = RiskMonitorService()
 _confidence = ConfidenceCalculator()
