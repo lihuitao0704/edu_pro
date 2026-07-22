@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import get_settings
+from app.utils.logger import setup_logger
 
+setup_logger()
 settings = get_settings()
 
 

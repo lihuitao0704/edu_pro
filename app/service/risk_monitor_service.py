@@ -1,7 +1,7 @@
 """
 风控监测服务
 ============
-接收交易事件 → 规则匹配 → 预警分级 → 生成预警 → MySQL持久化
+接收交易事件 → 规则匹配 → 预警分级 → MySQL持久化 + 工单 + Redis双写
 """
 
 import logging
@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tool.risk_monitor_rules import BaseAMLRule, ALL_AML_RULES
-from app.model.entities import FinRiskAlert
+from app.model.entities import FinRiskAlert, BizWorkOrder
+from app.tool.memory_validator import MemoryUnitValidator
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class RiskMonitorService:
 
     def __init__(self):
         self.rules = ALL_AML_RULES
+        self.validator = MemoryUnitValidator()
 
     def evaluate_all(self, tx: dict) -> list[BaseAMLRule]:
         """逐条匹配所有规则，返回触发的规则列表（纯CPU计算）"""
@@ -38,13 +40,11 @@ class RiskMonitorService:
         count = len(triggered)
         if count == 0:
             return None
-
         triggered_ids = {r.rule_id for r in triggered}
         is_repeat = any(
             set(a.get("trigger_rules", [])) & triggered_ids for a in history
         )
         adjusted = count + (1 if is_repeat else 0)
-
         if adjusted == 1 and not is_repeat:
             return "low"
         elif adjusted <= 3:
@@ -56,7 +56,6 @@ class RiskMonitorService:
         rule_list = [{"rule_id": r.rule_id, "rule_name": r.rule_name, "risk_level": r.risk_level} for r in triggered]
         names = "、".join(r.rule_name for r in triggered)
         rec = {"low": "记录并持续关注", "medium": "1个工作日内核实", "high": "立即核实，必要时冻结上报"}
-
         return {
             "customer_id": tx["customer_id"],
             "transaction_id": tx.get("transaction_id", ""),
@@ -68,8 +67,8 @@ class RiskMonitorService:
             "status": "pending",
         }
 
-    async def save_alert(self, db: AsyncSession, alert: dict):
-        """保存预警到 MySQL（字段对齐Excel DDL）"""
+    async def save_alert(self, db: AsyncSession, alert: dict) -> int:
+        """保存预警到 MySQL + 黄色/红色自动创建工单 + Redis双写"""
         entity = FinRiskAlert(
             customer_id=alert["customer_id"],
             alert_type="large_transaction",
@@ -84,19 +83,55 @@ class RiskMonitorService:
         await db.refresh(entity)
         logger.info(f"预警已写入MySQL: id={entity.id}")
 
+        # 黄色/红色预警 → 自动创建工单
+        if alert["alert_level"] in ("medium", "high"):
+            await self._create_work_order(db, alert, entity.id)
+
+        # Redis 双写
+        await self._add_pending_alert(entity.id)
+
+        return entity.id
+
+    async def _create_work_order(self, db: AsyncSession, alert: dict, alert_id: int):
+        """自动创建可疑交易工单"""
+        now = datetime.now()
+        wo = BizWorkOrder(
+            work_order_no=f"WO{now.strftime('%Y%m%d%H%M%S')}{alert_id}",
+            order_type="可疑交易上报",
+            sub_type=alert["alert_level"],
+            customer_id=alert["customer_id"],
+            submitter_id=0,
+            priority="紧急" if alert["alert_level"] == "high" else "普通",
+            status="处理中",
+            biz_content={"alert_id": alert_id, "trigger_rules": alert["trigger_rules"],
+                         "summary": alert["summary"], "recommendation": alert["recommendation"]},
+            remark=f"风控Agent自动创建 - {alert['alert_level']}级预警",
+            create_time=now,
+        )
+        db.add(wo)
+        await db.flush()
+        logger.info(f"工单已创建: {wo.work_order_no}")
+
+    async def _add_pending_alert(self, alert_id: int):
+        """Redis 双写: risk:alert:pending"""
+        try:
+            from app.config.database import get_redis
+            r = await get_redis()
+            await r.sadd("risk:alert:pending", str(alert_id))
+        except Exception as e:
+            logger.warning(f"Redis双写失败(不影响主流程): {e}")
+
     async def get_alerts(self, db: AsyncSession, customer_id: int = None,
                          level: str = None, status: str = None,
                          days: int = 30, page: int = 1, pagesize: int = 20) -> tuple[int, list[dict]]:
         """查询历史预警（从 MySQL）"""
         stmt = select(FinRiskAlert).order_by(FinRiskAlert.create_time.desc())
-
         if customer_id:
             stmt = stmt.where(FinRiskAlert.customer_id == customer_id)
         if level:
             stmt = stmt.where(FinRiskAlert.alert_level == level)
         if status:
             stmt = stmt.where(FinRiskAlert.status == status)
-
         result = await db.execute(stmt)
         all_alerts = result.scalars().all()
         total = len(all_alerts)
