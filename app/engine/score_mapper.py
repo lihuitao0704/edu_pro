@@ -1,6 +1,6 @@
 """分数 → 风险等级映射"""
 
-from typing import Optional, List
+from typing import List
 from app.config.rules_config import (
     RISK_LEVEL_MAPPING,
     SUITABILITY_MATRIX,
@@ -35,10 +35,9 @@ def check_suitability(customer_level: str, product_level: str) -> bool:
 
 def calc_total_score(dimension_scores: dict) -> float:
     """
-    加权计算综合得分
+    计算综合得分（100分制）
+    各维度得分已含权重（维度一满分25 + 维度二满分25 + 维度三满分30 + 维度四满分20 = 100）
     dimension_scores: {"basic": 17.5, "experience": 16.25, "risk_pref": 15.0, "behavior": 15.0}
     """
-    total = 0.0
-    for dim, weight in DIMENSION_WEIGHTS.items():
-        total += dimension_scores.get(dim, 0) * weight
+    total = sum(dimension_scores.get(dim, 0) for dim in ["basic", "experience", "risk_pref", "behavior"])
     return round(total, 2)

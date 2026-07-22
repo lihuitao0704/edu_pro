@@ -3,10 +3,8 @@
 5 条熔断规则（FM-01 ~ FM-05）
 """
 
-from typing import Optional, List
-from datetime import date, datetime
-from app.config.rules_config import CIRCUIT_BREAKER_RULES
-from app.utils.exceptions import CircuitBreakerTriggered
+from typing import List
+from datetime import date
 
 
 class CircuitBreakerResult:

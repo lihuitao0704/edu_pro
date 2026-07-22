@@ -5,8 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.service.profile_service import ProfileService
 from app.model.schemas import (
-    ProfileAssessRequest, ProfileUpdateRequest, ApiResponse,
-)
+    ProfileUpdateRequest, )
 from app.utils.response import success, error
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
 

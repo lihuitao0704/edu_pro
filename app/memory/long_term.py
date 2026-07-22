@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.model.entities import RiskScoreRecord, ConversationArchive
+from app.model.entities import RiskScoreRecord
 
 
 class LongTermMemory:
