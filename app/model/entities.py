@@ -56,6 +56,7 @@ class FinCustomerProfile(Base):
     experience_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), comment="维度二：投资经验得分")
     risk_pref_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), comment="维度三：风险偏好得分")
     behavior_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), comment="维度四：行为异常得分")
+    risk_flag: Mapped[Optional[str]] = mapped_column(String(16), comment="风险标记: normal/warning/high — 风控事件驱动更新")
     profile_json: Mapped[Optional[dict]] = mapped_column(JSON, comment="完整画像JSON")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     update_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)

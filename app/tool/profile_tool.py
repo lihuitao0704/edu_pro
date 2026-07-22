@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 
 from app.model.entities import SysUser, FinCustomerProfile
 from app.service.profile_service import ProfileService
+from app.utils.exceptions import ProfileNotFound
 
 
 class ProfileToolInput(BaseModel):
@@ -60,6 +61,8 @@ class ProfileTool(BaseTool):
         # ── Step 1: 执行完整研判 ──
         try:
             assess_result = await service.assess(customer_id, trigger_type="agent_query")
+        except ProfileNotFound as e:
+            return self._not_found_json(customer_id, str(e))
         except Exception as e:
             return self._error_json(customer_id, str(e))
 
@@ -147,9 +150,23 @@ class ProfileTool(BaseTool):
         import json
         return json.dumps({
             "customer_id": customer_id,
-            "error": True,
+            "status": "error",
             "message": f"画像查询失败：{error_msg}",
         }, ensure_ascii=False)
+
+    def _not_found_json(self, customer_id: int, detail: str = "") -> str:
+        """客户画像不存在时的标准响应，供上层 Agent 识别"""
+        import json
+        return json.dumps({
+            "customer_id": customer_id,
+            "status": "not_found",
+            "suggestion": (
+                "该客户暂无风险画像记录，无法进行风险评估和产品推荐。"
+                "建议先引导客户完成风险测评问卷（C1-C5），"
+                "测评通过后系统将自动生成风险画像。"
+            ),
+            "detail": detail,
+        }, ensure_ascii=False, indent=2)
 
     # ═══════════════════════════════════════════════════════════════
     # 维度通俗解读（为 LLM 提供上下文线索）
