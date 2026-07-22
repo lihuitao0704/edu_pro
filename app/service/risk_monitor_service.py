@@ -42,7 +42,8 @@ class RiskMonitorService:
             return None
         triggered_ids = {r.rule_id for r in triggered}
         is_repeat = any(
-            set(a.get("trigger_rules", [])) & triggered_ids for a in history
+            bool(triggered_ids & _extract_rule_ids(a.get("trigger_rules", [])))
+            for a in history
         )
         adjusted = count + (1 if is_repeat else 0)
         if adjusted == 1 and not is_repeat:
@@ -158,6 +159,17 @@ class RiskMonitorService:
         alert.update_time = datetime.now()
         await db.flush()
         return _to_dict(alert)
+
+
+def _extract_rule_ids(trigger_rules) -> set:
+    """从trigger_rules中提取规则ID集合，兼容[dict]和[str]两种格式"""
+    ids = set()
+    for item in trigger_rules:
+        if isinstance(item, dict):
+            ids.add(item.get("rule_id", ""))
+        else:
+            ids.add(str(item))
+    return ids
 
 
 def _to_dict(a: FinRiskAlert) -> dict:
