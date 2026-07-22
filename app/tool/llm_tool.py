@@ -4,6 +4,7 @@ LLM Tool — 大模型调用封装
 """
 
 import asyncio
+import httpx
 from typing import Optional, AsyncGenerator
 
 from openai import AsyncOpenAI
@@ -19,16 +20,29 @@ class LLMTool:
     """LLM 对话工具（异步，支持重试 + 流式）"""
 
     def __init__(self):
+        # 创建自定义 httpx 客户端，禁用自动代理检测（trust_env=False）
+        # 避免系统代理配置导致连接失败
+        http_client = httpx.AsyncClient(
+            trust_env=False,  # 禁用自动代理检测
+            timeout=settings.llm.openai_timeout,
+        )
+
         self.client = AsyncOpenAI(
             api_key=settings.llm.openai_api_key,
             base_url=settings.llm.openai_base_url,
             timeout=settings.llm.openai_timeout,
             max_retries=0,  # 我们自己控制重试
+            http_client=http_client,  # 使用自定义客户端
         )
         self.model = settings.llm.openai_model_chat
         self.default_temperature = settings.llm.openai_temperature
         self.default_max_tokens = settings.llm.openai_max_tokens
         self.retry_delays = settings.llm.retry_delays_list
+
+        # 启动时打印配置信息（帮助诊断）
+        logger.info(f"LLMTool 初始化 | base_url={settings.llm.openai_base_url} | model={self.model}")
+        logger.info(f"LLMTool 初始化 | api_key={settings.llm.openai_api_key[:10]}...")
+        logger.info(f"LLMTool 初始化 | 已禁用自动代理检测 (trust_env=False)")
 
     async def chat(
         self,
@@ -91,7 +105,13 @@ class LLMTool:
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"LLM 调用失败（第 {attempt + 1} 次）: {e}")
+                # 打印完整错误信息（包括异常类型和属性）
+                error_detail = f"{type(e).__name__}: {str(e)}"
+                if hasattr(e, 'status_code'):
+                    error_detail += f" | status_code={e.status_code}"
+                if hasattr(e, 'request'):
+                    error_detail += f" | request_url={e.request.url if hasattr(e.request, 'url') else 'N/A'}"
+                logger.warning(f"LLM 调用失败（第 {attempt + 1} 次）: {error_detail}")
 
         logger.error(f"LLM 调用最终失败，已重试 {len(self.retry_delays) + 1} 次: {last_error}")
         raise last_error

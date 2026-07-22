@@ -57,7 +57,8 @@ class EmbeddingTool:
                 "input": cleaned,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # 禁用自动代理检测
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 result = response.json()

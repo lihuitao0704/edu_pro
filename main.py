@@ -95,8 +95,8 @@ except Exception as e:
     print(f"  [WARN] 投顾路由加载失败: {e}")
 
 try:
-    from app.api.chat import router as customer_chat_router
-    app.include_router(customer_chat_router, prefix="/api/chat", tags=["智能客服"])
+    from app.api.chat import customer_router
+    app.include_router(customer_router, prefix="/api/chat", tags=["智能客服"])
 except Exception as e:
     print(f"  [WARN] 智能客服路由加载失败: {e}")
 
@@ -107,7 +107,7 @@ except Exception as e:
     print(f"  [WARN] 知识库路由加载失败: {e}")
 
 try:
-    from app.api.chat import router as operator_router
+    from app.api.chat import operator_router
     app.include_router(operator_router, prefix="/api/chat", tags=["业务操作"])
 except Exception as e:
     print(f"  [WARN] 业务操作路由加载失败: {e}")

@@ -8,9 +8,10 @@ P0: 支持 产品申购 + 产品查询 两种意图
 import os
 import uuid
 import json
+import httpx
 from typing import Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from app.config.settings import get_settings
 from app.api.operations.purchase import purchase_product
@@ -33,9 +34,15 @@ settings = get_settings()
 
 # ==================== LLM 客户端 ====================
 
-llm_client = OpenAI(
+# 使用 AsyncOpenAI 异步客户端，避免阻塞事件循环
+_http_client = httpx.AsyncClient(trust_env=False, timeout=settings.llm.openai_timeout)
+
+llm_client = AsyncOpenAI(
     api_key=settings.llm.openai_api_key,
     base_url=settings.llm.openai_base_url,
+    timeout=settings.llm.openai_timeout,
+    max_retries=0,
+    http_client=_http_client,
 )
 
 # ==================== RBAC 权限矩阵 ====================
@@ -430,7 +437,7 @@ async def operator_chat(
 
     # 1. 调用 LLM（Function Calling）
     try:
-        response = llm_client.chat.completions.create(
+        response = await llm_client.chat.completions.create(
             model=settings.llm.openai_model_chat,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

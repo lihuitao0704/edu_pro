@@ -17,6 +17,7 @@ GraphRAG 融合检索 Pipeline
 
 import json
 import asyncio
+import httpx
 from typing import List, Dict, Optional
 
 from langchain_openai import ChatOpenAI
@@ -294,11 +295,17 @@ class GraphRAGPipeline:
         """
         if self._embedding_client is None:
             from openai import AsyncOpenAI
+            # 禁用自动代理检测
+            http_client = httpx.AsyncClient(
+                trust_env=False,
+                timeout=settings.llm.openai_timeout,
+            )
             self._embedding_client = AsyncOpenAI(
                 api_key=settings.llm.openai_api_key,
                 base_url=settings.llm.openai_base_url,
                 timeout=settings.llm.openai_timeout,
                 max_retries=settings.llm.openai_max_retries,
+                http_client=http_client,
             )
         try:
             resp = await self._embedding_client.embeddings.create(
@@ -312,7 +319,6 @@ class GraphRAGPipeline:
 
     async def _get_embedding_ollama(self, text: str) -> Optional[List[float]]:
         """Ollama 本地 Embedding 降级方案"""
-        import httpx
         try:
             ollama_url = getattr(settings.llm, "ollama_embed_url", None)
             if not ollama_url:
@@ -320,7 +326,8 @@ class GraphRAGPipeline:
                 import os
                 ollama_url = os.getenv("OLLAMA_EMBED_URL", "http://192.168.110.59:11434")
 
-            async with httpx.AsyncClient(timeout=30) as client:
+            # 禁用自动代理检测
+            async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
                 resp = await client.post(
                     f"{ollama_url}/api/embeddings",
                     json={

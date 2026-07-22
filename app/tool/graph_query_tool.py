@@ -131,7 +131,7 @@ async def get_industry_distribution(customer_name: str) -> List[dict]:
 
     results = await neo4j.run_query(
         """
-        MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
+        MATCH (c:Customer {id: $cid})-[h:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
         RETURN i.name AS industry, count(p) AS product_count,
                sum(h.current_value) AS total_value
         ORDER BY total_value DESC

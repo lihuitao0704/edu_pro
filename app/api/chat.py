@@ -1,5 +1,5 @@
 """
-Chat API — 智能客服对话接口
+Chat API — 智能客服 + 业务操作对话接口
 """
 
 from fastapi import APIRouter, Depends
@@ -12,7 +12,15 @@ from app.service.agent_service import get_customer_service_agent
 from app.utils.response import success
 from app.service.operator_agent import operator_chat
 
-router = APIRouter()
+# 智能客服路由（/api/chat/customer）
+customer_router = APIRouter()
+
+# 业务操作路由（/api/chat/operator）
+operator_router = APIRouter()
+
+# 向后兼容：保留 router 引用（指向客服路由，避免其他模块 import 报错）
+router = customer_router
+
 
 class OperatorChatRequest(BaseModel):
     """业务操作对话请求"""
@@ -20,6 +28,7 @@ class OperatorChatRequest(BaseModel):
     session_id: str = ""
     user_id: int = 0
     user_role: str = "理财顾问"
+
 
 class OperatorChatResponse(BaseModel):
     """业务操作对话响应"""
@@ -29,7 +38,8 @@ class OperatorChatResponse(BaseModel):
     status: str = "ok"
     session_id: str = ""
 
-@router.post("/customer", response_model=dict)
+
+@customer_router.post("/customer", response_model=dict)
 async def customer_chat(
     request: CustomerChatRequest,
     db: AsyncSession = Depends(get_db),
@@ -48,7 +58,8 @@ async def customer_chat(
 
     return success(data=response.model_dump())
 
-@router.post("/operator")
+
+@operator_router.post("/operator")
 async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
     """
     业务操作 Agent 对话接口
