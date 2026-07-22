@@ -46,6 +46,9 @@ class RerankerTool:
         """
         对检索结果进行重排序
 
+        策略：跳过 LLM Reranker（推理模型无法稳定输出 JSON），
+        直接使用 Milvus 向量相似度分数排序。
+
         Args:
             query: 用户查询
             documents: 检索结果列表，每项需包含 content 字段
@@ -56,77 +59,95 @@ class RerankerTool:
         if not documents:
             return []
 
-        # 只有1条时直接返回
-        if len(documents) == 1:
-            return documents[:top_n]
+        # 直接使用 Milvus 向量相似度分数排序（已在 search 阶段计算好）
+        # documents 中的 score 字段就是 Milvus 的 cosine similarity
+        documents.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-        # 构建文档列表文本
-        doc_lines = []
-        for i, doc in enumerate(documents):
-            content = doc.get("content", "")
-            # 截断过长内容，避免超出 token 限制
-            if len(content) > 300:
-                content = content[:300] + "..."
-            doc_lines.append(f"[片段{i}] {content}")
-
-        documents_text = "\n\n".join(doc_lines)
-        prompt = RERANK_PROMPT_TEMPLATE.format(query=query, documents=documents_text)
-
-        try:
-            response = await self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=512,
-            )
-
-            # 解析 LLM 返回的 JSON 评分
-            scores = self._parse_scores(response, len(documents))
-
-            # 将评分合并到原始文档
-            for item in scores:
-                idx = item["index"]
-                if 0 <= idx < len(documents):
-                    documents[idx]["rerank_score"] = item["score"]
-
-            # 按 rerank_score 降序排序
-            documents.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
-
-            # 用 rerank_score 覆盖原始 score
-            for doc in documents:
-                if "rerank_score" in doc:
-                    doc["score"] = doc["rerank_score"]
-
-            result = documents[:top_n]
-            logger.info(
-                f"Reranker 完成 | query={query[:30]}... | "
-                f"输入={len(documents)} | 输出={len(result)} | "
-                f"top_score={result[0].get('score', 0):.3f}" if result else "无结果"
-            )
-            return result
-
-        except Exception as e:
-            logger.warning(f"LLM Reranker 失败，跳过重排序: {e}")
-            # 降级：直接返回原始排序结果
-            return documents[:top_n]
+        result = documents[:top_n]
+        logger.info(
+            f"Reranker 完成（向量分数直排） | query={query[:30]}... | "
+            f"输入={len(documents)} | 输出={len(result)} | "
+            f"top_score={result[0].get('score', 0):.3f}" if result else "无结果"
+        )
+        return result
 
     def _parse_scores(self, response: str, doc_count: int) -> list[dict]:
         """解析 LLM 返回的评分 JSON"""
+        import re
         try:
             # 尝试提取 JSON 数组
             text = response.strip()
-            # 处理可能被 markdown 包裹的情况
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
 
-            scores = json.loads(text)
-            if isinstance(scores, list):
+            # 调试日志 - 打印完整响应
+            logger.info(f"Reranker 原始响应长度: {len(text)}")
+            logger.info(f"Reranker 原始响应: {text[:1000]}")
+
+            # 如果响应为空，直接返回默认分数
+            if not text:
+                logger.warning("Reranker LLM返回空响应，使用默认分数")
+                return [{"index": i, "score": 0.5} for i in range(doc_count)]
+
+            # 1. 先尝试直接解析
+            if text.startswith("["):
+                scores = json.loads(text)
+                if isinstance(scores, list):
+                    logger.info(f"Reranker 解析成功（直接解析）: {len(scores)} 个评分")
+                    return scores
+
+            # 2. 尝试从 markdown 代码块中提取
+            if "```" in text:
+                code_blocks = re.findall(r'```(?:json)?\s*(\[.*?\])\s*```', text, re.DOTALL)
+                for block in code_blocks:
+                    try:
+                        scores = json.loads(block)
+                        if isinstance(scores, list):
+                            logger.info(f"Reranker 解析成功（markdown代码块）: {len(scores)} 个评分")
+                            return scores
+                    except json.JSONDecodeError:
+                        continue
+
+            # 3. 尝试从文本中提取 JSON 数组（可能被推理文本包裹）
+            json_match = re.search(r'\[[\s\S]*?\{[\s\S]*?"index"[\s\S]*?"score"[\s\S]*?\}[\s\S]*?\]', text)
+            if json_match:
+                try:
+                    scores = json.loads(json_match.group())
+                    if isinstance(scores, list):
+                        logger.info(f"Reranker 解析成功（正则提取）: {len(scores)} 个评分")
+                        return scores
+                except json.JSONDecodeError:
+                    pass
+
+            # 4. 尝试提取所有 {"index": N, "score": N.N} 格式的片段
+            pattern = r'\{[^{}]*"index"\s*:\s*(\d+)[^{}]*"score"\s*:\s*([\d.]+)[^{}]*\}'
+            matches = re.findall(pattern, text)
+            if matches:
+                scores = [{"index": int(idx), "score": float(score)} for idx, score in matches]
+                logger.info(f"Reranker 解析成功（模式匹配）: {len(scores)} 个评分")
                 return scores
 
-        except (json.JSONDecodeError, IndexError, KeyError) as e:
-            logger.warning(f"Reranker 评分解析失败: {e}，原始响应: {response[:200]}")
+            # 5. 如果以上都失败，尝试更宽松的模式：只提取数字对
+            # 查找类似 "片段0: 0.8" 或 "[0] 0.8" 的模式
+            loose_pattern = r'(?:片段|片段\s*|[\[])\s*(\d+)\s*[:\]]\s*([\d.]+)'
+            loose_matches = re.findall(loose_pattern, text)
+            if loose_matches:
+                scores = [{"index": int(idx), "score": float(score)} for idx, score in loose_matches]
+                logger.info(f"Reranker 解析成功（宽松模式）: {len(scores)} 个评分")
+                return scores
+
+            # 6. 最后的尝试：如果文本中包含数字，尝试提取所有浮点数作为分数
+            all_numbers = re.findall(r'\b\d+\.\d+\b', text)
+            if len(all_numbers) >= doc_count:
+                # 取前 doc_count 个数字作为分数
+                scores = [{"index": i, "score": float(all_numbers[i])} for i in range(doc_count)]
+                logger.info(f"Reranker 解析成功（数字提取）: {len(scores)} 个评分")
+                return scores
+
+            logger.warning(f"Reranker 所有解析方式均失败，使用默认分数 0.5")
+            logger.warning(f"完整响应内容: {text}")
+
+        except Exception as e:
+            logger.warning(f"Reranker 评分解析异常: {e}")
+            logger.warning(f"完整响应内容: {response}")
 
         # 解析失败时给所有文档相同分数（保持原序）
         return [{"index": i, "score": 0.5} for i in range(doc_count)]

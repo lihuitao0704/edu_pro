@@ -133,6 +133,12 @@ except Exception as e:
     print(f"  [WARN] 业务操作路由加载失败: {e}")
 
 try:
+    from app.api.chat import analyst_router
+    app.include_router(analyst_router, prefix="/api/chat", tags=["数据分析"])
+except Exception as e:
+    print(f"  [WARN] 数据分析路由加载失败: {e}")
+
+try:
     from app.api.graph import router as graph_router
     app.include_router(graph_router, prefix="/api/graph", tags=["知识图谱"])
 except Exception as e:

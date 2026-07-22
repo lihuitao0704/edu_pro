@@ -83,7 +83,11 @@ class IntentService:
         try:
             # 调用 LLM 分类
             result = await self.llm.classify(prompt, temperature=0.1)
-            intent = result.strip().lower()
+            result = result.strip()
+
+            # 从推理文本中提取意图标签
+            # 推理模型可能返回思考过程，需要提取最终答案
+            intent = self._extract_intent_from_text(result)
 
             # 验证意图类别
             if intent not in INTENT_PRIORITY:
@@ -99,6 +103,33 @@ class IntentService:
         except Exception as e:
             logger.error(f"意图识别失败: {e}，降级为 chitchat")
             return "chitchat", 0.5
+
+    def _extract_intent_from_text(self, text: str) -> str:
+        """从LLM返回的文本中提取意图标签"""
+        import re
+
+        # 如果文本本身就是一个有效的意图标签，直接返回
+        valid_intents = ["product_inquiry", "policy_interpretation", "faq", "chitchat", "transfer_human"]
+        if text.lower() in valid_intents:
+            return text.lower()
+
+        # 尝试匹配 "意图：xxx" 或 "意图:xxx" 格式
+        match = re.search(r'意图[：:]\s*(\w+)', text)
+        if match:
+            return match.group(1).lower()
+
+        # 尝试从文本末尾提取最后一个有效意图
+        for intent in reversed(valid_intents):
+            if intent in text.lower():
+                return intent
+
+        # 尝试匹配 "product_inquiry" 等关键词
+        for intent in valid_intents:
+            if intent in text.lower():
+                return intent
+
+        # 无法提取，返回原文本
+        return text.lower()
 
     def get_knowledge_type(self, intent: str) -> Optional[str]:
         """获取意图对应的知识类型"""

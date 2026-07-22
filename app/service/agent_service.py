@@ -180,12 +180,30 @@ class CustomerServiceAgent:
         for r in rag_results:
             source_info = r.get("source_info", {})
             metadata = r.get("metadata", {})
+
+            # 智能截断 content_snippet，避免在词语中间截断
+            content = r.get("content", "")
+            if len(content) > 100:
+                # 截取前 100 个字符
+                snippet = content[:100]
+                # 找到最后一个完整的词语边界（句号、逗号、空格、换行等）
+                for sep in ['。', '，', '、', '；', '！', '？', '\n', ' ', '.', ',']:
+                    last_sep = snippet.rfind(sep)
+                    if last_sep > 50:  # 至少保留 50 个字符
+                        snippet = snippet[:last_sep + 1]
+                        break
+                else:
+                    # 如果没找到合适的分隔符，就保持 100 字符
+                    snippet = snippet
+            else:
+                snippet = content
+
             sources.append(SourceReference(
                 title=source_info.get("title", "未知"),
                 source_file=source_info.get("source_file", ""),
                 chunk_index=metadata.get("chunk_index", 0),
                 score=r.get("score", 0),
-                content_snippet=r.get("content", "")[:100],
+                content_snippet=snippet,
             ))
         return sources
 

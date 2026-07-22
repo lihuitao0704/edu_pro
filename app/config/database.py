@@ -5,7 +5,8 @@ MySQL (SQLAlchemy Async) / Redis / Neo4j / Milvus / MinIO
 
 import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from neo4j import AsyncGraphDatabase
 from pymilvus import connections as milvus_connections
 from typing import Optional
@@ -34,6 +35,26 @@ engine = create_async_engine(
 async_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+# 同步 session factory（供 NL2SQL 等需要同步操作的模块使用）
+_sync_mysql_url = (
+    f"mysql+pymysql://{settings.mysql.user}:{settings.mysql.password}"
+    f"@{settings.mysql.host}:{settings.mysql.port}/{settings.mysql.database}"
+    f"?charset=utf8mb4"
+)
+
+_sync_engine = create_engine(
+    _sync_mysql_url,
+    pool_size=settings.mysql.pool_size,
+    pool_recycle=settings.mysql.pool_recycle,
+    echo=settings.mysql.echo,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    bind=_sync_engine,
     expire_on_commit=False,
 )
 

@@ -82,8 +82,14 @@ class RAGService:
             top_n=config["rerank_top_n"],
         )
 
-        # 4. Score 过滤
-        filtered = [r for r in reranked if r.get("score", 0) >= config["threshold"]]
+        # 4. Score 过滤（降低阈值，保留更多结果）
+        # 原阈值 0.7 太高，改为 0.3 以保留更多相关结果
+        filtered = [r for r in reranked if r.get("score", 0) >= 0.3]
+
+        # 如果过滤后为空，但 reranked 有结果，至少保留 top 1
+        if not filtered and reranked:
+            logger.warning(f"RAG 过滤后无结果，保留 reranked top1 | query={query[:30]}...")
+            filtered = reranked[:1]
 
         # 5. 关联元数据（来源信息）
         for r in filtered:

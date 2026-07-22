@@ -23,15 +23,24 @@ class SafetyService:
     """安全审核服务"""
 
     # 违规内容正则模式
+    # 匹配"承诺性"表述，但排除 LLM 在否定/解释/风险提示中提到的情况
+    # 例如：LLM 说"不存在保证收益的产品"是合规的，不应被拦截
     PROHIBITED_PATTERNS = [
-        r"保证收益",
-        r"保本保息",
-        r"零风险",
-        r"稳赚不赔",
-        r"承诺.*收益",
-        r"无风险.*理财",
-        r"绝对.*赚",
-        r"一定.*涨",
+        r"保本保息",          # 保本保息 — 违规承诺
+        r"零风险",            # 零风险 — 违规表述
+        r"稳赚不赔",          # 稳赚不赔 — 违规表述
+        r"无风险.*理财",      # 无风险理财 — 违规表述
+        r"绝对.*赚",          # 绝对赚 — 违规表述
+        r"一定.*涨",          # 一定涨 — 违规表述
+        r"包赚",              # 包赚 — 违规表述
+        r"肯定.*能赚",        # 肯定能赚 — 违规表述
+    ]
+
+    # 需要上下文判断的"敏感词"模式
+    # 这些词本身不一定违规，需要看上下文（是否被否定/解释）
+    CONTEXTUAL_PATTERNS = [
+        (r"保证收益", r"(不|没有|无|不存在|无法|不能|不会).{0,10}保证收益"),
+        (r"承诺.*收益", r"(不|没有|无|不存在|无法|不能|不会).{0,10}承诺.{0,5}收益"),
     ]
 
     # 兜底话术
@@ -46,6 +55,7 @@ class SafetyService:
         Returns:
             SafetyCheckResult
         """
+        # 1. 检查绝对违规模式（直接拦截）
         for pattern in self.PROHIBITED_PATTERNS:
             if re.search(pattern, text):
                 logger.warning(f"安全审核不通过 | 包含违规内容: {pattern} | text={text[:50]}...")
@@ -54,6 +64,20 @@ class SafetyService:
                     reason=f"包含违规内容：{pattern}",
                     action="replace_with_safe_response",
                 )
+
+        # 2. 检查上下文敏感模式（否定语境下不拦截）
+        for sensitive_pattern, negation_pattern in self.CONTEXTUAL_PATTERNS:
+            if re.search(sensitive_pattern, text):
+                # 敏感词出现了，检查是否在否定语境中
+                if not re.search(negation_pattern, text):
+                    # 不在否定语境中，判定为违规
+                    logger.warning(f"安全审核不通过 | 包含敏感内容: {sensitive_pattern} | text={text[:50]}...")
+                    return SafetyCheckResult(
+                        passed=False,
+                        reason=f"包含敏感内容：{sensitive_pattern}",
+                        action="replace_with_safe_response",
+                    )
+                # 在否定语境中（如"不存在保证收益"），合规，跳过
 
         return SafetyCheckResult(passed=True)
 
@@ -70,8 +94,8 @@ class SafetyService:
         # RAG 检索最高分
         rag_max_score = max([r.get("score", 0) for r in rag_results], default=0)
 
-        # RAG 置信度过低
-        if rag_max_score < 0.6:
+        # RAG 置信度过低（阈值从 0.6 降到 0.3，配合向量直排策略）
+        if rag_max_score < 0.3:
             logger.warning(f"RAG 置信度过低 | max_score={rag_max_score:.3f}")
             return {
                 "should_fallback": True,

@@ -83,10 +83,12 @@ async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
 
 # ==================== 数据分析 Agent ====================
 
+# 数据分析Agent使用独立的路由器，避免与智能客服路由混淆
+analyst_router = APIRouter()
 nl2sql_service = NL2SQLService()
 
 
-@router.post("/chat/analyst", response_model=ApiResponse, tags=["数据分析Agent"])
+@analyst_router.post("/analyst", response_model=ApiResponse)
 async def chat_analyst(request: QueryRequest):
     """
     数据分析Agent对话接口
@@ -122,7 +124,7 @@ async def chat_analyst(request: QueryRequest):
         )
 
 
-@router.get("/chat/session/{session_id}/history", tags=["数据分析Agent"])
+@analyst_router.get("/session/{session_id}/history")
 async def get_session_history(session_id: str):
     """获取会话历史（预留接口）"""
     return success(
