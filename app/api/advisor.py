@@ -1,85 +1,65 @@
-"""投顾对话 API 路由"""
+"""投顾对话 API 路由 — LLM Agent 统一驱动
+
+决策者从「开发者的 if/elif」变为「LLM 大模型」。
+API 层只做一件事：创建 AdvisorAgent → 调用 execute → 返回结果。
+Agent 内部自行决定调用哪个工具、按什么顺序调用。
+"""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.agent.profile_agent import ProfileAgent
-from app.agent.recommendation_agent import RecommendationAgent
-from app.agent.explanation_agent import ExplanationAgent
+from app.config.database import get_db
+from app.agent.advisor_agent import AdvisorAgent
 from app.model.schemas import AdvisorChatRequest, RecommendRequest, AllocationRequest
 from app.utils.response import success, error
+from app.utils.logger import get_logger
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 
 @router.post("/advisor")
 async def advisor_chat(req: AdvisorChatRequest, db: AsyncSession = Depends(get_db)):
     """
-    投顾对话接口
-    根据消息意图自动路由到对应的 Agent（画像/推荐/解释）
+    投顾对话接口（LLM Agent 驱动）
+
+    接收用户自然语言消息 → 交给 AdvisorAgent → Agent 自行决策工具调用链 → 返回回复。
+
+    Agent 工具箱：
+      - profile_tool       → 查客户风险画像
+      - recommend_products → 产品推荐打分
+      - asset_allocation   → 资产配置建议
+      - graphrag_search    → 知识图谱 + 文档检索
     """
     if not req.customer_id:
         return error(400, "缺少 customer_id 参数")
 
-    message = req.message
-
     try:
-        # 意图识别 → 路由 Agent
-        if "配置" in message or "资产配置" in message:
-            agent = RecommendationAgent(db, req.session_id)
-            result = await agent.execute(message, customer_id=req.customer_id)
-        elif "推荐" in message or "产品" in message:
-            agent = RecommendationAgent(db, req.session_id)
-            result = await agent.execute(message, customer_id=req.customer_id, top_n=3)
-        elif "为什么" in message or "解释" in message or "原因" in message:
-            agent = ExplanationAgent(db, req.session_id)
-            result = await agent.execute(message, customer_id=req.customer_id)
-        elif "画像" in message or "研判" in message or "评估" in message or "标签" in message:
-            agent = ProfileAgent(db, req.session_id)
-            result = await agent.execute(message, customer_id=req.customer_id)
-        else:
-            # 默认：查询画像 + 推荐
-            profile_agent = ProfileAgent(db, req.session_id)
-            profile_result = await profile_agent.execute("查询客户画像", customer_id=req.customer_id)
+        agent = AdvisorAgent(db, req.session_id)
+        result = await agent.execute(req.message, customer_id=req.customer_id)
 
-            rec_agent = RecommendationAgent(db, req.session_id)
-            rec_result = await rec_agent.execute("推荐产品", customer_id=req.customer_id)
-
-            result = {
-                "reply": f"{profile_result['reply']}\n\n{rec_result['reply']}",
-                "recommendations": rec_result.get("recommendations", []),
-                "customer_profile": rec_result.get("customer_profile"),
-                "reasoning": rec_result.get("reasoning"),
-            }
-
-        return success(
-            data={
-                "reply": result.get("reply", "处理完成"),
-                "recommendations": result.get("recommendations", []),
-                "customer_profile": result.get("customer_profile"),
-                "reasoning": result.get("reasoning"),
-                "session_id": req.session_id,
-            }
-        )
+        return success(data={
+            "reply": result.get("reply", "处理完成"),
+            "recommendations": result.get("recommendations", []),
+            "customer_profile": result.get("customer_profile"),
+            "reasoning": result.get("reasoning"),
+            "session_id": req.session_id,
+        })
     except Exception as e:
-        return error(500, str(e))
+        logger.error(f"投顾对话异常: {e}", exc_info=True)
+        return error(500, f"投顾服务异常: {str(e)}")
 
 
 @router.post("/recommend")
 async def recommend_products(req: RecommendRequest, db: AsyncSession = Depends(get_db)):
-    """纯产品推荐接口"""
-    agent = RecommendationAgent(db)
-    result = await agent.execute(
-        "推荐产品",
-        customer_id=req.customer_id,
-        top_n=req.top_n,
-    )
+    """纯产品推荐接口（直接调用 Agent，不走会话）"""
+    agent = AdvisorAgent(db)
+    result = await agent.execute("推荐产品", customer_id=req.customer_id)
     return success(data=result)
 
 
 @router.post("/allocation")
 async def asset_allocation(req: AllocationRequest, db: AsyncSession = Depends(get_db)):
-    """资产配置建议接口"""
-    agent = RecommendationAgent(db)
+    """资产配置建议接口（直接调用 Agent，不走会话）"""
+    agent = AdvisorAgent(db)
     result = await agent.execute("资产配置", customer_id=req.customer_id)
     return success(data=result)
