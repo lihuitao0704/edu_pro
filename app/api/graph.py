@@ -71,30 +71,33 @@ async def graph_visualization(customer_id: int):
             "value": float(p["value"]) if p.get("value") else 0,
         })
 
-    # 3. 获取行业分布
-    industries = await neo4j.run_query(
+    # 3. 获取行业分布及产品归属关系
+    product_industry = await neo4j.run_query(
         """
         MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
-        RETURN DISTINCT i.industry_id AS iid, i.name AS name
+        RETURN p.id AS pid, i.industry_id AS iid, i.name AS industry_name
         """,
         {"cid": customer_id},
     )
-    for ind in industries:
-        iid = f"i_{ind['iid']}"
+    # 构建产品→行业边（仅实际存在的归属关系）
+    seen_edges = set()
+    for row in product_industry:
+        iid = f"i_{row['iid']}"
         if iid not in node_ids:
             nodes.append({
                 "id": iid,
-                "label": ind["name"],
+                "label": row["industry_name"],
                 "type": "industry",
             })
             node_ids.add(iid)
-        # 找到该产品→行业边
-        for p in products:
+        edge_key = (f"p_{row['pid']}", iid)
+        if edge_key not in seen_edges:
             edges.append({
-                "source": f"p_{p['pid']}",
+                "source": f"p_{row['pid']}",
                 "target": iid,
                 "type": "BELONGS_TO",
             })
+            seen_edges.add(edge_key)
 
     # 4. 获取风险等级节点
     risk_data = await neo4j.run_single(
