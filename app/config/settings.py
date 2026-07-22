@@ -63,12 +63,18 @@ class LLMSettings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_model_chat: str = Field(default="gpt-4o", alias="OPENAI_MODEL_CHAT")
-    openai_model_embedding: str = Field(default="text-embedding-3-small", alias="OPENAI_MODEL_EMBEDDING")
+    ollama_embed_url: str = Field(default="http://127.0.0.1:11434", alias="OLLAMA_EMBED_URL")
+    ollama_model_embedding: str = Field(default="bge-m3", alias="OLLAMA_MODEL_EMBEDDING")
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=2048, alias="OPENAI_MAX_TOKENS")
     openai_timeout: int = Field(default=30, alias="OPENAI_TIMEOUT")
     openai_max_retries: int = Field(default=3, alias="OPENAI_MAX_RETRIES")
+    openai_retry_delays: str = Field(default="1,2,4", alias="OPENAI_RETRY_DELAYS")
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @property
+    def retry_delays_list(self) -> list:
+        return [int(x) for x in self.openai_retry_delays.split(",")]
 
 
 class JWTSettings(BaseSettings):
