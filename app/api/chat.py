@@ -1,5 +1,5 @@
 """
-Chat API — 智能客服对话接口
+Chat API — 智能客服对话 + 数据分析 Agent
 """
 
 from fastapi import APIRouter, Depends
@@ -7,12 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from typing import Optional
 from app.config.database import get_db
-from app.model.schemas import CustomerChatRequest, CustomerChatResponse
+from app.model.schemas import (
+    CustomerChatRequest, CustomerChatResponse,
+    QueryRequest, QueryResponse, ApiResponse,
+)
 from app.service.agent_service import get_customer_service_agent
-from app.utils.response import success
+from app.service.nl2sql_service import NL2SQLService
 from app.service.operator_agent import operator_chat
+from app.utils.response import success, error
 
 router = APIRouter()
+
+# ==================== 智能客服 ====================
+
 
 class OperatorChatRequest(BaseModel):
     """业务操作对话请求"""
@@ -21,6 +28,7 @@ class OperatorChatRequest(BaseModel):
     user_id: int = 0
     user_role: str = "理财顾问"
 
+
 class OperatorChatResponse(BaseModel):
     """业务操作对话响应"""
     reply: str
@@ -28,6 +36,7 @@ class OperatorChatResponse(BaseModel):
     params: dict = {}
     status: str = "ok"
     session_id: str = ""
+
 
 @router.post("/customer", response_model=dict)
 async def customer_chat(
@@ -48,6 +57,7 @@ async def customer_chat(
 
     return success(data=response.model_dump())
 
+
 @router.post("/operator")
 async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
     """
@@ -61,3 +71,56 @@ async def chat_operator(body: OperatorChatRequest) -> OperatorChatResponse:
         user_role=body.user_role,
     )
     return OperatorChatResponse(**result)
+
+
+# ==================== 数据分析 Agent ====================
+
+nl2sql_service = NL2SQLService()
+
+
+@router.post("/chat/analyst", response_model=ApiResponse, tags=["数据分析Agent"])
+async def chat_analyst(request: QueryRequest):
+    """
+    数据分析Agent对话接口
+
+    支持自然语言查询业务数据，自动生成SQL并返回结果。
+    """
+    try:
+        result = nl2sql_service.query_and_explain(request.message)
+
+        if result.get("success"):
+            return success(
+                data={
+                    "reply": result.get("explanation"),
+                    "sql": result.get("sql"),
+                    "query_result": result.get("query_result"),
+                    "session_id": request.session_id,
+                },
+                message="查询成功",
+            )
+        else:
+            return error(
+                code=1003,
+                message=result.get("error", "查询失败"),
+                data={
+                    "sql": result.get("sql"),
+                    "session_id": request.session_id,
+                },
+            )
+    except Exception as e:
+        return error(
+            code=500,
+            message=f"服务异常: {str(e)}",
+        )
+
+
+@router.get("/chat/session/{session_id}/history", tags=["数据分析Agent"])
+async def get_session_history(session_id: str):
+    """获取会话历史（预留接口）"""
+    return success(
+        data={
+            "session_id": session_id,
+            "messages": [],
+        },
+        message="获取成功",
+    )
