@@ -1,4 +1,4 @@
-"""短期记忆 — Redis 会话管理"""
+"""短期记忆 — Redis 会话管理 + 归档"""
 
 import json
 from typing import List
@@ -9,7 +9,7 @@ settings = get_settings()
 
 
 class SessionMemory:
-    """会话记忆管理器"""
+    """会话记忆管理器（含归档能力）"""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
@@ -47,6 +47,12 @@ class SessionMemory:
 
         return result
 
+    async def get_all_messages(self) -> List[dict]:
+        """获取所有消息（不截断，归档用）"""
+        r = await self._get_redis()
+        raw = await r.lrange(self.key, 0, -1)
+        return [json.loads(m) for m in raw]
+
     async def clear(self) -> None:
         """清空会话"""
         r = await self._get_redis()
@@ -56,3 +62,36 @@ class SessionMemory:
         """续期会话 TTL"""
         r = await self._get_redis()
         await r.expire(self.key, settings.redis.session_ttl)
+
+    async def archive(self, db, user_id: int, agent_type: str = "advisor") -> int:
+        """
+        将当前会话消息归档到 MySQL conversation_archive 表。
+
+        Args:
+            db: AsyncSession 数据库会话
+            user_id: 用户ID（理财顾问）
+            agent_type: Agent类型标识
+        Returns:
+            归档的消息条数
+        """
+        from app.model.entities import ConversationArchive
+        messages = await self.get_all_messages()
+        if not messages:
+            return 0
+
+        count = 0
+        for msg in messages:
+            record = ConversationArchive(
+                session_id=self.session_id,
+                user_id=user_id,
+                agent_type=agent_type,
+                role=msg.get("role", "user"),
+                content=msg.get("content", ""),
+            )
+            db.add(record)
+            count += 1
+
+        await db.flush()
+        # 归档后清理 Redis 会话
+        await self.clear()
+        return count

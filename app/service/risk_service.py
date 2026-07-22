@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model.entities import RiskAssessment, FinCustomerProfile
 from app.model.schemas import QuestionnaireItem, AssessmentAnswer, AssessmentResult, SuitabilityCheckResult
-from app.engine.score_mapper import check_suitability
+from app.engine.score_mapper import check_suitability, map_score_to_risk_level
 from app.memory.profile_cache import ProfileCache
 from app.utils.exceptions import ProfileNotFound, SuitabilityMismatch
 
@@ -84,17 +84,13 @@ class RiskService:
                         answer_detail.append({"q": ans.q, "a": ans.a, "score": score})
                         break
 
-        # 等级判定
-        if total <= 20:
-            risk_level = "C1"
-        elif total <= 40:
-            risk_level = "C2"
-        elif total <= 60:
-            risk_level = "C3"
-        elif total <= 80:
-            risk_level = "C4"
-        else:
-            risk_level = "C5"
+        # 等级判定：将问卷原始分（16题，约34-160分）归一化到0-100，使用标准阈值
+        # 最小可能分 ≈ 34（每题最低2-3分），最大可能分 ≈ 160（每题满分10分）
+        QUESTIONNAIRE_MIN = 34
+        QUESTIONNAIRE_MAX = 160
+        normalized = round((total - QUESTIONNAIRE_MIN) / (QUESTIONNAIRE_MAX - QUESTIONNAIRE_MIN) * 100)
+        normalized = max(0, min(100, normalized))
+        risk_level, _ = map_score_to_risk_level(normalized)
 
         valid_until = date.today() + timedelta(days=365)
 

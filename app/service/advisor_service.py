@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model.schemas import ProductRecommend, AllocationResult
+from app.model.entities import ProductRecommendation
 from app.service.profile_service import ProfileService
 from app.config.rules_config import (
     SUITABILITY_MATRIX, ASSET_ALLOCATION_TEMPLATES, RECOMMENDATION_WEIGHTS,
@@ -83,10 +84,15 @@ class AdvisorService:
             "risk_score": profile.risk_score if hasattr(profile, "risk_score") else None,
         }
 
+        reasoning = f"基于客户 {customer_risk} 风险等级，从 {len(candidates)} 个候选产品中推荐 Top{len(top)}"
+
+        # ── 持久化推荐记录 ──
+        await self._persist_recommendations(customer_id, recommendations)
+
         return {
             "recommendations": recommendations,
             "customer_profile": profile_dict,
-            "reasoning": f"基于客户 {customer_risk} 风险等级，从 {len(candidates)} 个候选产品中推荐 Top{len(top)}",
+            "reasoning": reasoning,
         }
 
     async def get_allocation(self, customer_id: int) -> AllocationResult:
@@ -110,6 +116,22 @@ class AdvisorService:
             allocation={k: round(v * 100, 0) for k, v in template.items()},
             explanation=explanations.get(risk_level, "标准配置"),
         )
+
+    async def _persist_recommendations(self, customer_id: int, recommendations: list) -> None:
+        """将推荐结果持久化到 product_recommendation 表"""
+        for rec in recommendations:
+            record = ProductRecommendation(
+                customer_id=customer_id,
+                product_code=rec.product_code,
+                match_score=rec.match_score,
+                score_detail={
+                    "risk_level": rec.risk_level,
+                    "expected_return": rec.expected_return,
+                },
+                reasoning=rec.reason,
+            )
+            self.db.add(record)
+        await self.db.flush()
 
     def _generate_reason(self, product: dict, customer_risk: str) -> str:
         risk_map = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}

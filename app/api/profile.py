@@ -56,11 +56,13 @@ async def assess_profile(
     流程: 接收ID → 调用画像引擎 → 四维度打分 → 检查熔断 → 返回JSON结果
     响应格式对齐文档 14.2 章节
     """
+    # 路径参数优先，请求体中的 customer_id 作为备用（可选）
     trigger_type = req.trigger_type if req else "manual"
+    assess_customer_id = customer_id  # 以路径参数为准
 
     service = ProfileService(db)
     try:
-        result = await service.assess(customer_id, trigger_type=trigger_type)
+        result = await service.assess(assess_customer_id, trigger_type=trigger_type)
         return success(data=result.model_dump())
     except ProfileNotFound as e:
         return error(e.code, e.message)

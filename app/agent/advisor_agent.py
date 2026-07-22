@@ -177,11 +177,15 @@ class AdvisorAgent(BaseAgent):
             }
 
         reply = self._extract_reply(result)
+        recommendations = self._extract_tool_result(result, "recommend_products")
+        customer_profile = self._extract_tool_result(result, "profile_tool")
+        reasoning = self._extract_reasoning(result)
+
         return {
             "reply": reply,
-            "recommendations": [],
-            "customer_profile": None,
-            "reasoning": None,
+            "recommendations": recommendations,
+            "customer_profile": customer_profile,
+            "reasoning": reasoning,
             "session_id": self.session_id,
         }
 
@@ -272,3 +276,34 @@ class AdvisorAgent(BaseAgent):
                 return str(content)
 
         return "未能获取分析结果，请重试。"
+
+    @staticmethod
+    def _extract_tool_result(result: dict, tool_name: str):
+        """从 Agent 消息中提取指定工具的返回结果（解析 JSON）"""
+        import json
+        messages = result.get("messages", [])
+        for msg in messages:
+            # LangChain ToolMessage: name 属性标识工具名
+            msg_name = getattr(msg, "name", "")
+            if msg_name != tool_name:
+                continue
+            content = getattr(msg, "content", None)
+            if not content or not isinstance(content, str):
+                continue
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                # 非 JSON 文本，直接返回字符串
+                return {"raw": content}
+        return None
+
+    @staticmethod
+    def _extract_reasoning(result: dict) -> str:
+        """从 Agent 消息中提取推理/思考内容"""
+        messages = result.get("messages", [])
+        for msg in reversed(messages):
+            content = getattr(msg, "content", None)
+            # 取最后一条 AI 消息的前 200 字作为推理摘要
+            if content and isinstance(content, str) and len(content) > 50:
+                return content[:200] + ("..." if len(content) > 200 else "")
+        return None

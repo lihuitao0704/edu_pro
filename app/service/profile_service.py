@@ -8,7 +8,11 @@ from datetime import datetime, date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.model.entities import FinCustomerProfile, CustomerTag, SysUser, RiskAssessment
+from sqlalchemy import func
+from app.model.entities import (
+    FinCustomerProfile, CustomerTag, SysUser, RiskAssessment,
+    FinHoldings, FinProduct, FinTransaction,
+)
 from app.model.schemas import ProfileResult, DimensionScore, DimensionDetail
 from app.engine.dimension_calculator import DimensionCalculator
 from app.engine.circuit_breaker import CircuitBreaker
@@ -16,6 +20,10 @@ from app.engine.special_case import SpecialCaseHandler
 from app.engine.confidence import ConfidenceCalculator
 from app.engine.score_mapper import (
     map_score_to_risk_level, calc_total_score, get_suitable_products,
+)
+from app.config.rules_config import (
+    PRODUCT_COMPLEXITY_SCORE, TRADE_FREQUENCY_SCORE,
+    HISTORICAL_RETURN_SCORE, LOSS_TOLERANCE_ADJUSTMENT,
 )
 from app.memory.profile_cache import ProfileCache
 from app.memory.long_term import LongTermMemory
@@ -162,7 +170,7 @@ class ProfileService:
     # ========== 内部辅助 ==========
 
     async def _collect_customer_data(self, customer_id: int) -> Optional[dict]:
-        """收集客户全量数据"""
+        """收集客户全量数据（所有字段从数据库动态计算）"""
         # 用户基础信息
         user_stmt = select(SysUser).where(SysUser.id == customer_id)
         user_result = await self.db.execute(user_stmt)
@@ -182,6 +190,12 @@ class ProfileService:
         ra_result = await self.db.execute(ra_stmt)
         risk_assessment = ra_result.scalar_one_or_none()
 
+        # ── 动态计算字段 ──
+        max_product_type = await self._calc_max_product_type(customer_id)
+        trade_frequency = await self._calc_trade_frequency(customer_id)
+        historical_return = await self._calc_historical_return(customer_id)
+        loss_tolerance = await self._calc_loss_tolerance(risk_assessment)
+
         return {
             "age": user.age,
             "education": user.education,
@@ -193,13 +207,13 @@ class ProfileService:
             "investment_years": profile.investment_experience if profile else None,
             "risk_assessment_level": risk_assessment.risk_level if risk_assessment else None,
             "risk_valid_until": risk_assessment.valid_until if risk_assessment else None,
-            # 以下字段可从其他表获取（简化处理用默认值）
-            "max_product_type": "混合基金/指数基金(R3)",
-            "trade_frequency": "低频",
-            "historical_return": "5%~15%",
-            "loss_tolerance": "10%-20%",
+            # 以下字段从数据库动态计算
+            "max_product_type": max_product_type,
+            "trade_frequency": trade_frequency,
+            "historical_return": historical_return,
+            "loss_tolerance": loss_tolerance,
             "abnormal_behaviors": [],
-            "is_student": False,
+            "is_student": user.occupation == "在校学生",
             "is_dishonest": False,
             "is_foreign": False,
             "id_expired_days": 0,
@@ -208,16 +222,149 @@ class ProfileService:
             "daily_loss_pct": 0,
             "consecutive_redeem_pct": 0,
             "account_theft_suspected": False,
-            "self_assessment_level": None,
+            "self_assessment_level": risk_assessment.risk_level if risk_assessment else None,
         }
+
+    # ── 动态计算辅助方法 ──────────────────────────────────────
+
+    async def _calc_max_product_type(self, customer_id: int) -> str:
+        """从持仓产品中取最高风险等级的产品类型（用于维度二复杂度评分）"""
+        stmt = (
+            select(FinProduct)
+            .join(FinHoldings, FinHoldings.product_id == FinProduct.id)
+            .where(
+                FinHoldings.customer_id == customer_id,
+                FinHoldings.status == "持有",
+            )
+        )
+        result = await self.db.execute(stmt)
+        products = result.scalars().all()
+
+        if not products:
+            return "仅银行存款"  # 无持仓，保守默认
+
+        # 按 risk_level 排序找最高风险产品
+        risk_order = {"R1": 1, "R2": 2, "R3": 3, "R4": 4, "R5": 5}
+        highest = max(products, key=lambda p: risk_order.get(p.risk_level, 0))
+
+        # 映射到复杂度评分表中的 key
+        product_type = highest.product_type or ""
+        if "股票" in product_type or "ETF" in product_type:
+            return "股票/股票基金/ETF(R4)"
+        elif "混合" in product_type:
+            return "混合基金/指数基金(R3)"
+        elif "债券" in product_type:
+            return "纯债基金/银行理财(R1-R2)"
+        elif "货币" in product_type:
+            return "货币基金/国债"
+        elif "期货" in product_type or "期权" in product_type or "私募" in product_type:
+            return "期货/期权/私募/结构化产品(R5)"
+        return "仅银行存款"
+
+    async def _calc_trade_frequency(self, customer_id: int) -> str:
+        """统计近一年交易频率"""
+        from datetime import timedelta
+        one_year_ago = datetime.now() - timedelta(days=365)
+        stmt = select(func.count(FinTransaction.id)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= one_year_ago,
+        )
+        result = await self.db.execute(stmt)
+        count = result.scalar() or 0
+
+        if count < 10:
+            return "极低频"
+        elif count < 36:  # 月均 < 3
+            return "低频"
+        elif count < 120:  # 月均 < 10
+            return "中频"
+        else:
+            return "高频"
+
+    async def _calc_historical_return(self, customer_id: int) -> str:
+        """从持仓盈亏计算历史收益水平"""
+        stmt = select(
+            func.sum(FinHoldings.current_value).label("total_value"),
+            func.sum(FinHoldings.profit_loss).label("total_pl"),
+        ).where(
+            FinHoldings.customer_id == customer_id,
+            FinHoldings.status == "持有",
+        )
+        result = await self.db.execute(stmt)
+        row = result.one_or_none()
+        if not row or not row.total_value or float(row.total_value) == 0:
+            return "无历史记录"
+
+        total_value = float(row.total_value)
+        total_pl = float(row.total_pl or 0)
+        rate = total_pl / (total_value - total_pl) if (total_value - total_pl) > 0 else 0
+
+        if rate < -0.15:
+            return "<-15%"
+        elif -0.15 <= rate < -0.05:
+            return "-15%~-5%"
+        elif -0.05 <= rate < 0.05:
+            return "-5%~5%"
+        elif 0.05 <= rate < 0.15:
+            return "5%~15%"
+        else:
+            return ">15%"
+
+    @staticmethod
+    def _calc_loss_tolerance(risk_assessment) -> str:
+        """从风评问卷答案中提取亏损承受能力"""
+        if not risk_assessment or not risk_assessment.answers:
+            return "10%-20%"  # 默认基准
+        answers = risk_assessment.answers
+        details = answers.get("details", [])
+        # 查找第4题（亏损承受）的答案
+        for d in details:
+            if d.get("q") == 4:
+                answer = d.get("a", "")
+                if "不能" in answer:
+                    return "不能承受任何亏损"
+                elif "5%" in answer:
+                    return "5%以内"
+                elif "10%" in answer or "20%" in answer:
+                    return "10%-20%"
+                elif "20%" in answer and "以上" in answer:
+                    return "20%-40%"
+                elif "40%" in answer:
+                    return "40%以上"
+        # 未找到第4题答案，使用总分的保守推断
+        total = risk_assessment.total_score or 50
+        if total <= 30:
+            return "不能承受任何亏损"
+        elif total <= 45:
+            return "5%以内"
+        elif total <= 65:
+            return "10%-20%"
+        elif total <= 80:
+            return "20%-40%"
+        return "40%以上"
 
     async def _update_profile_after_assess(
         self, customer_id: int, risk_level: str, risk_score: int, dimension_scores: dict
     ):
-        """研判后更新画像表"""
+        """研判后更新画像表（含完整画像 JSON）"""
         stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
         result = await self.db.execute(stmt)
         profile = result.scalar_one_or_none()
+
+        # 序列化完整画像 JSON
+        profile_json = {
+            "customer_id": customer_id,
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "dimensions": {
+                k: {
+                    "score": v["score"],
+                    "detail": v.get("detail", {}) if isinstance(v.get("detail"), dict) else v.get("detail"),
+                }
+                for k, v in dimension_scores.items()
+            },
+            "updated_at": datetime.now().isoformat(),
+        }
 
         if profile:
             profile.risk_level = risk_level
@@ -226,6 +373,7 @@ class ProfileService:
             profile.experience_score = dimension_scores["experience"]["score"]
             profile.risk_pref_score = dimension_scores["risk_pref"]["score"]
             profile.behavior_score = dimension_scores["behavior"]["score"]
+            profile.profile_json = profile_json
             profile.update_time = datetime.now()
         else:
             profile = FinCustomerProfile(
@@ -236,6 +384,7 @@ class ProfileService:
                 experience_score=dimension_scores["experience"]["score"],
                 risk_pref_score=dimension_scores["risk_pref"]["score"],
                 behavior_score=dimension_scores["behavior"]["score"],
+                profile_json=profile_json,
             )
             self.db.add(profile)
 

@@ -54,8 +54,8 @@ class ProfileUpdateRequest(BaseModel):
 
 
 class ProfileAssessRequest(BaseModel):
-    """画像研判请求"""
-    customer_id: int
+    """画像研判请求（customer_id 优先取路径参数，请求体中的可选）"""
+    customer_id: Optional[int] = Field(None, description="客户ID，不填则取路径参数")
     trigger_type: str = "manual"
 
 
