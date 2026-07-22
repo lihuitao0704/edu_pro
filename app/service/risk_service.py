@@ -103,7 +103,7 @@ class RiskService:
             customer_id=customer_id,
             total_score=total,
             risk_level=risk_level,
-            answers_json={"details": answer_detail},
+            answers={"details": answer_detail},
             valid_until=valid_until,
         )
         self.db.add(assessment)
@@ -112,7 +112,7 @@ class RiskService:
         if profile:
             profile.risk_level = risk_level
             profile.risk_score = total
-            profile.updated_at = date.today()
+            profile.update_time = date.today()
         else:
             profile = FinCustomerProfile(
                 customer_id=customer_id,

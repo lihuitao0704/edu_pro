@@ -32,7 +32,7 @@ async def get_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
         "total_assets": str(profile.total_assets) if profile.total_assets else None,
         "investment_experience": profile.investment_experience,
         "annual_income_range": profile.annual_income_range,
-        "updated_at": str(profile.updated_at) if profile.updated_at else None,
+        "update_time": str(profile.update_time) if profile.update_time else None,
     })
 
 
