@@ -47,6 +47,22 @@ class MilvusTool:
 
     def __init__(self):
         self.dim = settings.milvus.dim  # 1536
+        # 初始化 Milvus 连接
+        self._init_connection()
+
+    def _init_connection(self):
+        """初始化 Milvus 连接"""
+        try:
+            # 使用默认别名 'default' 建立连接
+            connections.connect(
+                alias="default",
+                host=settings.milvus.host,
+                port=settings.milvus.port,
+            )
+            logger.info(f"Milvus 连接成功: {settings.milvus.host}:{settings.milvus.port}")
+        except Exception as e:
+            logger.error(f"Milvus 连接失败: {e}")
+            raise
 
     def ensure_collection(self, collection_name: str, index_type: str = "IVF_FLAT"):
         """

@@ -70,9 +70,11 @@ class RiskMonitorService:
 
     async def save_alert(self, db: AsyncSession, alert: dict) -> int:
         """保存预警到 MySQL + 黄色/红色自动创建工单 + Redis双写"""
+        # 取第一条触发规则的编号作为 alert_type（对齐功能设计 §4.3）
+        first_rule = alert["trigger_rules"][0]["rule_id"] if alert["trigger_rules"] else "unknown"
         entity = FinRiskAlert(
             customer_id=alert["customer_id"],
-            alert_type="large_transaction",
+            alert_type=first_rule,
             alert_level=alert["alert_level"],
             trigger_detail=alert["summary"],
             transaction_ids={"tx_id": alert.get("transaction_id", ""), "trigger_rules": alert["trigger_rules"]},
