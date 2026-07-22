@@ -1,21 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="搭建基础框架">
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善用户画像和投顾agent功能">
+      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/api/profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/database.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/rules_config.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/app/engine/circuit_breaker.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/circuit_breaker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/confidence.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/confidence.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/engine/dimension_calculator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/dimension_calculator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/score_mapper.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/score_mapper.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/memory/long_term.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/long_term.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/memory/session_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/session_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/advisor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/advisor_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/model/entities.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/entities.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/profile_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/profile_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/risk_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/risk_service.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -25,7 +20,7 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
-        <entry key="$PROJECT_DIR$" value="feature" />
+        <entry key="$PROJECT_DIR$" value="master" />
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -51,15 +46,15 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "feature"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\edu_pro\app\engine" />
@@ -88,7 +83,23 @@
       <option name="project" value="LOCAL" />
       <updated>1784684299485</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="完善用户画像和投顾agent功能">
+      <option name="closed" value="true" />
+      <created>1784693526317</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1784693526318</updated>
+    </task>
+    <task id="LOCAL-00003" summary="完善用户画像和投顾agent功能">
+      <option name="closed" value="true" />
+      <created>1784693550357</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1784693550357</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -104,6 +115,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="搭建基础框架" />
-    <option name="LAST_COMMIT_MESSAGE" value="搭建基础框架" />
+    <MESSAGE value="完善用户画像和投顾agent功能" />
+    <option name="LAST_COMMIT_MESSAGE" value="完善用户画像和投顾agent功能" />
   </component>
 </project>
