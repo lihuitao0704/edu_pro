@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.service.profile_service import ProfileService
 from app.model.schemas import (
-    ProfileUpdateRequest, )
+    ProfileUpdateRequest, ProfileAssessRequest)
 from app.utils.response import success, error
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
 
@@ -45,13 +45,26 @@ async def update_profile(customer_id: int, req: ProfileUpdateRequest, db: AsyncS
 
 
 @router.post("/{customer_id}/assess")
-async def assess_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
-    """执行画像研判打分"""
+async def assess_profile(
+    customer_id: int,
+    req: ProfileAssessRequest = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    执行画像研判打分
+
+    流程: 接收ID → 调用画像引擎 → 四维度打分 → 检查熔断 → 返回JSON结果
+    响应格式对齐文档 14.2 章节
+    """
+    trigger_type = req.trigger_type if req else "manual"
+
     service = ProfileService(db)
     try:
-        result = await service.assess(customer_id)
+        result = await service.assess(customer_id, trigger_type=trigger_type)
         return success(data=result.model_dump())
     except ProfileNotFound as e:
         return error(e.code, e.message)
     except CircuitBreakerTriggered as e:
         return error(e.code, e.message)
+    except Exception as e:
+        return error(500, f"研判失败: {str(e)}")

@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import get_settings
 from app.utils.logger import setup_logger
+from app.utils.response import success
 
 setup_logger()
 settings = get_settings()
@@ -76,6 +77,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 全局异常处理中间件
+from app.middleware.exception_handler import register_exception_handlers
+register_exception_handlers(app)
 
 # ---- 静态文件（测试前端） ----
 from fastapi.staticfiles import StaticFiles
@@ -162,16 +167,12 @@ for _name, _prefix in [
 
 @app.get("/api/health")
 async def health_check():
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
-            "service": "wealth-manager",
-            "version": "1.0.0",
-            "llm_model": settings.llm.openai_model_chat,
-            "auth_mode": "mock" if settings.jwt.mock_mode else "jwt",
-        },
-    }
+    return success(data={
+        "service": "wealth-manager",
+        "version": "1.0.0",
+        "llm_model": settings.llm.openai_model_chat,
+        "auth_mode": "mock" if settings.jwt.mock_mode else "jwt",
+    })
 
 
 # ---- 引擎测试（纯逻辑，无需数据库） ----
@@ -206,24 +207,20 @@ async def engine_test():
     conf = ConfidenceCalculator()
     confidence = conf.calc_single("questionnaire")
 
-    return {
-        "code": 200,
-        "message": "引擎测试完成",
-        "data": {
-            "customer_profile": {
-                "dimensions": {k: {"score": v["score"]} for k, v in scores.items()},
-                "total_score": total,
-                "risk_level": level,
-                "risk_name": name,
-            },
-            "circuit_breaker": {
-                "passed": cb_result.passed,
-                "warnings": cb_result.warnings,
-            },
-            "confidence": confidence,
-            "status": "ALL_OK",
+    return success(data={
+        "customer_profile": {
+            "dimensions": {k: {"score": v["score"]} for k, v in scores.items()},
+            "total_score": total,
+            "risk_level": level,
+            "risk_name": name,
         },
-    }
+        "circuit_breaker": {
+            "passed": cb_result.passed,
+            "warnings": cb_result.warnings,
+        },
+        "confidence": confidence,
+        "status": "ALL_OK",
+    })
 
 
 # ---- 主入口 ----
