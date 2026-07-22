@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.config.database import get_db
+from app.database import get_db
 from app.agent.profile_agent import ProfileAgent
 from app.agent.recommendation_agent import RecommendationAgent
 from app.agent.explanation_agent import ExplanationAgent
