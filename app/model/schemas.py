@@ -175,3 +175,21 @@ class ApiResponse(BaseModel):
     message: str = "success"
     data: Optional[dict] = None
     trace_id: str
+
+
+# ==================== NL2SQL 数据分析 ====================
+
+class QueryRequest(BaseModel):
+    """数据分析查询请求"""
+    session_id: str = Field(..., description="会话ID，用于关联上下文")
+    message: str = Field(..., description="用户自然语言查询问题")
+    user_id: int = Field(..., description="操作用户ID")
+
+
+class QueryResponse(BaseModel):
+    """数据分析查询响应"""
+    reply: str = Field(..., description="自然语言解读")
+    sql: Optional[str] = Field(None, description="生成的SQL语句")
+    query_result: Optional[List[Dict]] = Field(None, description="查询结果列表")
+    session_id: str = Field(..., description="会话ID")
+    error: Optional[str] = Field(None, description="错误信息")
