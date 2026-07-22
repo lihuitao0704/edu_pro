@@ -35,9 +35,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         print(f"  Redis: 未连接，缓存功能暂不可用")
 
-    print("  服务就绪，等待请求...\n")
-    yield
-
     # 启动风控周期校准
     try:
         from app.service.risk_scheduler import start_scheduler
@@ -45,6 +42,9 @@ async def lifespan(app: FastAPI):
         print("  Scheduler: 风控周期校准已启动（每周日03:00）")
     except Exception as e:
         print(f"  Scheduler: 启动失败 ({e})")
+
+    print("  服务就绪，等待请求...\n")
+    yield
 
     print("[关闭] 系统正在停止...")
     try:
