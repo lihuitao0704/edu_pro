@@ -49,7 +49,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
     """
     customer_id = body.get("customer_id")
     product_id = body.get("product_id")
-    amount = float(body.get("amount", 0))
+    amount = Decimal(str(body.get("amount", 0)))
     operator_id = body.get("operator_id")
 
     if not customer_id or not product_id or amount <= 0:
@@ -89,7 +89,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
         )
 
     # 3. 起投金额校验
-    min_amount = float(product["min_amount"] or 1000)
+    min_amount = Decimal(str(product["min_amount"] or 1000))
     if amount < min_amount:
         return ApiResponse(
             code=400,
@@ -100,8 +100,8 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
     # 4. 获取当前净值（Mock：用 expected_return 模拟）
     nav = Decimal("1.000000")  # 简化：净值为1
 
-    # 5. 计算份额（金额/净值，简化无手续费）
-    shares = Decimal(str(amount)) / nav
+    # 5. 计算份额（金额/净值，简化无手续费）— 全程 Decimal
+    shares = amount / nav
 
     # 6. 写入交易流水
     txn_no = generate_transaction_no()
@@ -117,7 +117,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
             "txn_no": txn_no,
             "cid": customer_id,
             "pid": product_id,
-            "amount": amount,
+            "amount": float(amount),
             "shares": float(shares),
             "nav": float(nav),
             "oid": operator_id,
@@ -125,31 +125,34 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
         },
     )
 
-    # 7. 更新或新建持仓
+    # 7. 更新或新建持仓（加行锁防止并发）
     existing = await db.execute(
         text("SELECT id, shares, cost_amount FROM fin_holdings "
-             "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中'"),
+             "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中' FOR UPDATE"),
         {"cid": customer_id, "pid": product_id},
     )
     existing = existing.mappings().first()
 
     if existing:
-        new_shares = float(existing["shares"] or 0) + float(shares)
-        new_cost = float(existing["cost_amount"] or 0) + amount
+        # DB 返回 Numeric → 自动映射为 Decimal，直接相加无精度损失
+        existing_shares = Decimal(str(existing["shares"] or 0))
+        existing_cost = Decimal(str(existing["cost_amount"] or 0))
+        new_shares = existing_shares + shares
+        new_cost = existing_cost + amount
         await db.execute(
             text("UPDATE fin_holdings SET shares = :s, cost_amount = :c, "
                  "current_value = :v, update_time = NOW() WHERE id = :id"),
-            {"s": new_shares, "c": new_cost, "v": new_cost, "id": existing["id"]},
+            {"s": float(new_shares), "c": float(new_cost), "v": float(new_cost), "id": existing["id"]},
         )
     else:
         await db.execute(
             text("""
                 INSERT INTO fin_holdings
                 (customer_id, product_id, shares, cost_amount, current_value, status)
-                VALUES (:cid, :pid, :s, :c, :v, '持有')
+                VALUES (:cid, :pid, :s, :c, :v, '持有中')
             """),
             {"cid": customer_id, "pid": product_id, "s": float(shares),
-             "c": amount, "v": amount},
+             "c": float(amount), "v": float(amount)},
         )
 
     await db.commit()
@@ -160,7 +163,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
         data={
             "transaction_no": txn_no,
             "product_name": product["product_name"],
-            "amount": amount,
+            "amount": float(amount),
             "shares": float(shares),
             "nav": float(nav),
             "nav_date": calc_nav_time(),

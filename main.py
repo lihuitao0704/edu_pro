@@ -8,7 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import get_settings
+from app.utils.logger import setup_logger
+from app.utils.response import success
 
+setup_logger()
 settings = get_settings()
 
 
@@ -32,10 +35,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         print(f"  Redis: 未连接，缓存功能暂不可用")
 
+    # 启动风控周期校准
+    try:
+        from app.service.risk_scheduler import start_scheduler
+        start_scheduler()
+        print("  Scheduler: 风控周期校准已启动（每周日03:00）")
+    except Exception as e:
+        print(f"  Scheduler: 启动失败 ({e})")
+
     print("  服务就绪，等待请求...\n")
     yield
 
     print("[关闭] 系统正在停止...")
+    try:
+        from app.service.risk_scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
     try:
         from app.config.database import close_redis, close_neo4j, close_milvus
         await close_redis()
@@ -61,6 +77,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 全局异常处理中间件
+from app.middleware.exception_handler import register_exception_handlers
+register_exception_handlers(app)
 
 # ---- 静态文件（测试前端） ----
 from fastapi.staticfiles import StaticFiles
@@ -147,16 +167,12 @@ for _name, _prefix in [
 
 @app.get("/api/health")
 async def health_check():
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
-            "service": "wealth-manager",
-            "version": "1.0.0",
-            "llm_model": settings.llm.openai_model_chat,
-            "auth_mode": "mock" if settings.jwt.mock_mode else "jwt",
-        },
-    }
+    return success(data={
+        "service": "wealth-manager",
+        "version": "1.0.0",
+        "llm_model": settings.llm.openai_model_chat,
+        "auth_mode": "mock" if settings.jwt.mock_mode else "jwt",
+    })
 
 
 # ---- 引擎测试（纯逻辑，无需数据库） ----
@@ -191,24 +207,20 @@ async def engine_test():
     conf = ConfidenceCalculator()
     confidence = conf.calc_single("questionnaire")
 
-    return {
-        "code": 200,
-        "message": "引擎测试完成",
-        "data": {
-            "customer_profile": {
-                "dimensions": {k: {"score": v["score"]} for k, v in scores.items()},
-                "total_score": total,
-                "risk_level": level,
-                "risk_name": name,
-            },
-            "circuit_breaker": {
-                "passed": cb_result.passed,
-                "warnings": cb_result.warnings,
-            },
-            "confidence": confidence,
-            "status": "ALL_OK",
+    return success(data={
+        "customer_profile": {
+            "dimensions": {k: {"score": v["score"]} for k, v in scores.items()},
+            "total_score": total,
+            "risk_level": level,
+            "risk_name": name,
         },
-    }
+        "circuit_breaker": {
+            "passed": cb_result.passed,
+            "warnings": cb_result.warnings,
+        },
+        "confidence": confidence,
+        "status": "ALL_OK",
+    })
 
 
 # ---- 主入口 ----

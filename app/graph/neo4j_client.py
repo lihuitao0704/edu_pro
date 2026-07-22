@@ -6,6 +6,9 @@ from app.config.settings import get_settings
 
 settings = get_settings()
 
+# 合法节点标签白名单，防止 Cypher 注入
+VALID_LABELS = frozenset({"Customer", "Product", "RiskLevel", "Industry", "FundManager", "Market"})
+
 
 class Neo4jClient:
     """Neo4j 操作封装"""
@@ -23,17 +26,32 @@ class Neo4jClient:
         return data[0] if data else None
 
     async def get_node_count(self, label: str) -> int:
-        """获取节点数量"""
+        """获取节点数量（label 需通过白名单校验）"""
+        if label not in VALID_LABELS:
+            raise ValueError(f"非法节点标签: {label}，允许值: {VALID_LABELS}")
         data = await self.run_query(f"MATCH (n:{label}) RETURN count(n) AS cnt")
         return data[0]["cnt"] if data else 0
 
     async def get_stats(self) -> dict:
-        """获取图谱统计信息"""
-        node_counts = {}
-        for label in ["Customer", "Product", "RiskLevel", "Industry", "FundManager"]:
-            node_counts[label] = await self.get_node_count(label)
+        """获取图谱统计信息（单次查询获取所有节点和关系计数）"""
+        union_parts = " UNION ".join(
+            f"MATCH (n:{label}) RETURN '{label}' AS label, count(n) AS cnt"
+            for label in sorted(VALID_LABELS)
+        )
+        union_parts += " UNION MATCH ()-[r]->() RETURN '__relationships__' AS label, count(r) AS cnt"
 
-        rel_data = await self.run_query("MATCH ()-[r]->() RETURN count(r) AS cnt")
-        rel_count = rel_data[0]["cnt"] if rel_data else 0
+        data = await self.run_query(union_parts)
+
+        node_counts = {}
+        rel_count = 0
+        for row in data:
+            if row["label"] == "__relationships__":
+                rel_count = row["cnt"]
+            else:
+                node_counts[row["label"]] = row["cnt"]
+
+        # 确保所有标签都存在（即使计数为0）
+        for label in VALID_LABELS:
+            node_counts.setdefault(label, 0)
 
         return {"nodes": node_counts, "relationships": rel_count}

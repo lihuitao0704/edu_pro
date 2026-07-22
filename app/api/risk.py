@@ -1,5 +1,6 @@
 """风险评估 API 路由"""
 
+import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
@@ -9,12 +10,13 @@ from app.utils.response import success, error
 from app.utils.exceptions import ProfileNotFound
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/questionnaire")
 async def get_questionnaire():
     """获取风评问卷（16道题）"""
-    service = RiskService.__new__(RiskService)  # 无需 db session
+    service = RiskService.__new__(RiskService)
     questionnaire = service.get_questionnaire()
     return success(data=[q.model_dump() for q in questionnaire])
 
@@ -54,26 +56,25 @@ _confidence = ConfidenceCalculator()
 
 @router.post("/monitor", summary="接收交易事件进行风控监测")
 async def monitor_transaction(tx: TransactionEvent, db: AsyncSession = Depends(get_db)):
-    """接收交易事件 → 20条规则匹配 → 预警分级 → 返回结果 + MySQL持久化"""
+    """接收交易事件 → 20条规则匹配 → 预警分级 → 返回结果 + MySQL持久化 + 工单"""
+    logger.info(f"风控监测: 客户{tx.customer_id}, 金额{tx.amount}, 类型{tx.transaction_type}")
     tx_dict = tx.model_dump()
 
-    # 1. 规则匹配（纯CPU，不需await）
     triggered = _monitor.evaluate_all(tx_dict)
     if not triggered:
+        logger.debug(f"客户{tx.customer_id}交易正常，无规则触发")
         return success(data={"alert": None, "triggered_count": 0})
 
-    # 2. 查历史预警
+    logger.info(f"客户{tx.customer_id}触发{len(triggered)}条规则: {[r.rule_id for r in triggered]}")
+
     _, history = await _monitor.get_alerts(db, customer_id=tx.customer_id)
-
-    # 3. 分级
     level = _monitor.grade(triggered, history, tx_dict)
+    logger.info(f"预警等级: {level}")
 
-    # 4. 置信度（复用团队引擎）
     conf = _confidence.calc_single(source="ai_extract", evidence_count=len(triggered))
-
-    # 5. 生成预警 + 写入MySQL
     alert = _monitor.build_alert(tx_dict, triggered, level, conf)
     await _monitor.save_alert(db, alert)
+    logger.info(f"预警已生成: level={level}, confidence={conf:.2f}")
 
     return success(data={"alert": alert, "triggered_count": len(triggered)})
 
@@ -99,7 +100,39 @@ async def get_alert_detail(alert_id: str, db: AsyncSession = Depends(get_db)):
 @router.put("/alert/{alert_id}/handle", summary="处理预警")
 async def handle_alert(alert_id: str, req: AlertHandleRequest, db: AsyncSession = Depends(get_db)):
     """风控专员处理预警"""
+    logger.info(f"处理预警: id={alert_id}, action={req.action}, handler={req.handler_id}")
     alert = await _monitor.handle_alert(db, alert_id, req.action, req.handler_id, req.handle_note)
     if not alert:
         return error(404, f"预警 {alert_id} 不存在")
+    logger.info(f"预警 {alert_id} 处理完成: {req.action}")
     return success(data={"alert_id": alert_id, "status": req.action})
+
+
+@router.post("/recalculate", summary="手动触发置信度重算")
+async def recalculate_confidence(customer_id: int = None, db: AsyncSession = Depends(get_db)):
+    """手动触发置信度重算"""
+    logger.info(f"置信度重算触发: customer_id={customer_id or '全量'}")
+    from app.service.risk_confidence_rank import FinalConfidenceRankTool
+    ranker = FinalConfidenceRankTool()
+    _, alerts = await _monitor.get_alerts(db, customer_id=customer_id)
+    units = [{"confidence_score": a.get("confidence", 0.5), "age_days": 0,
+              "semantic_similarity": 0.5, "historical_accuracy": 0.5,
+              "conflict_count": 0} for a in alerts]
+    if units:
+        ranked = ranker.rank(units, "风险研判")
+        logger.info(f"重算完成: {len(ranked)}条")
+    return success(data={"processed": len(units)}, message="置信度重算完成")
+
+
+@router.get("/profile/{customer_id}", summary="查客户风险画像")
+async def get_risk_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
+    """查询客户风险画像（风控统计）"""
+    _, alerts = await _monitor.get_alerts(db, customer_id=customer_id)
+    count = len(alerts)
+    last = alerts[0]["created_at"] if alerts else None
+    return success(data={
+        "customer_id": customer_id,
+        "aml_risk_level": "high" if count >= 3 else "medium" if count >= 1 else "low",
+        "alert_count_30d": count,
+        "last_alert_at": last,
+    })

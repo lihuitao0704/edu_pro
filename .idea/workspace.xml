@@ -1,17 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善用户画像和投顾agent功能">
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/circuit_breaker.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/circuit_breaker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/engine/dimension_calculator.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/engine/dimension_calculator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/memory/long_term.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/long_term.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/model/entities.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/entities.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/profile_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/profile_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/risk_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/risk_service.py" afterDir="false" />
-    </list>
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善用户画像和投顾agent功能" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -52,7 +42,7 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "feature"
+    "git-widget-placeholder": "feature-lhg"
   }
 }]]></component>
   <component name="RecentsManager">
@@ -101,6 +91,9 @@
     </task>
     <option name="localTasksCounter" value="4" />
     <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
     <option name="TAB_STATES">
