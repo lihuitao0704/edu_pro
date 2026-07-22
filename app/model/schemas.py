@@ -175,3 +175,30 @@ class ApiResponse(BaseModel):
     message: str = "success"
     data: Optional[dict] = None
     trace_id: str
+
+
+# ==================== 风控监测（Phase 4） ====================
+
+
+class TransactionEvent(BaseModel):
+    """交易事件 — POST /api/risk/monitor 请求体"""
+    customer_id: int = Field(..., description="客户ID")
+    transaction_id: str = Field(..., description="交易流水号")
+    amount: float = Field(..., ge=0, description="交易金额")
+    transaction_type: str = Field(..., description="交易类型: cash/transfer/purchase/redeem")
+    currency: str = Field(default="CNY")
+    counterparty: Optional[dict] = Field(default=None)
+    timestamp: str = Field(..., description="交易时间 ISO8601")
+
+
+class AlertHandleRequest(BaseModel):
+    """处理预警请求体"""
+    action: str = Field(..., description="处理动作: resolved/false_positive")
+    handler_id: int = Field(..., description="风控专员ID")
+    handle_note: str = Field(default="", description="处理备注")
+
+
+class MonitorResponse(BaseModel):
+    """POST /api/risk/monitor 响应"""
+    alert: Optional[dict] = Field(default=None)
+    triggered_count: int = Field(default=0)
