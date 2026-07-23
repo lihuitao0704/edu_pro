@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing import Optional, List
 from functools import lru_cache
 
@@ -70,6 +70,8 @@ class MinIOSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
+    # LLM 提供商开关: openai（主模型 OPENAI_*）/ longcat（美团 LongCat，OpenAI 兼容接口）
+    provider: str = Field(default="openai", alias="LLM_PROVIDER")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_model_chat: str = Field(default="gpt-4o", alias="OPENAI_MODEL_CHAT")
@@ -80,7 +82,21 @@ class LLMSettings(BaseSettings):
     openai_timeout: int = Field(default=30, alias="OPENAI_TIMEOUT")
     openai_max_retries: int = Field(default=3, alias="OPENAI_MAX_RETRIES")
     openai_retry_delays: str = Field(default="1,2,4", alias="OPENAI_RETRY_DELAYS")
+    # LongCat 备用模型配置（provider=longcat 时生效）
+    longcat_api_key: str = Field(default="", alias="LONGCAT_API_KEY")
+    longcat_base_url: str = Field(default="https://api.longcat.chat/openai", alias="LONGCAT_BASE_URL")
+    longcat_model: str = Field(default="LongCat-2.0", alias="LONGCAT_MODEL")
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @model_validator(mode="after")
+    def _apply_provider(self):
+        """LLM_PROVIDER=longcat 时，将全部 chat 配置切换为 LongCat，
+        使所有读取 settings.llm.openai_* 的客户端自动走 LongCat。"""
+        if self.provider.strip().lower() == "longcat" and self.longcat_api_key:
+            self.openai_api_key = self.longcat_api_key
+            self.openai_base_url = self.longcat_base_url
+            self.openai_model_chat = self.longcat_model
+        return self
 
     @property
     def retry_delays_list(self) -> list:

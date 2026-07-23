@@ -21,10 +21,16 @@ class LLMClient:
     """LLM 调用客户端，支持 OpenAI API 和模拟模式"""
 
     def __init__(self):
-        """初始化 LLM 客户端，从环境变量读取 API Key"""
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        self.model = os.getenv("OPENAI_MODEL_CHAT", "deepseek-v4-pro")
-        self.base_url = os.getenv("OPENAI_BASE_URL", None)
+        """初始化 LLM 客户端，从环境变量读取 API Key（支持 LLM_PROVIDER=longcat 切换）"""
+        provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+        if provider == "longcat":
+            api_key = os.getenv("LONGCAT_API_KEY", "")
+            self.model = os.getenv("LONGCAT_MODEL", "LongCat-2.0")
+            self.base_url = os.getenv("LONGCAT_BASE_URL", None)
+        else:
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            self.model = os.getenv("OPENAI_MODEL_CHAT", "deepseek-v4-pro")
+            self.base_url = os.getenv("OPENAI_BASE_URL", None)
         if api_key:
             self.mock_mode: bool = False
             client_kwargs = {"api_key": api_key}
