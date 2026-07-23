@@ -13,26 +13,19 @@ from app.utils.logger import get_logger
 logger = get_logger("tool.reranker")
 
 # LLM Reranker Prompt 模板
-RERANK_PROMPT_TEMPLATE = """你是一个金融知识检索结果评估专家。请对以下检索片段与用户问题的相关性进行打分。
+RERANK_PROMPT_TEMPLATE = """请对以下检索片段与用户问题的相关性打分（0.0~1.0）。
 
-## 用户问题：
-{query}
+用户问题：{query}
 
-## 检索片段列表：
+检索片段：
 {documents}
 
-## 评分规则：
-- 对每个片段打一个 0.0 到 1.0 之间的相关性分数
-- 1.0 表示完全相关，0.0 表示完全不相关
-- 重点考虑：
-  1. 直接回答问题的程度
-  2. 金融概念的相关性（如"资管新规"与"销售管理办法"、"适当性管理"、"反洗钱"都密切相关）
-  3. 法规政策的关联性（同一监管框架下的不同文件通常相关）
+评分规则：
+- 1.0=完全相关，0.0=完全不相关
+- 考虑：直接回答程度、金融概念相关性、法规政策关联性
 
-## 输出格式（严格 JSON 数组，不要输出任何其他内容）：
-[{{"index": 0, "score": 0.95}}, {{"index": 1, "score": 0.3}}, ...]
-
-仅输出 JSON 数组，不要输出任何解释、前言、markdown 或代码块。"""
+直接输出JSON数组，不要输出任何其他内容：
+[{{"index":0,"score":0.95}},{{"index":1,"score":0.3}}]"""
 
 # 混合检索权重配置
 LLM_RERANK_WEIGHT = 0.55    # LLM 语义相关性
@@ -151,18 +144,21 @@ class RerankerTool:
                 return [{"index": i, "score": 0.5} for i in range(doc_count)]
 
             # 1. 去除可能的 markdown 代码块包裹
-            text = re.sub(r'^```(?:json)?\s*', '', text)
-            text = re.sub(r'\s*```$', '', text)
+            text = re.sub(r'```(?:json)?\s*', '', text)
+            text = re.sub(r'\s*```', '', text)
             text = text.strip()
 
             # 2. 尝试直接解析
             if text.startswith("["):
-                scores = json.loads(text)
-                if isinstance(scores, list):
-                    return scores
+                try:
+                    scores = json.loads(text)
+                    if isinstance(scores, list):
+                        return scores
+                except json.JSONDecodeError:
+                    pass
 
             # 3. 从文本中提取 JSON 数组
-            json_match = re.search(r'\[[\s\S]*\]', text)
+            json_match = re.search(r'\[[\s\S]*?\]', text)
             if json_match:
                 try:
                     scores = json.loads(json_match.group())
@@ -171,11 +167,27 @@ class RerankerTool:
                 except json.JSONDecodeError:
                     pass
 
-            # 4. 提取所有 {"index": N, "score": N.N} 格式
+            # 4. 提取所有 {"index": N, "score": N.N} 格式（支持乱序字段）
             pattern = r'\{[^{}]*"index"\s*:\s*(\d+)[^{}]*"score"\s*:\s*([\d.]+)[^{}]*\}'
             matches = re.findall(pattern, text)
             if matches:
                 return [{"index": int(idx), "score": float(score)} for idx, score in matches]
+
+            # 5. 兜底：提取所有 "score": N.N 格式（无 index 时按顺序分配）
+            score_pattern = r'"score"\s*:\s*([\d.]+)'
+            score_matches = re.findall(score_pattern, text)
+            if score_matches and len(score_matches) == doc_count:
+                logger.info(f"Reranker 使用兜底解析（仅 score 值）| 解析到 {len(score_matches)} 个分数")
+                return [{"index": i, "score": float(score)} for i, score in enumerate(score_matches)]
+
+            # 6. 兜底：提取所有浮点数作为分数（按顺序分配 index）
+            number_pattern = r'(?:0|1|0?\.\d+)\b'
+            numbers = re.findall(number_pattern, text)
+            # 过滤出合理的相关性分数 (0.0 ~ 1.0)
+            valid_scores = [float(n) for n in numbers if 0 <= float(n) <= 1.0]
+            if len(valid_scores) >= doc_count:
+                logger.info(f"Reranker 使用数字提取兜底 | 提取到 {len(valid_scores)} 个有效分数")
+                return [{"index": i, "score": valid_scores[i]} for i in range(doc_count)]
 
             logger.warning(f"Reranker 解析失败，使用默认分数 0.5 | response={text[:200]}")
 
