@@ -3,11 +3,12 @@
 负责人: LHG
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from app.tool.neo4j_client import Neo4jClient
 from app.tool import graph_query_tool
+from app.security.authorization import require_roles
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_roles("理财顾问", "管理员"))])
 neo4j = Neo4jClient()
 
 

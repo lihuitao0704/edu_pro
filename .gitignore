@@ -13,6 +13,8 @@ ENV/
 build/
 develop-eggs/
 dist/
+node_modules/
+.vite/
 downloads/
 eggs/
 .eggs/

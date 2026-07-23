@@ -100,7 +100,6 @@
   a:hover { text-decoration: underline; }
   strong { color: var(--heading); }
 
-  /* Mermaid diagram wrapper */
   .mermaid-wrapper {
     margin: 24px 0;
     padding: 20px;
@@ -114,13 +113,11 @@
     display: inline-block;
     min-width: 100%;
   }
-  /* Ensure SVG scales with browser zoom and gets enough space */
   .mermaid-wrapper svg {
     max-width: 100%;
     height: auto;
   }
 
-  /* Back to top button */
   .back-to-top {
     position: fixed;
     bottom: 32px;
@@ -140,7 +137,6 @@
   }
   .back-to-top:hover { opacity: 0.85; }
 
-  /* TOC */
   nav.toc {
     background: var(--code-bg);
     border: 1px solid var(--border);
@@ -152,7 +148,6 @@
   nav.toc li { margin: 6px 0; }
   nav.toc a { font-size: 0.95em; }
 
-  /* Loading indicator */
   #mermaid-loading {
     text-align: center;
     padding: 60px 20px;
@@ -171,7 +166,6 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Error state */
   .mermaid-error {
     background: #fff5f5;
     border: 1px solid #feb2b2;
@@ -181,25 +175,51 @@
     font-size: 0.9em;
     margin: 16px 0;
   }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 16px 0;
+    font-size: 0.85em;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+  }
+  .legend .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
 </style>
 </head>
 <body>
 
 <h1>🏦 智能财富管家系统 — 项目架构文档</h1>
-<blockquote>版本: V1.0 | 更新: 2026-07-22 | 框架: FastAPI + SQLAlchemy + LangChain</blockquote>
+<blockquote>版本: V2.0 | 更新: 2026-07-23 | 框架: FastAPI + SQLAlchemy + LangChain | 全 5 大 Agent · 25+ API · 14 数据表</blockquote>
 
 <nav class="toc">
   <strong>📑 目录</strong>
   <ul>
+    <li><a href="#s0">🌟 零、完整业务流程图（端到端）</a></li>
     <li><a href="#s1">一、系统总览架构图</a></li>
-    <li><a href="#s2">二、分层架构详解</a></li>
+    <li><a href="#s2">二、分层架构详解（全模块）</a></li>
     <li><a href="#s3">三、数据流转核心链路</a></li>
-    <li><a href="#s4">四、数据库架构</a></li>
-    <li><a href="#s5">五、Memory 三层记忆架构</a></li>
-    <li><a href="#s6">六、规则引擎架构</a></li>
-    <li><a href="#s7">七、知识库数据流</a></li>
-    <li><a href="#s8">八、部署拓扑</a></li>
-    <li><a href="#s9">九、快速导航</a></li>
+    <li><a href="#s4">四、多 Agent 协作链路</a></li>
+    <li><a href="#s5">五、数据库架构</a></li>
+    <li><a href="#s6">六、Memory 三层记忆架构</a></li>
+    <li><a href="#s7">七、规则引擎架构</a></li>
+    <li><a href="#s8">八、知识库数据流</a></li>
+    <li><a href="#s9">九、API 接口全览</a></li>
+    <li><a href="#s10">十、部署拓扑</a></li>
+    <li><a href="#s11">十一、快速导航</a></li>
   </ul>
 </nav>
 
@@ -210,79 +230,282 @@
   <p>正在渲染 Mermaid 图表…</p>
 </div>
 
+<!-- ==================== 零、完整业务流程图 ==================== -->
+<h2 id="s0">🌟 零、完整业务流程图（端到端）</h2>
+
+<p>以下流程图展示了从客户入驻到持续服务的完整业务路径，涵盖 5 大 Agent 协同工作的全貌：</p>
+
+<div class="legend">
+  <span><span class="dot" style="background:#4f46e5"></span> 客户触点</span>
+  <span><span class="dot" style="background:#10b981"></span> Agent 处理</span>
+  <span><span class="dot" style="background:#f59e0b"></span> 规则引擎</span>
+  <span><span class="dot" style="background:#ef4444"></span> 风控监测</span>
+  <span><span class="dot" style="background:#8b5cf6"></span> 数据存储</span>
+</div>
+
+<div class="mermaid-wrapper">
+<div class="mermaid">
+flowchart TB
+    subgraph 客户入驻阶段["🧑 客户入驻阶段"]
+        direction LR
+        A1["新客户注册"] --> A2["填写风评问卷<br/>16道题"]
+        A2 --> A3["规则引擎评分<br/>四维度+熔断"]
+        A3 --> A4["生成客户画像<br/>C1-C5风险等级"]
+    end
+
+    subgraph 投顾服务阶段["💬 投顾服务阶段"]
+        direction TB
+        B1["理财顾问发起对话<br/>'给张三推荐产品'"] --> B2["意图识别 + 路由"]
+        B2 --> B3["投顾Agent<br/>GraphRAG检索"]
+        B3 --> B4["产品推荐引擎<br/>风险过滤→匹配打分→TopN"]
+        B4 --> B5["资产配置建议<br/>C1-C5配置模板"]
+        B5 --> B6["生成推荐理由<br/>+ 风险提示"]
+    end
+
+    subgraph 交易执行阶段["💳 交易执行阶段"]
+        direction LR
+        C1["客户确认购买"] --> C2["适当性校验<br/>客户等级 ≥ 产品等级"]
+        C2 --> C3{"校验通过?"}
+        C3 -->|Yes| C4["创建交易流水<br/>更新持仓"]
+        C3 -->|No| C5["拒绝交易<br/>提示风险不匹配"]
+        C4 --> C6["申购/赎回/转账<br/>工单创建"]
+    end
+
+    subgraph 风控监测阶段["⚠️ 风控监测阶段"]
+        direction TB
+        D1["交易事件流入<br/>POST /api/risk/monitor"] --> D2["20条规则匹配<br/>规则引擎"]
+        D2 --> D3{"触发规则?"}
+        D3 -->|无| D4["交易正常<br/>记录日志"]
+        D3 -->|有| D5["预警分级<br/>low / medium / high"]
+        D5 --> D6["置信度计算<br/>多因子加权"]
+        D6 --> D7["预警持久化<br/>MySQL + 工单"]
+    end
+
+    subgraph 多Agent协作["🔄 多Agent协作闭环"]
+        direction LR
+        E1["风控预警发布<br/>event:risk_alert"] --> E2["事件总线<br/>Redis Pub/Sub"]
+        E2 --> E3["投顾画像更新<br/>risk_flag → warning"]
+        E3 --> E4["投顾Agent感知<br/>主动提醒理财顾问"]
+        E4 --> E5["理财顾问跟进<br/>人工介入/调整策略"]
+    end
+
+    subgraph 数据分析["📊 数据分析"]
+        direction LR
+        F1["NL2SQL查询<br/>'AUM超100万客户有多少'"] --> F2["自然语言→SQL<br/>LLM生成"]
+        F2 --> F3["MySQL执行<br/>返回结果集"]
+        F3 --> F4["结果可视化<br/>表格+图表"]
+    end
+
+    subgraph 知识库支撑["📚 知识库支撑"]
+        direction TB
+        G1["文档上传<br/>txt/md/docx"] --> G2["文档解析<br/>分块+清洗"]
+        G2 --> G3["向量化<br/>1536d embedding"]
+        G3 --> G4["Milvus存储<br/>3个Collection"]
+        G4 --> G5["RAG检索<br/>投顾对话增强"]
+    end
+
+    客户入驻阶段 --> 投顾服务阶段
+    投顾服务阶段 --> 交易执行阶段
+    交易执行阶段 --> 风控监测阶段
+    风控监测阶段 --> 多Agent协作
+    多Agent协作 -.->|反馈调整| 投顾服务阶段
+    知识库支撑 -.->|RAG增强| 投顾服务阶段
+    数据分析 -.->|辅助决策| 投顾服务阶段
+</div>
+</div>
+
+<h3>0.2 五大 Agent 协同全景图</h3>
+<div class="mermaid-wrapper">
+<div class="mermaid">
+flowchart LR
+    subgraph 用户触点["👤 用户触点"]
+        direction TB
+        U1["理财顾问"]
+        U2["客户经理"]
+        U3["风控专员"]
+        U4["管理员"]
+    end
+
+    subgraph API网关["🌐 API 网关层 main.py"]
+        direction TB
+        GW1["/api/chat/*<br/>对话接口"]
+        GW2["/api/risk/*<br/>风控接口"]
+        GW3["/api/profile/*<br/>画像接口"]
+        GW4["/api/graph/*<br/>图谱接口"]
+        GW5["/api/operation/*<br/>业务操作"]
+        GW6["/api/knowledge/*<br/>知识库"]
+    end
+
+    subgraph Agent层["🤖 五大 AI Agent"]
+        direction TB
+        AG1["🧑‍💼 智能客服 Agent<br/>RAG + 意图分类<br/>FAQ问答"]
+        AG2["🎯 投顾助手 Agent<br/>GraphRAG + 推荐<br/>资产配置"]
+        AG3["📈 数据分析 Agent<br/>NL2SQL<br/>自然语言查数"]
+        AG4["⚡ 业务操作 Agent<br/>NL2API + RBAC<br/>申购/赎回/转账"]
+        AG5["⚠️ 风控监测 Agent<br/>规则引擎 + 分级<br/>实时预警"]
+    end
+
+    subgraph 核心引擎["⚙️ 核心引擎层"]
+        direction LR
+        EN1["画像研判引擎<br/>四维度打分"]
+        EN2["熔断引擎<br/>5条规则"]
+        EN3["推荐引擎<br/>匹配+排序"]
+        EN4["置信度引擎<br/>多因子加权"]
+    end
+
+    subgraph 数据存储["💾 五层数据存储"]
+        direction LR
+        DB1[("MySQL<br/>14张业务表")]
+        DB2[("Redis<br/>缓存+会话+事件")]
+        DB3[("Neo4j<br/>知识图谱")]
+        DB4[("Milvus<br/>向量检索")]
+        DB5[("MinIO<br/>文档存储")]
+    end
+
+    U1 & U2 & U3 & U4 --> API网关
+    API网关 --> Agent层
+    Agent层 --> 核心引擎
+    Agent层 --> 数据存储
+    核心引擎 --> 数据存储
+</div>
+</div>
+
+<h3>0.3 全链路时序图（投顾推荐 → 交易 → 风控联动）</h3>
+<div class="mermaid-wrapper">
+<div class="mermaid">
+sequenceDiagram
+    actor Advisor as 理财顾问
+    participant FE as 前端测试平台
+    participant API as FastAPI 路由层
+    participant CSA as 智能客服Agent
+    participant AA as 投顾Agent
+    participant OA as 业务操作Agent
+    participant RM as 风控监测Agent
+    participant LLM as LLM (DeepSeek)
+    participant RAG as GraphRAG
+    participant Rule as 规则引擎
+    participant Bus as 事件总线Redis
+    participant DB as MySQL
+
+    rect rgb(240, 248, 255)
+        Note over Advisor,DB: 阶段1: 投顾推荐
+        Advisor->>FE: "给张三推荐3款稳健型产品"
+        FE->>API: POST /api/chat/advisor
+        API->>AA: execute(message, customer_id=3)
+        AA->>RAG: 检索产品知识+政策法规
+        RAG-->>AA: 相关上下文
+        AA->>LLM: 画像+上下文→推荐
+        LLM-->>AA: 3款产品+配置建议
+        AA-->>FE: {reply, recommendations}
+        FE-->>Advisor: 展示推荐结果
+    end
+
+    rect rgb(240, 255, 240)
+        Note over Advisor,DB: 阶段2: 执行申购
+        Advisor->>FE: "帮客户3申购产品2，金额500元"
+        FE->>API: POST /api/chat/operator
+        API->>OA: execute(message)
+        OA->>Rule: 适当性校验(C3 ≥ R2?)
+        Rule-->>OA: 匹配通过
+        OA->>DB: INSERT fin_transaction
+        OA->>DB: UPDATE fin_holdings
+        OA-->>FE: {status: ok, txn_no}
+        FE-->>Advisor: 申购成功
+    end
+
+    rect rgb(255, 240, 240)
+        Note over Advisor,DB: 阶段3: 风控监测+联动
+        Note right of RM: 大额交易15万触发
+        RM->>API: POST /api/risk/monitor
+        API->>RM: evaluate(tx_event)
+        RM->>Rule: 20条规则匹配
+        Rule-->>RM: 触发3条规则
+        RM->>DB: INSERT fin_risk_alert
+        RM->>Bus: PUBLISH event:risk_alert
+        Bus-->>AA: SUBSCRIBE → 更新risk_flag
+        AA-->>Advisor: 主动提醒: 客户5风险标记变化
+    end
+</div>
+</div>
+
 <!-- ==================== 一、系统总览架构图 ==================== -->
 <h2 id="s1">一、系统总览架构图</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 graph TB
-    subgraph 前端
-        UI["理财顾问<br/>Streamlit / API 调用方"]
+    subgraph 前端["🖥️ 前端层"]
+        direction LR
+        UI1["测试平台<br/>static/index.html<br/>13个页面 · ECharts"]
+        UI2["Swagger UI<br/>/docs · /redoc"]
     end
 
-    subgraph 入口
-        MAIN["main.py<br/>FastAPI 入口<br/>● /api/health<br/>● /api/engine/test"]
+    subgraph 入口["🚪 入口层"]
+        MAIN["main.py<br/>FastAPI 应用<br/>● /api/health<br/>● /api/engine/test<br/>● lifespan 生命周期"]
     end
 
-    subgraph 路由层
+    subgraph 路由层["📡 路由层 app/api/"]
         direction TB
         A1["profile.py<br/>画像 CRUD + 研判"]
-        A2["risk.py<br/>风评问卷 + 适当性"]
-        A3["advisor.py<br/>投顾对话"]
-        A4["chat.py<br/>SSE 流式"]
-        A5["admin.py<br/>管理后台"]
-        A6["knowledge.py<br/>知识库管理"]
+        A2["risk.py<br/>风评 + 适当性 + 监测 + 预警"]
+        A3["advisor.py<br/>投顾对话 + 推荐 + 配置"]
+        A4["chat.py<br/>智能客服 + 数据分析 + 业务操作"]
+        A5["graph.py<br/>图谱可视化 + 查询"]
+        A6["knowledge.py<br/>知识库 CRUD + 检索"]
+        A7["operations/*.py<br/>申购/赎回/转账/工单<br/>信息更新/可疑上报/风评重做"]
     end
 
-    subgraph Agent层
+    subgraph Agent层["🤖 Agent 层 app/agent/"]
         direction TB
-        B1["base_agent.py<br/>统一执行骨架"]
-        B2["profile_agent.py<br/>画像 Agent"]
-        B3["recommendation_agent.py<br/>推荐 Agent"]
-        B4["explanation_agent.py<br/>解释 Agent"]
+        B0["base_agent.py<br/>统一执行骨架 + 会话记忆"]
+        B1["customer_agent.py<br/>智能客服 — RAG + 意图分类"]
+        B2["advisor_agent.py<br/>投顾助手 — GraphRAG + 推荐"]
+        B3["operator_agent.py<br/>业务操作 — NL2API + RBAC"]
+        B4["profile_agent.py<br/>画像信息抽取 + 标签生成"]
+        B5["recommendation_agent.py<br/>产品匹配 + 排序 + 配置"]
+        B6["explanation_agent.py<br/>理由生成 + 风险解读"]
     end
 
-    subgraph 规则引擎
+    subgraph 规则引擎["⚙️ 规则引擎 app/engine/ · 纯逻辑 · 100% 可测"]
         direction TB
         C1["dimension_calculator.py<br/>四维度计算器"]
-        C2["circuit_breaker.py<br/>5 条熔断规则"]
-        C3["special_case.py<br/>特殊场景"]
-        C4["confidence.py<br/>置信度"]
-        C5["score_mapper.py<br/>等级映射"]
+        C2["circuit_breaker.py<br/>5 条熔断规则 FM-01~05"]
+        C3["special_case.py<br/>特殊场景处理"]
+        C4["confidence.py<br/>置信度计算"]
+        C5["score_mapper.py<br/>等级映射 C1-C5"]
     end
 
-    subgraph 业务服务层
+    subgraph 业务服务层["🔧 业务服务层 app/service/"]
         direction TB
-        D1["profile_service.py"]
-        D2["advisor_service.py"]
-        D3["risk_service.py"]
-        D4["agent_service.py"]
-        D5["memory_service.py"]
-        D6["rag_service.py"]
-        D7["risk_monitor_service.py"]
+        D1["profile_service.py<br/>画像读/写/研判 Cache-Aside"]
+        D2["risk_service.py<br/>风评问卷 + 适当性匹配"]
+        D3["risk_monitor_service.py<br/>交易监测 + 预警分级"]
+        D4["knowledge_service.py<br/>文档入库 + 检索"]
+        D5["nl2sql_service.py<br/>自然语言→SQL→结果"]
+        D6["rag_service.py<br/>GraphRAG 向量+图谱融合"]
+        D7["event_bus.py<br/>Redis Pub/Sub 事件总线"]
+        D8["risk_scheduler.py<br/>APScheduler 周期校准"]
+        D9["risk_confidence_rank.py<br/>置信度排序"]
     end
 
-    subgraph Tool层
+    subgraph Tool层["🛠️ Tool 层 app/tool/"]
         direction TB
-        E1["profile_tool"]
-        E2["graph_tool"]
-        E3["holding_tool"]
-        E4["recommendation_tool"]
-        E5["allocation_tool"]
-        E6["milvus_tool"]
-        E7["document_parser"]
-        E8["embedding_tool"]
+        E1["neo4j_client.py<br/>知识图谱客户端"]
+        E2["milvus_tool.py<br/>向量检索"]
+        E3["llm_client.py<br/>LLM 调用封装"]
+        E4["graph_query_tool.py<br/>图谱 Cypher 查询"]
     end
 
-    subgraph 数据基础架构
+    subgraph 数据基础架构["💾 数据基础架构"]
         direction LR
-        F1[("MySQL<br/>业务数据<br/>14 张表")]
-        F2[("Redis<br/>缓存/会话")]
+        F1[("MySQL<br/>14 张业务表")]
+        F2[("Redis<br/>缓存/会话/事件")]
         F3[("Neo4j<br/>知识图谱")]
         F4[("Milvus<br/>向量检索")]
         F5[("MinIO<br/>文档存储")]
     end
 
-    UI --> MAIN
+    UI1 --> MAIN
+    UI2 --> MAIN
     MAIN --> 路由层
     路由层 --> Agent层
     路由层 --> 业务服务层
@@ -290,7 +513,6 @@ graph TB
     Agent层 --> Tool层
     业务服务层 --> Tool层
     业务服务层 --> 规则引擎
-    Tool层 --> 规则引擎
     Tool层 --> 数据基础架构
     规则引擎 --> 数据基础架构
     业务服务层 --> 数据基础架构
@@ -298,72 +520,74 @@ graph TB
 </div>
 
 <!-- ==================== 二、分层架构详解 ==================== -->
-<h2 id="s2">二、分层架构详解</h2>
+<h2 id="s2">二、分层架构详解（全模块）</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 graph TB
-    subgraph L0["入口层"]
+    subgraph L0["🚪 入口层"]
         direction LR
-        MAIN["main.py<br/>路由注册 + 生命周期"]
+        MAIN["main.py<br/>路由注册 + CORS + 静态文件<br/>lifespan: MySQL/Redis/Scheduler/EventBus"]
     end
 
-    subgraph L1["路由层 — app/api/ (6 个模块)"]
+    subgraph L1["📡 路由层 app/api/ (7 个模块)"]
         direction LR
         API1["profile.py<br/>画像 CRUD / 研判"]
-        API2["risk.py<br/>风评问卷 / 适当性"]
+        API2["risk.py<br/>风评 / 适当性 / 监测 / 预警"]
         API3["advisor.py<br/>投顾对话 / 推荐 / 配置"]
-        API4["chat.py<br/>SSE 流式对话"]
-        API5["admin.py<br/>管理后台"]
-        API6["knowledge.py<br/>知识库管理"]
+        API4["chat.py<br/>客服 + NL2SQL + 业务操作"]
+        API5["graph.py<br/>图谱可视化 + Cypher查询"]
+        API6["knowledge.py<br/>知识库 CRUD + 检索"]
+        API7["operations/*.py<br/>申购/赎回/转账/工单<br/>联系更新/可疑上报"]
     end
 
-    subgraph L2["Agent 层 — app/agent/ (4 个模块)"]
+    subgraph L2["🤖 Agent 层 app/agent/ (7 个模块)"]
         direction LR
-        AG1["base_agent.py<br/>抽象基类 + 会话记忆"]
-        AG2["profile_agent.py<br/>信息抽取 + 标签生成"]
-        AG3["recommendation_agent.py<br/>产品匹配 + 排序"]
-        AG4["explanation_agent.py<br/>理由生成 + 风险解读"]
+        AG0["base_agent.py<br/>抽象基类 + 会话记忆"]
+        AG1["customer_agent.py<br/>RAG + 意图分类"]
+        AG2["advisor_agent.py<br/>GraphRAG + 推荐"]
+        AG3["operator_agent.py<br/>NL2API + RBAC"]
+        AG4["profile_agent.py<br/>信息抽取 + 标签"]
+        AG5["recommendation_agent.py<br/>产品匹配 + 排序"]
+        AG6["explanation_agent.py<br/>理由 + 风险解读"]
     end
 
-    subgraph L3["业务服务层 — app/service/ (7 个模块)"]
+    subgraph L3["🔧 业务服务层 app/service/ (9 个模块)"]
         direction LR
-        SV1["profile_service.py<br/>画像读/写/研判<br/>Cache-Aside"]
-        SV2["advisor_service.py<br/>推荐 Pipeline<br/>过滤→排序→TopN"]
-        SV3["risk_service.py<br/>风评问卷/答题<br/>适当性匹配"]
-        SV4["agent_service.py<br/>Agent 工厂<br/>模型路由"]
-        SV5["memory_service.py<br/>三层记忆<br/>统一入口"]
-        SV6["rag_service.py<br/>GraphRAG<br/>向量+图谱融合"]
-        SV7["risk_monitor_service.py<br/>异常检测<br/>预警记录"]
+        SV1["profile_service.py<br/>画像读/写/研判"]
+        SV2["risk_service.py<br/>风评 + 适当性"]
+        SV3["risk_monitor_service.py<br/>交易监测 + 预警"]
+        SV4["knowledge_service.py<br/>文档入库 + 检索"]
+        SV5["nl2sql_service.py<br/>NL2SQL 查询"]
+        SV6["rag_service.py<br/>GraphRAG 融合"]
+        SV7["event_bus.py<br/>Redis Pub/Sub"]
+        SV8["risk_scheduler.py<br/>APScheduler"]
+        SV9["risk_confidence_rank.py<br/>置信度排序"]
     end
 
-    subgraph L4["规则引擎层 — app/engine/ (5 个模块) | 纯逻辑 | 100% 可测试"]
+    subgraph L4["⚙️ 规则引擎层 app/engine/ (5 个模块) | 纯逻辑 | 100% 可测试"]
         direction LR
-        EG1["dimension_calculator.py<br/>四维度计算器<br/>+ evaluate_customer()"]
+        EG1["dimension_calculator.py<br/>四维度计算器"]
         EG2["circuit_breaker.py<br/>5 条熔断 FM-01~05"]
-        EG3["special_case.py<br/>特殊场景处理"]
-        EG4["confidence.py<br/>置信度计算"]
+        EG3["special_case.py<br/>特殊场景"]
+        EG4["confidence.py<br/>置信度"]
         EG5["score_mapper.py<br/>等级映射"]
     end
 
-    subgraph L5["Tool 层 — app/tool/ (8 个模块)"]
+    subgraph L5["🛠️ Tool 层 app/tool/ (4 个模块)"]
         direction LR
-        TL1["profile_tool<br/>画像查询"]
-        TL2["graph_tool<br/>图谱查询"]
-        TL3["holding_tool<br/>持仓分析"]
-        TL4["recommendation_tool<br/>推荐打分"]
-        TL5["allocation_tool<br/>资产配置"]
-        TL6["milvus_tool<br/>向量检索"]
-        TL7["document_parser<br/>文档解析"]
-        TL8["embedding_tool<br/>向量嵌入"]
+        TL1["neo4j_client.py<br/>图谱客户端"]
+        TL2["milvus_tool.py<br/>向量检索"]
+        TL3["llm_client.py<br/>LLM 封装"]
+        TL4["graph_query_tool.py<br/>Cypher 查询"]
     end
 
-    subgraph L6["数据层"]
+    subgraph L6["💾 数据层 (5 种存储)"]
         direction LR
-        D1[("MySQL")]
-        D2[("Redis")]
-        D3[("Neo4j")]
-        D4[("Milvus")]
-        D5[("MinIO")]
+        D1[("MySQL<br/>14 表")]
+        D2[("Redis<br/>缓存/会话/事件")]
+        D3[("Neo4j<br/>图谱")]
+        D4[("Milvus<br/>向量")]
+        D5[("MinIO<br/>文档")]
     end
 
     L0 --> L1 --> L2 --> L3 --> L4
@@ -421,7 +645,7 @@ sequenceDiagram
 
     Note over SVC,DB: ⑥ 持久化
     SVC->>DB: UPDATE fin_customer_profile
-    SVC->>DB: INSERT risk_score_record (评分记录)
+    SVC->>DB: INSERT risk_score_record
 
     Note over SVC,Cache: ⑦ 失效缓存
     SVC->>Cache: DEL profile:{customer_id}
@@ -437,7 +661,7 @@ sequenceDiagram
 sequenceDiagram
     actor Client as 理财顾问
     participant API as advisor.py
-    participant PA as ProfileAgent
+    participant AA as AdvisorAgent
     participant RA as RecommendationAgent
     participant EA as ExplanationAgent
     participant Tool as Tools
@@ -447,17 +671,15 @@ sequenceDiagram
 
     Client->>API: POST /api/chat/advisor<br/>{message: "给张三推荐3款产品"}
 
-    Note over API: 意图识别<br/>关键词: "推荐"
-
-    API->>PA: execute(message, customer_id)
-    PA->>Tool: ProfileTool.get_profile(id)
+    API->>AA: execute(message, customer_id)
+    AA->>Tool: ProfileTool.get_profile(id)
     Tool->>Data: Redis/MySQL 画像查询
     Data-->>Tool: 客户画像
-    PA->>Tool: SessionMemory.get_messages()
+    AA->>Tool: SessionMemory.get_messages()
     Tool->>Data: Redis 会话历史
     Data-->>Tool: 上下文
-    PA->>LLM: 提示词 + 画像
-    LLM-->>PA: 画像摘要
+    AA->>LLM: 提示词 + 画像
+    LLM-->>AA: 画像摘要
 
     API->>RA: execute(message, customer_id)
 
@@ -484,8 +706,8 @@ sequenceDiagram
     rect rgb(255, 248, 240)
         Note over EA,RAG: GraphRAG 增强检索
         EA->>RAG: retrieve(query)
-        RAG->>Data: Milvus TopK 检索 (权重 0.6)
-        RAG->>Data: Neo4j 多跳查询 (权重 0.4)
+        RAG->>Data: Milvus TopK (权重 0.6)
+        RAG->>Data: Neo4j 多跳 (权重 0.4)
         RAG->>RAG: 融合排序: α×Score_A + β×Score_B
         RAG-->>EA: 检索上下文
     end
@@ -497,9 +719,93 @@ sequenceDiagram
 </div>
 </div>
 
-<!-- ==================== 四、数据库架构 ==================== -->
-<h2 id="s4">四、数据库架构</h2>
-<h3>4.1 存储矩阵</h3>
+<h3>3.3 风控监测 → 事件总线 → 投顾联动链路</h3>
+<div class="mermaid-wrapper">
+<div class="mermaid">
+sequenceDiagram
+    participant TX as 交易事件
+    participant Monitor as RiskMonitorService
+    participant Rule as 规则引擎(20条)
+    participant DB as MySQL
+    participant Bus as 事件总线(Redis Pub/Sub)
+    participant AA as 投顾Agent
+    participant Advisor as 理财顾问
+
+    TX->>Monitor: POST /api/risk/monitor<br/>{customer_id, amount, type}
+    Monitor->>Rule: evaluate_all(tx_dict)
+    Rule-->>Monitor: triggered_rules (3条触发)
+
+    Monitor->>Monitor: grade() → 预警分级(low/medium/high)
+    Monitor->>Monitor: confidence() → 置信度计算
+    Monitor->>DB: INSERT fin_risk_alert
+    Monitor->>DB: INSERT biz_work_order (可疑工单)
+
+    Monitor->>Bus: PUBLISH event:risk_alert<br/>{customer_id, level, rules}
+
+    Bus-->>AA: SUBSCRIBE event:risk_alert
+    AA->>DB: UPDATE risk_flag (normal → warning)
+    AA->>Advisor: 主动提醒: 客户风险标记变化
+</div>
+</div>
+
+<!-- ==================== 四、多 Agent 协作链路 ==================== -->
+<h2 id="s4">四、多 Agent 协作链路</h2>
+<div class="mermaid-wrapper">
+<div class="mermaid">
+flowchart TB
+    subgraph 触发["⚡ 触发源"]
+        direction LR
+        T1["大额交易<br/>15万现金"]
+        T2["风评过期<br/>>12个月"]
+        T3["异常行为<br/>追涨杀跌"]
+        T4["定时任务<br/>每周日03:00"]
+    end
+
+    subgraph 风控Agent["⚠️ 风控监测 Agent"]
+        direction TB
+        R1["规则匹配<br/>20条规则"]
+        R2["预警分级<br/>low/medium/high"]
+        R3["置信度计算<br/>多因子加权"]
+    end
+
+    subgraph 事件总线["📡 事件总线 (Redis Pub/Sub)"]
+        direction LR
+        E1["channel: risk_alert<br/>payload: {customer_id, level, rules}"]
+    end
+
+    subgraph 投顾Agent["🎯 投顾助手 Agent"]
+        direction TB
+        A1["订阅 risk_alert"]
+        A2["更新 risk_flag"]
+        A3["画像重新研判"]
+        A4["主动提醒理财顾问"]
+    end
+
+    subgraph 业务操作Agent["⚡ 业务操作 Agent"]
+        direction TB
+        O1["创建处理工单"]
+        O2["RBAC 权限校验"]
+        O3["执行账户冻结/限额"]
+    end
+
+    subgraph 客服Agent["🧑‍💼 智能客服 Agent"]
+        direction TB
+        C1["RAG 检索风控政策"]
+        C2["生成解释回复"]
+        C3["引导人工介入"]
+    end
+
+    触发 --> 风控Agent
+    风控Agent --> 事件总线
+    事件总线 --> 投顾Agent
+    事件总线 --> 业务操作Agent
+    事件总线 --> 客服Agent
+</div>
+</div>
+
+<!-- ==================== 五、数据库架构 ==================== -->
+<h2 id="s5">五、数据库架构</h2>
+<h3>5.1 存储矩阵</h3>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 graph TB
@@ -547,11 +853,12 @@ graph TB
         T10 -->|N:1| T8
     end
 
-    subgraph Redis["Redis — 缓存 + 会话"]
+    subgraph Redis["Redis — 缓存 + 会话 + 事件"]
         direction LR
         R1["session:{id}:messages<br/>会话消息 List<br/>TTL: 30min"]
         R2["profile:{id}<br/>画像 JSON 缓存<br/>TTL: 7d"]
         R3["risk:rule:version<br/>规则版本号"]
+        R4["event:risk_alert<br/>Pub/Sub 频道"]
     end
 
     subgraph Neo4j["Neo4j — 知识图谱"]
@@ -582,7 +889,7 @@ graph TB
 </div>
 </div>
 
-<h3>4.2 核心表 ER 关系</h3>
+<h3>5.2 核心表 ER 关系</h3>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 erDiagram
@@ -651,8 +958,8 @@ erDiagram
 </div>
 </div>
 
-<!-- ==================== 五、Memory 三层记忆架构 ==================== -->
-<h2 id="s5">五、Memory 三层记忆架构</h2>
+<!-- ==================== 六、Memory 三层记忆架构 ==================== -->
+<h2 id="s6">六、Memory 三层记忆架构</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 graph TB
@@ -692,8 +999,8 @@ graph TB
 </div>
 </div>
 
-<!-- ==================== 六、规则引擎架构 ==================== -->
-<h2 id="s6">六、规则引擎架构</h2>
+<!-- ==================== 七、规则引擎架构 ==================== -->
+<h2 id="s7">七、规则引擎架构</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 flowchart TD
@@ -729,8 +1036,8 @@ flowchart TD
 </div>
 </div>
 
-<!-- ==================== 七、知识库数据流 ==================== -->
-<h2 id="s7">七、知识库数据流</h2>
+<!-- ==================== 八、知识库数据流 ==================== -->
+<h2 id="s8">八、知识库数据流</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 flowchart LR
@@ -739,7 +1046,7 @@ flowchart LR
         K1["公司信息/<br/>企业信息.md<br/>新人指南.md<br/>高频问答对.txt"]
         K2["公司业务/<br/>个人理财产品手册.md<br/>企业金融服务方案.md<br/>高净值客户服务规范.md"]
         K3["金融政策/<br/>适当性管理指南.md<br/>反洗钱合规手册.md<br/>理财产品销售办法.md"]
-        K4["用户研判规则/<br/>投资者风险画像研判规则.md<br/>反洗钱可疑交易识别规则.md<br/>用户信息数据示例.md"]
+        K4["用户研判规则/<br/>投资者风险画像研判规则.md<br/>反洗钱可疑交易识别规则.md"]
     end
 
     subgraph 处理["处理管道"]
@@ -783,13 +1090,63 @@ flowchart LR
 </div>
 </div>
 
-<!-- ==================== 八、部署拓扑 ==================== -->
-<h2 id="s8">八、部署拓扑</h2>
+<!-- ==================== 九、API 接口全览 ==================== -->
+<h2 id="s9">九、API 接口全览</h2>
+<table>
+  <thead><tr><th>方法</th><th>路径</th><th>说明</th><th>Agent/模块</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/api/health</code></td><td>健康检查</td><td>main.py</td></tr>
+    <tr><td>GET</td><td><code>/api/engine/test</code></td><td>规则引擎自测（纯逻辑）</td><td>main.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">客户画像</td></tr>
+    <tr><td>GET</td><td><code>/api/profile/{id}</code></td><td>查询客户画像</td><td>profile.py</td></tr>
+    <tr><td>PUT</td><td><code>/api/profile/{id}</code></td><td>更新画像标签</td><td>profile.py</td></tr>
+    <tr><td>POST</td><td><code>/api/profile/{id}/assess</code></td><td>触发画像研判打分</td><td>profile.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">风控</td></tr>
+    <tr><td>GET</td><td><code>/api/risk/questionnaire</code></td><td>获取风评问卷(16题)</td><td>risk.py</td></tr>
+    <tr><td>POST</td><td><code>/api/risk/assessment</code></td><td>提交风评答卷</td><td>risk.py</td></tr>
+    <tr><td>POST</td><td><code>/api/risk/suitability-check</code></td><td>适当性匹配校验</td><td>risk.py</td></tr>
+    <tr><td>POST</td><td><code>/api/risk/monitor</code></td><td>交易风控监测</td><td>risk.py</td></tr>
+    <tr><td>GET</td><td><code>/api/risk/alerts</code></td><td>预警列表</td><td>risk.py</td></tr>
+    <tr><td>GET</td><td><code>/api/risk/alert/{id}</code></td><td>预警详情</td><td>risk.py</td></tr>
+    <tr><td>PUT</td><td><code>/api/risk/alert/{id}/handle</code></td><td>处理预警</td><td>risk.py</td></tr>
+    <tr><td>POST</td><td><code>/api/risk/recalculate</code></td><td>置信度重算</td><td>risk.py</td></tr>
+    <tr><td>GET</td><td><code>/api/risk/profile/{id}</code></td><td>客户风险画像</td><td>risk.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">Agent 对话</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/customer</code></td><td>智能客服对话</td><td>chat.py → CustomerAgent</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/advisor</code></td><td>投顾助手对话</td><td>advisor.py → AdvisorAgent</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/analyst</code></td><td>数据分析(NL2SQL)</td><td>chat.py → NL2SQLService</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/operator</code></td><td>业务操作(NL2API)</td><td>chat.py → OperatorAgent</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/recommend</code></td><td>纯产品推荐</td><td>advisor.py</td></tr>
+    <tr><td>POST</td><td><code>/api/chat/allocation</code></td><td>资产配置建议</td><td>advisor.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">知识图谱</td></tr>
+    <tr><td>GET</td><td><code>/api/graph/stats</code></td><td>图谱统计</td><td>graph.py</td></tr>
+    <tr><td>GET</td><td><code>/api/graph/visualization/{id}</code></td><td>客户图谱可视化</td><td>graph.py</td></tr>
+    <tr><td>POST</td><td><code>/api/graph/query</code></td><td>通用图谱查询</td><td>graph.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">知识库</td></tr>
+    <tr><td>POST</td><td><code>/api/knowledge/upload</code></td><td>上传知识文档</td><td>knowledge.py</td></tr>
+    <tr><td>GET</td><td><code>/api/knowledge/list</code></td><td>知识列表</td><td>knowledge.py</td></tr>
+    <tr><td>DELETE</td><td><code>/api/knowledge/{id}</code></td><td>删除知识</td><td>knowledge.py</td></tr>
+    <tr><td>POST</td><td><code>/api/knowledge/search</code></td><td>知识检索</td><td>knowledge.py</td></tr>
+    <tr><td colspan="4" style="background:var(--table-header);font-weight:600">业务操作</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/purchase</code></td><td>产品申购</td><td>operations/purchase.py</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/redeem</code></td><td>产品赎回</td><td>operations/redeem.py</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/transfer</code></td><td>转账</td><td>operations/transfer.py</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/workorder</code></td><td>创建工单</td><td>operations/workorder.py</td></tr>
+    <tr><td>PUT</td><td><code>/api/operation/contact</code></td><td>更新联系信息</td><td>operations/contact.py</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/suspicious</code></td><td>可疑交易上报</td><td>operations/suspicious_report.py</td></tr>
+    <tr><td>POST</td><td><code>/api/operation/assessment</code></td><td>风评重做</td><td>operations/assessment.py</td></tr>
+    <tr><td>GET</td><td><code>/api/operation/product/list</code></td><td>产品列表</td><td>operations/product_query.py</td></tr>
+    <tr><td>GET</td><td><code>/api/operation/product/{id}</code></td><td>产品详情</td><td>operations/product_query.py</td></tr>
+  </tbody>
+</table>
+
+<!-- ==================== 十、部署拓扑 ==================== -->
+<h2 id="s10">十、部署拓扑</h2>
 <div class="mermaid-wrapper">
 <div class="mermaid">
 graph TB
     subgraph 应用层["应用层 — Python 进程"]
-        APP["FastAPI App<br/>main.py :8000<br/>● /api/profile/*<br/>● /api/risk/*<br/>● /api/chat/*"]
+        APP["FastAPI App<br/>main.py :8000<br/>● /api/profile/*<br/>● /api/risk/*<br/>● /api/chat/*<br/>● /api/operation/*"]
     end
 
     subgraph 中间件["基础设施 — Docker / 物理机"]
@@ -800,7 +1157,7 @@ graph TB
         end
 
         subgraph Redis_CT["Redis :6379"]
-            R_DB["db:0<br/>缓存 + 会话"]
+            R_DB["db:0<br/>缓存 + 会话 + 事件总线"]
         end
 
         subgraph Neo4j_CT["Neo4j :7687"]
@@ -821,10 +1178,12 @@ graph TB
     end
 
     subgraph 前端层["前端"]
-        FE["Streamlit 投顾界面"]
+        FE1["测试平台<br/>static/index.html<br/>13 页面 · ECharts"]
+        FE2["Swagger UI<br/>:8000/docs"]
     end
 
-    FE -->|HTTP/SSE| APP
+    FE1 -->|HTTP| APP
+    FE2 -->|HTTP| APP
     APP -->|SQLAlchemy Async| MySQL_CT
     APP -->|redis.asyncio| Redis_CT
     APP -->|neo4j.AsyncDriver| Neo4j_CT
@@ -834,15 +1193,16 @@ graph TB
 </div>
 </div>
 
-<!-- ==================== 九、快速导航 ==================== -->
-<h2 id="s9">九、快速导航</h2>
+<!-- ==================== 十一、快速导航 ==================== -->
+<h2 id="s11">十一、快速导航</h2>
 <table>
   <thead><tr><th>我想...</th><th>去这里</th></tr></thead>
   <tbody>
     <tr><td>启动项目</td><td><code>python main.py</code></td></tr>
+    <tr><td>打开测试平台</td><td>启动后访问 <code>http://localhost:8000</code></td></tr>
+    <tr><td>查看 API 文档</td><td>启动后访问 <code>http://localhost:8000/docs</code></td></tr>
     <tr><td>测试规则引擎</td><td><code>python -m app.engine.dimension_calculator</code></td></tr>
     <tr><td>测试熔断规则</td><td><code>python -m app.engine.circuit_breaker</code></td></tr>
-    <tr><td>查看 API 文档</td><td>启动后访问 <code>http://localhost:8000/docs</code></td></tr>
     <tr><td>修改评分规则</td><td><code>app/config/rules_config.py</code></td></tr>
     <tr><td>修改数据库表结构</td><td><code>app/model/entities.py</code> → 重启自动 DDL</td></tr>
     <tr><td>添加新的 API 接口</td><td><code>app/api/</code> 新建路由 → <code>main.py</code> 注册</td></tr>
@@ -850,16 +1210,17 @@ graph TB
     <tr><td>添加新的 Tool</td><td><code>app/tool/</code> 新建工具类</td></tr>
     <tr><td>配置数据库连接</td><td><code>.env</code> (MYSQL_*/REDIS_*/NEO4J_*/MILVUS_*)</td></tr>
     <tr><td>添加知识文档</td><td>放入 <code>data/knowledge/</code> → 调用 <code>/api/knowledge/upload</code></td></tr>
+    <tr><td>导入图谱数据</td><td><code>scripts/neo4j_import.py</code></td></tr>
+    <tr><td>初始化知识库</td><td><code>scripts/init_knowledge.py</code></td></tr>
   </tbody>
 </table>
 
 <hr>
-<blockquote><strong>技术栈速查</strong>: FastAPI | SQLAlchemy Async | Redis | Neo4j | Milvus | MinIO | LangChain | DeepSeek V4 | Pydantic Settings</blockquote>
+<blockquote><strong>技术栈速查</strong>: FastAPI | SQLAlchemy Async | Redis | Neo4j | Milvus | MinIO | LangChain | DeepSeek V4 Pro | Pydantic Settings | ECharts | Mermaid</blockquote>
 
 <button class="back-to-top" id="backToTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="返回顶部">⬆</button>
 
 <script>
-  // Initialize Mermaid
   mermaid.initialize({
     startOnLoad: true,
     theme: 'default',
@@ -872,7 +1233,6 @@ graph TB
     }
   });
 
-  // Hide loading indicator once rendering completes
   window.addEventListener('load', function() {
     setTimeout(function() {
       const loading = document.getElementById('mermaid-loading');
@@ -880,13 +1240,11 @@ graph TB
     }, 800);
   });
 
-  // Show back-to-top button on scroll
   window.addEventListener('scroll', function() {
     const btn = document.getElementById('backToTop');
     btn.style.display = window.scrollY > 600 ? 'block' : 'none';
   });
 
-  // Re-run mermaid on any unrendered blocks (fallback)
   setTimeout(async function() {
     try {
       await mermaid.run({

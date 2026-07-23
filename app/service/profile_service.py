@@ -29,6 +29,8 @@ from app.memory.profile_cache import ProfileCache
 from app.memory.long_term import LongTermMemory
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
 
+PROFILE_CACHE_SCHEMA_VERSION = 2
+
 
 class ProfileService:
     """画像业务服务"""
@@ -47,8 +49,13 @@ class ProfileService:
     async def get_profile(self, customer_id: int) -> Optional[FinCustomerProfile]:
         """查询画像（先 Redis → 后 MySQL → 回填缓存）"""
         cached = await self.cache.get(customer_id)
-        if cached:
-            return cached
+        if cached and cached.get("_schema_version") == PROFILE_CACHE_SCHEMA_VERSION:
+            profile_data = {
+                key: value
+                for key, value in cached.items()
+                if key != "_schema_version"
+            }
+            return FinCustomerProfile(**profile_data)
 
         stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
         result = await self.db.execute(stmt)
@@ -395,10 +402,33 @@ class ProfileService:
 
     def _profile_to_dict(self, profile: FinCustomerProfile) -> dict:
         return {
+            "_schema_version": PROFILE_CACHE_SCHEMA_VERSION,
+            "id": profile.id,
             "customer_id": profile.customer_id,
             "risk_level": profile.risk_level,
             "risk_score": profile.risk_score,
+            "investment_experience": profile.investment_experience,
+            "annual_income_range": profile.annual_income_range,
             "total_assets": str(profile.total_assets) if profile.total_assets else None,
+            "asset_allocation": profile.asset_allocation,
+            "product_preference": profile.product_preference,
+            "confidence_score": (
+                str(profile.confidence_score) if profile.confidence_score else None
+            ),
+            "basic_score": str(profile.basic_score) if profile.basic_score else None,
+            "experience_score": (
+                str(profile.experience_score) if profile.experience_score else None
+            ),
+            "risk_pref_score": (
+                str(profile.risk_pref_score) if profile.risk_pref_score else None
+            ),
+            "behavior_score": (
+                str(profile.behavior_score) if profile.behavior_score else None
+            ),
+            "risk_flag": profile.risk_flag,
+            "profile_json": profile.profile_json,
+            "create_time": profile.create_time,
+            "update_time": profile.update_time,
         }
 
     @staticmethod

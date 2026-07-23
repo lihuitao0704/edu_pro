@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
+from app.security.authorization import require_roles
 
 router = APIRouter()
 
@@ -21,7 +22,11 @@ _COLUMN_MAP = {
 
 
 @router.put("/contact")
-async def update_contact(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
+async def update_contact(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_roles("客户经理", "管理员")),
+) -> ApiResponse:
     """更新客户联系信息"""
     customer_id = body.get("customer_id")
     field = body.get("field", "")

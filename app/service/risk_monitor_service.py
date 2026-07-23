@@ -166,6 +166,8 @@ class RiskMonitorService:
 
     async def handle_alert(self, db: AsyncSession, alert_id: str, action: str, handler_id: int, note: str) -> Optional[dict]:
         """处理预警"""
+        if action not in {"resolved", "false_positive", "processing"}:
+            raise ValueError("不支持的预警处理动作")
         stmt = select(FinRiskAlert).where(FinRiskAlert.id == int(alert_id))
         result = await db.execute(stmt)
         alert = result.scalar_one_or_none()
@@ -175,6 +177,32 @@ class RiskMonitorService:
         alert.handler_id = handler_id
         alert.handle_result = note
         alert.update_time = datetime.now()
+
+        work_order_stmt = (
+            select(BizWorkOrder)
+            .where(BizWorkOrder.biz_content["alert_id"].as_integer() == int(alert_id))
+            .order_by(BizWorkOrder.id.desc())
+        )
+        work_order_result = await db.execute(work_order_stmt)
+        work_order = work_order_result.scalar_one_or_none()
+        if work_order:
+            if action in {"resolved", "false_positive"}:
+                work_order.status = "已完成"
+                work_order.current_node = "已关闭"
+            else:
+                work_order.status = "处理中"
+                work_order.current_node = "风险核实"
+            work_order.handler_id = handler_id
+            work_order.update_time = datetime.now()
+
+        if action in {"resolved", "false_positive"}:
+            try:
+                from app.config.database import get_redis
+
+                redis = await get_redis()
+                await redis.srem("risk:alert:pending", str(alert_id))
+            except Exception as exc:
+                logger.warning("清理预警待办失败: %s", exc)
         await db.flush()
         return _to_dict(alert)
 

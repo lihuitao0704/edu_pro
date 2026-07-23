@@ -13,8 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
+from app.service.transaction_flow_service import TransactionFlowService
+from app.security.authorization import authenticated_actor_id, require_roles
 
 router = APIRouter()
+_transaction_flow = TransactionFlowService()
 
 
 def generate_transaction_no() -> str:
@@ -35,7 +38,11 @@ def calc_nav_time() -> str:
 
 
 @router.post("/purchase")
-async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
+async def purchase_product(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "管理员")),
+) -> ApiResponse:
     """
     产品申购
     body: {customer_id, product_id, amount, operator_id}
@@ -50,7 +57,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
     customer_id = body.get("customer_id")
     product_id = body.get("product_id")
     amount = Decimal(str(body.get("amount", 0)))
-    operator_id = body.get("operator_id")
+    operator_id = authenticated_actor_id(user, body.get("operator_id"))
 
     if not customer_id or not product_id or amount <= 0:
         return ApiResponse(code=400, message="参数不完整", trace_id=uuid.uuid4().hex[:8])
@@ -155,6 +162,17 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
              "c": float(amount), "v": float(amount)},
         )
 
+    risk_monitor = await _transaction_flow.monitor(
+        db,
+        {
+            "customer_id": customer_id,
+            "transaction_id": txn_no,
+            "amount": float(amount),
+            "transaction_type": "purchase",
+            "timestamp": datetime.now().isoformat(),
+            "investor_account": str(customer_id),
+        },
+    )
     await db.commit()
 
     return ApiResponse(
@@ -167,6 +185,7 @@ async def purchase_product(body: dict, db: AsyncSession = Depends(get_db)) -> Ap
             "shares": float(shares),
             "nav": float(nav),
             "nav_date": calc_nav_time(),
+            "risk_monitor": risk_monitor,
         },
         trace_id=uuid.uuid4().hex[:8],
     )

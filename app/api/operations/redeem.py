@@ -7,17 +7,24 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
+from app.service.transaction_flow_service import TransactionFlowService
+from app.security.authorization import authenticated_actor_id, require_roles
 
 router = APIRouter()
+_transaction_flow = TransactionFlowService()
 
 
 @router.post("/redeem")
-async def redeem_product(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
+async def redeem_product(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "管理员")),
+) -> ApiResponse:
     """产品赎回：校验持仓 → 计算金额 → 写入流水 → 更新持仓"""
     customer_id = body.get("customer_id")
     product_id = body.get("product_id")
     shares = Decimal(str(body.get("shares", 0)))
-    operator_id = body.get("operator_id")
+    operator_id = authenticated_actor_id(user, body.get("operator_id"))
 
     if not customer_id or not product_id or shares <= 0:
         return ApiResponse(code=400, message="参数不完整", trace_id=uuid.uuid4().hex[:8])
@@ -57,5 +64,25 @@ async def redeem_product(body: dict, db: AsyncSession = Depends(get_db)) -> ApiR
         await db.execute(text("UPDATE fin_holdings SET shares=:s, cost_amount=:cost, current_value=:v, update_time=NOW() WHERE id=:id"),
                          {"s": float(remaining), "cost": float(new_cost), "v": float(remaining * nav), "id": holding["id"]})
 
+    risk_monitor = await _transaction_flow.monitor(
+        db,
+        {
+            "customer_id": customer_id,
+            "transaction_id": txn_no,
+            "amount": float(amount),
+            "transaction_type": "redeem",
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
     await db.commit()
-    return ApiResponse(code=200, message="赎回成功", data={"transaction_no": txn_no, "shares": float(shares), "amount": float(amount)}, trace_id=uuid.uuid4().hex[:8])
+    return ApiResponse(
+        code=200,
+        message="赎回成功",
+        data={
+            "transaction_no": txn_no,
+            "shares": float(shares),
+            "amount": float(amount),
+            "risk_monitor": risk_monitor,
+        },
+        trace_id=uuid.uuid4().hex[:8],
+    )

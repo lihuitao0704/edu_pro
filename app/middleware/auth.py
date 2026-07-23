@@ -66,6 +66,10 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 
 def _is_public_path(path: str) -> bool:
+    # The Vue shell, history routes, and compiled assets must be reachable so
+    # unauthenticated users can load the login page. API routes stay protected.
+    if path != "/api" and not path.startswith("/api/"):
+        return True
     """判断路径是否为公开路径"""
     if path in PUBLIC_PATHS:
         return True

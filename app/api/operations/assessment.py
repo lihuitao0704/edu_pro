@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
+from app.security.authorization import require_roles
 
 router = APIRouter()
 
@@ -20,7 +21,11 @@ def calc_risk_level(score: int) -> str:
 
 
 @router.post("/assessment")
-async def redo_assessment(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
+async def redo_assessment(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_roles("理财顾问", "管理员")),
+) -> ApiResponse:
     """风评重做：根据答题计算风险等级，写入记录"""
     customer_id = body.get("customer_id")
     answers = body.get("answers", [])

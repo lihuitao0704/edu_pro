@@ -5,7 +5,7 @@ Pydantic 数据模型（请求/响应 Schema）
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ==================== 画像相关 ====================
@@ -233,6 +233,8 @@ class KnowledgeSearchRequest(BaseModel):
 
 class TransactionEvent(BaseModel):
     """交易事件 — POST /api/risk/monitor 请求体"""
+    model_config = ConfigDict(extra="allow")
+
     customer_id: int = Field(..., description="客户ID")
     transaction_id: str = Field(..., description="交易流水号")
     amount: float = Field(..., ge=0, description="交易金额")
@@ -240,6 +242,21 @@ class TransactionEvent(BaseModel):
     currency: str = Field(default="CNY")
     counterparty: Optional[dict] = Field(default=None)
     timestamp: str = Field(..., description="交易时间 ISO8601")
+    age: Optional[int] = None
+    annual_income: Optional[float] = None
+    monthly_avg_12m: Optional[float] = None
+    weekly_count: Optional[int] = None
+    weekly_total: Optional[float] = None
+    daily_amount: Optional[float] = None
+    buy_count_30d: Optional[int] = None
+    sell_count_30d: Optional[int] = None
+    hold_days: Optional[int] = None
+    account_age_days: Optional[int] = None
+    total_since_open: Optional[float] = None
+    info_changed_72h: Optional[bool] = None
+    has_night_history_90d: Optional[bool] = None
+    is_pep: Optional[bool] = None
+    investor_account: Optional[str] = None
 
 
 class AlertHandleRequest(BaseModel):

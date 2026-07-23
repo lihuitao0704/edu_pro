@@ -12,10 +12,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import KnowledgeUploadResponse, KnowledgeListItem
 from app.service.knowledge_service import get_knowledge_service
+from app.tool.milvus_tool import COLLECTION_CONFIGS, get_milvus_tool
 from app.utils.response import success
 from app.utils.exceptions import AppException
+from app.security.authorization import require_roles
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_roles("管理员"))])
+
+
+@router.get("/status", response_model=dict)
+async def knowledge_status():
+    """返回知识向量库连接状态及核心集合数量。"""
+    tool = get_milvus_tool()
+    connected = bool(getattr(tool, "_connected", False))
+    collections = {}
+    if connected:
+        for collection in COLLECTION_CONFIGS:
+            try:
+                collections[collection] = len(tool.get_all_ids(collection))
+            except Exception:
+                collections[collection] = None
+    return success(data={"milvus_connected": connected, "collections": collections})
 
 
 @router.post("/upload", response_model=dict)

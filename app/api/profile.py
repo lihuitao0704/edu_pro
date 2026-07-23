@@ -8,13 +8,22 @@ from app.model.schemas import (
     ProfileUpdateRequest, ProfileAssessRequest)
 from app.utils.response import success, error
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
+from app.security.authorization import require_roles
 
 router = APIRouter()
 
 
 @router.get("/{customer_id}")
-async def get_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
+async def get_profile(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(
+        require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
+    ),
+):
     """查询客户画像（Cache-Aside）"""
+    if user.get("role") == "客户" and int(user.get("user_id") or 0) != customer_id:
+        return error(403, "客户只能访问本人画像")
     service = ProfileService(db)
     profile = await service.get_profile(customer_id)
     if not profile:
@@ -32,12 +41,18 @@ async def get_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
         "total_assets": str(profile.total_assets) if profile.total_assets else None,
         "investment_experience": profile.investment_experience,
         "annual_income_range": profile.annual_income_range,
+        "risk_flag": profile.risk_flag,
         "update_time": str(profile.update_time) if profile.update_time else None,
     })
 
 
 @router.put("/{customer_id}")
-async def update_profile(customer_id: int, req: ProfileUpdateRequest, db: AsyncSession = Depends(get_db)):
+async def update_profile(
+    customer_id: int,
+    req: ProfileUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_roles("理财顾问", "管理员")),
+):
     """增量更新客户画像标签"""
     service = ProfileService(db)
     result = await service.update_tags(customer_id, req.tags)
@@ -49,6 +64,7 @@ async def assess_profile(
     customer_id: int,
     req: ProfileAssessRequest = None,
     db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_roles("理财顾问", "管理员")),
 ):
     """
     执行画像研判打分

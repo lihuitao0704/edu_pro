@@ -78,22 +78,11 @@ async def get_db():
 
 
 async def init_db():
-    """初始化数据库表（首次运行时创建所有表 + 补充缺失列）"""
+    """初始化基础表；已有表的字段变更由 migrations/ 中的版本化脚本负责。"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # 补充历史遗留的缺失列（幂等操作，列已存在则跳过）
-        from sqlalchemy import text, inspect
-        def _ensure_columns(sync_conn):
-            inspector = inspect(sync_conn)
-            # sys_user 表确保有 balance 列（transfer.py 使用）
-            if "sys_user" in inspector.get_table_names():
-                cols = {c["name"] for c in inspector.get_columns("sys_user")}
-                if "balance" not in cols:
-                    sync_conn.execute(text(
-                        "ALTER TABLE sys_user ADD COLUMN balance DECIMAL(18,2) NOT NULL DEFAULT 0.00"
-                    ))
-        await conn.run_sync(_ensure_columns)
+        # Versioned DDL lives in migrations/ and is never executed at startup.
 
 
 # ==================== Redis ====================

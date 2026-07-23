@@ -88,11 +88,17 @@ class LLMSettings(BaseSettings):
 
 
 class JWTSettings(BaseSettings):
-    secret_key: str = Field(default="dev-secret-key-change-in-production", alias="JWT_SECRET_KEY")
+    secret_key: str = Field(alias="JWT_SECRET_KEY")
     algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     expire_minutes: int = Field(default=1440, alias="JWT_EXPIRE_MINUTES")
-    mock_mode: bool = Field(default=True, alias="AUTH_MOCK_MODE")
+    mock_mode: bool = Field(default=False, alias="AUTH_MOCK_MODE")
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    def ensure_runtime_safe(self) -> None:
+        if not self.mock_mode and len(self.secret_key) < 48:
+            raise ValueError(
+                "JWT_SECRET_KEY must contain at least 48 characters when authentication is enabled"
+            )
 
 
 class ProfileSettings(BaseSettings):
@@ -129,7 +135,10 @@ class LogSettings(BaseSettings):
 
 class SecuritySettings(BaseSettings):
     """安全配置"""
-    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        alias="CORS_ORIGINS",
+    )
     # 开发阶段默认允许所有，生产环境请在 .env 中配置白名单:
     # CORS_ORIGINS=http://localhost:3000,https://wealth.example.com
 

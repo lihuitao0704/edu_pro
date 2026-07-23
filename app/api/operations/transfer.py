@@ -7,19 +7,26 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
+from app.service.transaction_flow_service import TransactionFlowService
+from app.security.authorization import authenticated_actor_id, require_roles
 
 router = APIRouter()
+_transaction_flow = TransactionFlowService()
 
 
 @router.post("/transfer")
-async def transfer_funds(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
+async def transfer_funds(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "管理员")),
+) -> ApiResponse:
     """转账：校验余额 → 扣款 → 入账 → 双方流水"""
     # balance 列已在 init_db() 启动时确保存在
 
     from_id = body.get("from_customer_id")
     to_id = body.get("to_customer_id")
     amount = Decimal(str(body.get("amount", 0)))
-    operator_id = body.get("operator_id")
+    operator_id = authenticated_actor_id(user, body.get("operator_id"))
 
     if not from_id or not to_id or amount <= 0:
         return ApiResponse(code=400, message="参数不完整", trace_id=uuid.uuid4().hex[:8])
@@ -76,10 +83,27 @@ async def transfer_funds(body: dict, db: AsyncSession = Depends(get_db)) -> ApiR
         {"t": txn_no_in, "c": to_id, "a": amount, "o": operator_id, "r": f"收到客户{from_id}转账"},
     )
 
+    risk_monitor = await _transaction_flow.monitor(
+        db,
+        {
+            "customer_id": from_id,
+            "transaction_id": txn_no,
+            "amount": float(amount),
+            "transaction_type": "transfer_out",
+            "timestamp": datetime.now().isoformat(),
+            "counterparty": {"account": str(to_id)},
+            "investor_account": str(from_id),
+        },
+    )
     await db.commit()
     return ApiResponse(
         code=200,
         message="转账成功",
-        data={"transaction_no": txn_no, "amount": float(amount), "to_customer_id": to_id},
+        data={
+            "transaction_no": txn_no,
+            "amount": float(amount),
+            "to_customer_id": to_id,
+            "risk_monitor": risk_monitor,
+        },
         trace_id=uuid.uuid4().hex[:8],
     )

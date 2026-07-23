@@ -5,7 +5,7 @@
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import get_settings
 from app.utils.logger import setup_logger
@@ -18,6 +18,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    settings.jwt.ensure_runtime_safe()
     print(f"[启动] 智能财富管家系统 V1.0.0")
     print(f"  LLM: {settings.llm.openai_model_chat}")
 
@@ -105,13 +106,29 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-static_dir = os.path.join(os.path.dirname(__file__), "static")
+project_dir = os.path.dirname(__file__)
+static_dir = os.path.join(project_dir, "static")
+vue_dist_dir = os.path.join(project_dir, "frontend", "dist")
+frontend_dir = (
+    vue_dist_dir
+    if os.path.isfile(os.path.join(vue_dist_dir, "index.html"))
+    else static_dir
+)
+
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+frontend_assets_dir = os.path.join(frontend_dir, "assets")
+if os.path.isdir(frontend_assets_dir):
+    app.mount(
+        "/assets",
+        StaticFiles(directory=frontend_assets_dir),
+        name="frontend-assets",
+    )
+
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(static_dir, "index.html"))
+    return FileResponse(os.path.join(frontend_dir, "index.html"))
 
 # ---- 注册路由 ----
 # 认证路由（公开，无需 Token）
@@ -168,6 +185,12 @@ try:
     app.include_router(graph_router, prefix="/api/graph", tags=["知识图谱"])
 except Exception as e:
     print(f"  [WARN] 图谱路由加载失败: {e}")
+
+try:
+    from app.api.customers import router as customers_router
+    app.include_router(customers_router, prefix="/api/customers", tags=["客户工作台"])
+except Exception as e:
+    print(f"  [WARN] 客户工作台路由加载失败: {e}")
 
 try:
     from app.api.operations.purchase import router as purchase_router
@@ -255,6 +278,22 @@ async def engine_test():
 
 
 # ---- 主入口 ----
+@app.get("/{frontend_path:path}", include_in_schema=False)
+async def frontend_fallback(frontend_path: str):
+    """Serve Vue history routes while preserving JSON 404 responses for APIs."""
+    if frontend_path == "api" or frontend_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+
+    requested_path = os.path.abspath(os.path.join(frontend_dir, frontend_path))
+    frontend_root = os.path.abspath(frontend_dir)
+    if (
+        os.path.commonpath([frontend_root, requested_path]) == frontend_root
+        and os.path.isfile(requested_path)
+    ):
+        return FileResponse(requested_path)
+    return FileResponse(os.path.join(frontend_dir, "index.html"))
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
