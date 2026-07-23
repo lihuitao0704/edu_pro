@@ -196,6 +196,12 @@ class LongCatSettings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+class RuleLoaderSettings(BaseSettings):
+    """规则加载配置：true 时从 risk_rule 表读规则，false 时从 rules_config.py 读"""
+    use_db: bool = Field(default=False, alias="RULE_LOADER_USE_DB")
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
 class Settings(BaseSettings):
     mysql: MySQLSettings = MySQLSettings()
     redis: RedisSettings = RedisSettings()
@@ -213,6 +219,7 @@ class Settings(BaseSettings):
     chunk: ChunkSettings = ChunkSettings()
     longcat: LongCatSettings = LongCatSettings()
     security: SecuritySettings = SecuritySettings()
+    rule_loader: RuleLoaderSettings = RuleLoaderSettings()
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

@@ -34,6 +34,34 @@ class DimensionScore(BaseModel):
     detail: Optional[DimensionDetail] = None
 
 
+class RuleEvidence(BaseModel):
+    """单条校准规则的证据详情"""
+    rule_id: str
+    rule_name: str
+    direction: str = ""
+    detail: str
+    evidence: dict = {}
+
+
+class CalibrationInfo(BaseModel):
+    """双轨校准信息 —— 自评画像 vs 行为真实画像"""
+    calibrate_time: Optional[datetime] = None
+    direction: str = "aligned"  # over_optimistic | over_conservative | aligned
+    self_reported: dict = {}
+    behavioral: dict = {}
+    triggered_rules: List[RuleEvidence] = []
+    summary: str = ""
+
+
+class CalibrationHistoryItem(BaseModel):
+    """校准历史记录条目"""
+    id: int
+    calibrate_time: datetime
+    direction: str
+    triggered_rules: list = []
+    summary: str = ""
+
+
 class ProfileResult(BaseModel):
     """画像研判结果"""
     customer_id: int
@@ -45,6 +73,7 @@ class ProfileResult(BaseModel):
     circuit_breakers: List[dict] = []
     warnings: List[str] = []
     recommended_products: List[str] = []
+    calibration: Optional[CalibrationInfo] = None
 
 
 class ProfileUpdateRequest(BaseModel):

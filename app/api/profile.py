@@ -13,7 +13,57 @@ from app.security.authorization import require_roles
 router = APIRouter()
 
 
-@router.get("/{customer_id}")
+@router.get("/{customer_id}/calibration")
+async def get_calibration_history(
+    customer_id: int,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "风控专员", "客户经理", "管理员")),
+):
+    """
+    查询客户双轨校准历史记录
+
+    返回：
+    - latest: 最新校准快照（来自画像表）
+    - history: 历史校准记录列表（来自 fin_calibration_record）
+    """
+    from sqlalchemy import select, desc
+    from app.model.entities import FinCustomerProfile, FinCalibrationRecord
+
+    # 获取画像中的最新快照
+    profile_stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
+    profile_result = await db.execute(profile_stmt)
+    profile = profile_result.scalar_one_or_none()
+
+    latest = profile.calibration_json if profile and hasattr(profile, 'calibration_json') else None
+
+    # 获取历史记录
+    stmt = (
+        select(FinCalibrationRecord)
+        .where(FinCalibrationRecord.customer_id == customer_id)
+        .order_by(desc(FinCalibrationRecord.calibrate_time))
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+
+    history = [
+        {
+            "id": r.id,
+            "calibrate_time": str(r.calibrate_time) if r.calibrate_time else None,
+            "direction": r.direction,
+            "triggered_rules": r.triggered_rules,
+            "summary": r.summary,
+        }
+        for r in records
+    ]
+
+    return success(data={
+        "customer_id": customer_id,
+        "latest": latest,
+        "history": history,
+        "total_records": len(history),
+    })
 async def get_profile(
     customer_id: int,
     db: AsyncSession = Depends(get_db),

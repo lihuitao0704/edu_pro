@@ -260,7 +260,7 @@ def apply_dataset() -> None:
                         customer_id,
                         customer["risk_score"],
                         customer["assessment_level"],
-                        json.dumps({"source": "demo"}, ensure_ascii=False),
+                        json.dumps({"details": [{"q": 4, "a": "C"}]}, ensure_ascii=False),
                     ),
                 )
 
