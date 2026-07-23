@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do not overwrite the existing `static/` or `streamlit_app.py` prototypes.
+- The Vue application in `frontend/` is the only supported web frontend.
 - All business pages must call real APIs; mock data is allowed only in deterministic seed scripts and automated tests.
 - Existing API paths remain backward-compatible.
 - Production code changes follow RED → GREEN → REFACTOR.

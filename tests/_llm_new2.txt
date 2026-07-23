@@ -1,6 +1,0 @@
-API Key: sk-a2c051a...6c54
-Base URL: https://api.deepseek.com/v1
-Model: deepseek-v4-pro[1m]
-
-发送测试请求...
-❌ LLM 调用失败 (1.66s): BadRequestError: Error code: 400 - {'error': {'message': 'The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but you passed deepseek-v4-pro[1m].', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}

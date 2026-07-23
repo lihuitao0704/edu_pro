@@ -30,7 +30,6 @@ PUBLIC_PATHS = {
 
 # 公开路径前缀
 PUBLIC_PREFIXES = (
-    "/static/",
     "/api/auth/",  # 登录/注册本身不需要认证
 )
 

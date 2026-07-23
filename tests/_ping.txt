@@ -1,1 +1,0 @@
-{"code":200,"message":"success","data":{"service":"wealth-manager","version":"1.0.0","llm_model":"qwen3.7-plus","auth_mode":"mock"},"trace_id":"5c447d81-5809-4bae-a40a-a952954e69c3"}

@@ -9,7 +9,7 @@
 ```mermaid
 graph TB
     subgraph 前端
-        UI["理财顾问<br/>Streamlit / API 调用方"]
+        UI["Vue 3 管理前端<br/>API 调用方"]
     end
 
     subgraph 入口
@@ -651,7 +651,7 @@ graph TB
     end
 
     subgraph 前端层["前端"]
-        FE["Streamlit 投顾界面"]
+        FE["Vue 3 投顾管理界面"]
     end
 
     FE -->|HTTP/SSE| APP

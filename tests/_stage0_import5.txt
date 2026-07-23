@@ -1,3 +1,0 @@
-未配置OpenAI API Key，使用模拟模式
-[WARN] 未配置OpenAI API Key，使用模拟模式
-main.py 导入成功

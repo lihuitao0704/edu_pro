@@ -1,3 +1,0 @@
-  customer_id=3, risk_level=稳健型, risk_flag=None
-  customer_id=4, risk_level=平衡型, risk_flag=None
-  customer_id=5, risk_level=进取型, risk_flag=None

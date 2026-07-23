@@ -107,16 +107,8 @@ from fastapi.responses import FileResponse
 import os
 
 project_dir = os.path.dirname(__file__)
-static_dir = os.path.join(project_dir, "static")
 vue_dist_dir = os.path.join(project_dir, "frontend", "dist")
-frontend_dir = (
-    vue_dist_dir
-    if os.path.isfile(os.path.join(vue_dist_dir, "index.html"))
-    else static_dir
-)
-
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+frontend_dir = vue_dist_dir
 
 frontend_assets_dir = os.path.join(frontend_dir, "assets")
 if os.path.isdir(frontend_assets_dir):

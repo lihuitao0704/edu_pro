@@ -1,7 +1,0 @@
-API Key: sk-PAXCUz3...xprY
-Base URL: https://station.snowfish.love/v1
-Model: qwen3.7-plus
-
-发送测试请求...
-✅ LLM 响应成功 (5.99s)
-回复: 测试成功

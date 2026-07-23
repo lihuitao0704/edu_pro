@@ -1,2 +1,0 @@
-请先执行: uvicorn main:app --port 8000
-然后运行: python tests/start_server.py 测试API
