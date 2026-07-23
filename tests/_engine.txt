@@ -1,0 +1,1 @@
+{"code":200,"message":"success","data":{"customer_profile":{"dimensions":{"basic":{"score":20.5},"experience":{"score":19.38},"risk_pref":{"score":15},"behavior":{"score":20}},"total_score":74.88,"risk_level":"C4","risk_name":"进取型"},"circuit_breaker":{"passed":true,"warnings":[]},"confidence":0.9,"status":"ALL_OK"},"trace_id":"826444c9-246a-43da-91e2-e87394278463"}

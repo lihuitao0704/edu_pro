@@ -1,0 +1,16 @@
+测试投顾-产品推荐（补user_id）...
+状态码: 200  耗时: 92.7s
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "reply": "投顾分析超时，请尝试简化问题或稍后重试。",
+    "recommendations": [],
+    "customer_profile": null,
+    "reasoning": null,
+    "session_id": "e2e-ad-002"
+  },
+  "trace_id": "2765dc29-4ceb-4a95-907c-fc2b668c1b26"
+}
+
+投顾测试完成。

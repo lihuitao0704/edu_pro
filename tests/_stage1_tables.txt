@@ -1,0 +1,45 @@
+数据库 education_pro 共 15 张表:
+
+表名                                   行数
+----------------------------------------
+biz_work_order                       13
+conversation_archive                 58
+customer_tag                          0
+fin_customer_profile                  3
+fin_holdings                          5
+fin_knowledge_meta                    7
+fin_product                           7
+fin_risk_alert                       13
+fin_risk_assessment                   7
+fin_transaction                      21
+product_recommendation                0
+risk_rule                             0
+risk_score_record                     0
+sys_user                              5
+table_name                           10
+
+=== 关键表数据抽样 ===
+
+[sys_user] 5 行抽样:
+  (1, 'admin', 'EMPLOYEE', '管理员')
+  (2, 'advisor_zhang', 'EMPLOYEE', '理财顾问')
+  (3, 'customer_zhangsan', 'CUSTOMER', None)
+  (4, 'customer_lisi', 'CUSTOMER', None)
+  (5, 'customer_wangwu', 'CUSTOMER', None)
+
+[fin_product] 5 行抽样:
+  ('F000001', '债券基金', 'R2', '在售')
+  ('F000002', '混合基金', 'R3', '在售')
+  ('F000003', '货币基金', 'R1', '在售')
+  ('F000004', '股票基金', 'R4', '在售')
+  ('F000005', '银行理财', 'R2', '在售')
+
+[fin_holdings] 3 行抽样:
+  (3, 1, Decimal('4900.0000'))
+  (3, 3, Decimal('8500.0000'))
+  (4, 2, Decimal('2500.0000'))
+
+[fin_transaction] 3 行抽样:
+  (3, Decimal('50000.00'), '申购')
+  (3, Decimal('10000.00'), '申购')
+  (4, Decimal('10000.00'), '申购')

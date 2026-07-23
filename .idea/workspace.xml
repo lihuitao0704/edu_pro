@@ -1,25 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善投顾agent的功能">
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="整体测试并修复bug，并把文件路径整合一下">
       <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/edu_pro.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/edu_pro.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/agent/advisor_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agent/advisor_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/chat.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/graph.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/graph.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config/settings.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/graph/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/graph/cypher_templates.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/graph/graphrag_pipeline.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/graph/neo4j_client.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/advisor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/advisor_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/agent_service.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/event_bus.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/event_bus.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/operator_agent.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/risk_monitor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/risk_monitor_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tool/graph_query_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool/graph_query_tool.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/tool/graphrag_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool/graphrag_tool.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/static/index.html" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -55,19 +41,49 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "master"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\edu_pro\app\engine" />
     </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="main" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="edu_pro" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.main" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SharedIndexes">
     <attachedChunks>
@@ -116,7 +132,15 @@
       <option name="project" value="LOCAL" />
       <updated>1784728744570</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="整体测试并修复bug，并把文件路径整合一下">
+      <option name="closed" value="true" />
+      <created>1784771201607</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1784771201607</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -137,6 +161,7 @@
     <MESSAGE value="搭建基础框架" />
     <MESSAGE value="完善用户画像和投顾agent功能" />
     <MESSAGE value="完善投顾agent的功能" />
-    <option name="LAST_COMMIT_MESSAGE" value="完善投顾agent的功能" />
+    <MESSAGE value="整体测试并修复bug，并把文件路径整合一下" />
+    <option name="LAST_COMMIT_MESSAGE" value="整体测试并修复bug，并把文件路径整合一下" />
   </component>
 </project>

@@ -1,0 +1,1 @@
+{"code":200,"message":"success","data":{"service":"wealth-manager","version":"1.0.0","llm_model":"deepseek-v4-pro","auth_mode":"mock"},"trace_id":"9ce8d6fe-f9a0-4f50-ae45-f701540f1e9a"}

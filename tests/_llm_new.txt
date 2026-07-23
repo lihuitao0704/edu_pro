@@ -1,0 +1,6 @@
+API Key: sk-a2c051a...6c54
+Base URL: https://api.deepseek.com/anthropic
+Model: deepseek-v4-pro[1m]
+
+发送测试请求...
+❌ LLM 调用失败 (3.45s): NotFoundError: Error code: 404

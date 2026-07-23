@@ -1,0 +1,7 @@
+API Key: sk-a2c051a...6c54
+Base URL: https://api.deepseek.com/v1
+Model: deepseek-v4-pro
+
+发送测试请求...
+✅ LLM 响应成功 (2.66s)
+回复: 测试成功

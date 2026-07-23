@@ -1,0 +1,8 @@
+C:\Users\Windows\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe
+C:\Users\Windows\AppData\Local\Programs\Python\Python311\python.exe
+---  
+C:\Users\Windows\AppData\Local\Programs\Python\Python311\Scripts\pip.exe
+---  
+pip 26.1.2 from C:\Users\Windows\AppData\Local\Programs\Python\Python311\Lib\site-packages\pip (python 3.11)
+---  
+C:\Users\Windows\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe
