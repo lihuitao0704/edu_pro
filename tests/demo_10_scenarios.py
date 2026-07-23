@@ -92,7 +92,7 @@ for seq, name, tx, expected in SCENARIOS:
             print(f"  结果: 触发{count}条 | 等级={alert['alert_level']} | 规则={rules} | 置信度={alert.get('confidence',0)}")
 
         print(f"  预期: {expected}")
-        print(f"  {'✅ 通过' if alert else '✅ 通过'}")
+        print(f"  {'✅ 有预警' if alert else '⚠️ 无预警'}")
 
     except requests.ConnectionError:
         print("  ❌ 连接失败! 请先启动 main.py")

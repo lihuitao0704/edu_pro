@@ -36,10 +36,19 @@ class RiskMonitorService:
         return triggered
 
     def grade(self, triggered: list[BaseAMLRule], history: list[dict], tx: dict) -> Optional[str]:
-        """预警分级: low/medium/high"""
+        """预警分级: low/medium/high
+
+        先看规则优先级（P1/P2档直接high），再看触发条数。
+        """
         count = len(triggered)
         if count == 0:
             return None
+
+        # P1/P2 档规则：制裁国、PEP、涉赌涉诈、资金归集、资金转移模式异常
+        # 触发即直接红色预警，不依赖触发条数
+        if any(r.weight >= 1.0 for r in triggered):
+            return "high"
+
         triggered_ids = {r.rule_id for r in triggered}
         is_repeat = any(
             bool(triggered_ids & _extract_rule_ids(a.get("trigger_rules", [])))
@@ -78,7 +87,7 @@ class RiskMonitorService:
             alert_level=alert["alert_level"],
             trigger_detail=alert["summary"],
             transaction_ids={"tx_id": alert.get("transaction_id", ""), "trigger_rules": alert["trigger_rules"]},
-            status="未处理",
+            status="pending",
             create_time=datetime.now(),
         )
         db.add(entity)

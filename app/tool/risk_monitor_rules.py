@@ -271,7 +271,7 @@ class AbnormalTimeRule(BaseAMLRule):
     def evaluate(self, tx: dict) -> bool:
         ts = tx.get("timestamp", "")
         try:
-            hour = int(ts[11:13]) if len(ts) >= 13 else 0
+            hour = int(ts[11:13]) if len(ts) >= 13 else 23
         except (ValueError, IndexError):
             return False
         return 0 <= hour < 6 and tx.get("amount", 0) >= 100000 and not tx.get("has_night_history_90d", False)

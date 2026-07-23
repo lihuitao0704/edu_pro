@@ -48,7 +48,7 @@ async def _run_calibration():
                 new_conf = _confidence.calc_single(
                     source="ai_extract",
                     evidence_count=evidence_count,
-                    age_days=age_days,
+                    created_at=alert.create_time,
                 )
 
                 # 低置信且超过180天 → 标记过期
