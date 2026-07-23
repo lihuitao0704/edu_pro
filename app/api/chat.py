@@ -138,7 +138,7 @@ async def chat_analyst(
     支持自然语言查询业务数据，自动生成SQL并返回结果。
     """
     try:
-        result = nl2sql_service.query_and_explain(request.message)
+        result = nl2sql_service.query_and_explain(request.message, user_id=request.user_id)
 
         if result.get("success"):
             return success(
@@ -147,6 +147,9 @@ async def chat_analyst(
                     "sql": result.get("sql"),
                     "query_result": result.get("query_result"),
                     "session_id": request.session_id,
+                    "safety": result.get("safety"),
+                    "truncated": result.get("truncated", False),
+                    "timing": result.get("timing"),
                 },
                 message="查询成功",
             )
@@ -157,12 +160,70 @@ async def chat_analyst(
                 data={
                     "sql": result.get("sql"),
                     "session_id": request.session_id,
+                    "safety": result.get("safety"),
                 },
             )
     except Exception as e:
         return error(
             code=500,
             message=f"服务异常: {str(e)}",
+        )
+
+
+@analyst_router.post("/analyst/execute", response_model=ApiResponse, tags=["数据分析Agent"])
+async def analyst_execute(
+    request: QueryRequest,
+    _: dict = Depends(
+        require_roles("理财顾问", "客户经理", "风控专员", "管理员")
+    ),
+):
+    """
+    直接执行 SQL（跳过生成）— 用于用户编辑 SQL 后重新查询。
+    """
+    try:
+        sql = request.message  # message 字段承载 SQL 文本
+        valid, msg = nl2sql_service.validate_sql(sql)
+        if not valid:
+            return error(
+                code=1003,
+                message=msg,
+                data={
+                    "sql": sql,
+                    "session_id": request.session_id,
+                    "safety": {"select_only": False, "row_limit": True, "no_sensitive": False},
+                },
+            )
+
+        exec_result = nl2sql_service.execute_sql(sql)
+        if "error" in exec_result:
+            return error(
+                code=1004,
+                message=exec_result["error"],
+                data={
+                    "sql": sql,
+                    "session_id": request.session_id,
+                    "safety": {"select_only": True, "row_limit": True, "no_sensitive": True},
+                },
+            )
+
+        explanation = nl2sql_service.llm.explain_result(request.message, exec_result["rows"])
+        exceeded = exec_result.get("row_count", 0) >= _settings.nl2sql.max_rows
+
+        return success(
+            data={
+                "reply": explanation,
+                "sql": sql,
+                "query_result": exec_result["rows"],
+                "session_id": request.session_id,
+                "safety": {"select_only": True, "row_limit": not exceeded, "no_sensitive": True},
+                "truncated": exceeded,
+            },
+            message="执行成功",
+        )
+    except Exception as e:
+        return error(
+            code=500,
+            message=f"执行异常: {str(e)}",
         )
 
 

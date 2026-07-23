@@ -3,13 +3,18 @@ LLM 客户端类 — 封装 OpenAI API 调用、SQL 生成、结果解读
 """
 
 import os
+import re
 import time
-import asyncio
 import logging
 from typing import Optional, List, Dict
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+
+class LLMCallError(Exception):
+    """LLM 调用失败异常"""
+    pass
 
 
 class LLMClient:
@@ -67,17 +72,10 @@ class LLMClient:
                     f"LLM 调用失败 (第 {attempt + 1} 次): {e}，{wait}s 后重试"
                 )
                 if attempt < max_retries - 1:
-                    # 优先使用 asyncio.sleep（如果在事件循环中），否则回退到 time.sleep
-                    try:
-                        loop = asyncio.get_running_loop()
-                        # 在事件循环中，不能阻塞，用 time.sleep 的近似等待（此方法是同步的，
-                        # 用于 NL2SQL 等同步调用场景，这里做保守处理）
-                        time.sleep(wait)
-                    except RuntimeError:
-                        time.sleep(wait)
+                    time.sleep(wait)
 
         logger.error(f"LLM 调用全部失败: {last_error}")
-        return f"LLM调用失败: {str(last_error)}"
+        raise LLMCallError(f"LLM调用失败: {str(last_error)}")
 
     def generate_sql(self, user_query: str, schema_text: str) -> str:
         """根据自然语言和表结构生成 SQL 语句"""
@@ -124,8 +122,7 @@ SQL："""
         # 强制提取 SQL：如果结果不以 SELECT 开头，尝试正则提取
         if not result.upper().startswith("SELECT"):
             logger.warning(f"LLM 未返回纯 SQL，尝试正则提取。原始返回前 100 字符: {result[:100]}")
-            import re as _re
-            match = _re.search(r"(SELECT\b[\s\S]*?)(?:;|\s*$)", result, _re.IGNORECASE)
+            match = re.search(r"(SELECT\b[\s\S]*?)(?:;|\s*$)", result, re.IGNORECASE)
             if match:
                 result = match.group(1).strip() + ";"
                 logger.info(f"正则提取成功: {result[:100]}")
