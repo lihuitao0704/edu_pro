@@ -59,6 +59,7 @@ class FinCustomerProfile(Base):
     behavior_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), comment="维度四：行为异常得分")
     risk_flag: Mapped[Optional[str]] = mapped_column(String(16), comment="风险标记: normal/warning/high — 风控事件驱动更新")
     profile_json: Mapped[Optional[dict]] = mapped_column(JSON, comment="完整画像JSON")
+    calibration_json: Mapped[Optional[dict]] = mapped_column(JSON, comment="最新双轨校准结果快照")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     update_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -97,6 +98,22 @@ class RiskScoreRecord(Base):
     risk_level: Mapped[Optional[str]] = mapped_column(String(16), comment="评定等级 C1-C5")
     detail_json: Mapped[Optional[dict]] = mapped_column(JSON, comment="各子项评分明细")
     circuit_breakers: Mapped[Optional[dict]] = mapped_column(JSON, comment="触发的熔断规则")
+    trigger_type: Mapped[str] = mapped_column(String(32), default="manual", comment="manual/auto/event")
+    create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class FinCalibrationRecord(Base):
+    """双轨校准历史记录（自评画像 vs 行为真实画像）"""
+    __tablename__ = "fin_calibration_record"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    calibrate_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, comment="校准执行时间")
+    direction: Mapped[str] = mapped_column(String(32), nullable=False, comment="over_optimistic/over_conservative/aligned")
+    self_reported: Mapped[Optional[dict]] = mapped_column(JSON, comment="自评画像快照")
+    behavioral: Mapped[Optional[dict]] = mapped_column(JSON, comment="行为推断画像")
+    triggered_rules: Mapped[Optional[dict]] = mapped_column(JSON, comment="触发的校准规则列表（含证据）")
+    summary: Mapped[Optional[str]] = mapped_column(Text, comment="面向投顾的可读校准摘要")
     trigger_type: Mapped[str] = mapped_column(String(32), default="manual", comment="manual/auto/event")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 

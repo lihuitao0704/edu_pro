@@ -13,11 +13,12 @@ from app.model.entities import (
     FinCustomerProfile, CustomerTag, SysUser, RiskAssessment,
     FinHoldings, FinProduct, FinTransaction,
 )
-from app.model.schemas import ProfileResult, DimensionScore, DimensionDetail
+from app.model.schemas import ProfileResult, DimensionScore, DimensionDetail, CalibrationInfo
 from app.engine.dimension_calculator import DimensionCalculator
 from app.engine.circuit_breaker import CircuitBreaker
 from app.engine.special_case import SpecialCaseHandler
 from app.engine.confidence import ConfidenceCalculator
+from app.engine.behavioral_calibrator import BehavioralCalibrator
 from app.engine.score_mapper import (
     map_score_to_risk_level, calc_total_score, get_suitable_products,
 )
@@ -108,6 +109,22 @@ class ProfileService:
             customer_id, dimension_scores, total_score, final_level, cb_list, trigger_type
         )
 
+        # 8. 双轨校准：自评画像 vs 行为真实画像
+        calibrator = BehavioralCalibrator()
+        calibration_result = calibrator.calibrate(customer_data, dimension_scores)
+
+        calibration_info = CalibrationInfo(
+            calibrate_time=datetime.now(),
+            direction=calibration_result.direction,
+            self_reported=calibration_result.self_reported,
+            behavioral=calibration_result.behavioral,
+            triggered_rules=calibration_result.triggered_rules,
+            summary=calibration_result.summary,
+        )
+
+        # 8a. 持久化校准记录
+        await self._persist_calibration(customer_id, calibration_info, trigger_type)
+
         # 9. 返回结果
         warnings = cb_result.warnings + special_result.adjustments
         return ProfileResult(
@@ -125,6 +142,7 @@ class ProfileService:
             circuit_breakers=cb_list,
             warnings=warnings,
             recommended_products=suitable,
+            calibration=calibration_info,
         )
 
     # ========== 标签更新 ==========
@@ -232,6 +250,20 @@ class ProfileService:
             "consecutive_redeem_pct": 0,    # TODO: 从连续3日赎回记录计算
             "account_theft_suspected": False,  # TODO: 从异常交易检测获取
             "self_assessment_level": risk_assessment.risk_level if risk_assessment else None,
+            # ── 双轨校准所需行为数据（从真实表动态计算）──
+            "has_losing_holdings": await self._calc_has_losing_holdings(customer_id),
+            "has_recent_redeems": await self._calc_has_recent_redeems(customer_id),
+            "losing_holdings_detail": await self._calc_losing_holdings_detail(customer_id),
+            "recent_redeems_detail": await self._calc_recent_redeems_detail(customer_id),
+            "max_losing_pct": await self._calc_max_losing_pct(customer_id),
+            "strategy_change_count": await self._calc_strategy_changes_90d(customer_id),
+            "strategy_change_dates": await self._calc_strategy_change_dates(customer_id),
+            "strategy_allocation_changes": await self._calc_allocation_changes(customer_id),
+            "emotional_trading_patterns": await self._calc_emotional_patterns(customer_id),
+            "trade_count_365d": await self._calc_trade_count_365d(customer_id),
+            "self_stated_frequency": await self._calc_self_stated_frequency(risk_assessment),
+            "expired_risky_trades": await self._calc_expired_risky_trades(customer_id, risk_assessment),
+            "holding_product_summary": await self._calc_holding_product_summary(customer_id),
         }
 
     # ── 动态计算辅助方法 ──────────────────────────────────────
@@ -319,13 +351,71 @@ class ProfileService:
         else:
             return ">15%"
 
+    async def _calc_has_losing_holdings(self, customer_id: int) -> bool:
+        """检查客户是否有浮亏超过 5% 的持仓（用于 CAL-01 恐慌赎回检测）"""
+        stmt = select(
+            func.count(FinHoldings.id)
+        ).where(
+            FinHoldings.customer_id == customer_id,
+            FinHoldings.status == "持有",
+            FinHoldings.profit_ratio < -0.05,
+        )
+        result = await self.db.execute(stmt)
+        count = result.scalar() or 0
+        return count > 0
+
+    async def _calc_has_recent_redeems(self, customer_id: int) -> bool:
+        """检查客户近 30 天内是否有赎回记录"""
+        from datetime import timedelta
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        stmt = select(
+            func.count(FinTransaction.id)
+        ).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= thirty_days_ago,
+            FinTransaction.transaction_type.in_(["redeem", "赎回"]),
+        )
+        result = await self.db.execute(stmt)
+        count = result.scalar() or 0
+        return count > 0
+
+    @staticmethod
+    def _parse_questionnaire_answers(answers) -> list:
+        """统一解析风评问卷答案，兼容数据库中的多种 JSON 格式
+
+        格式1: {"details": [{"q": 4, "a": "C"}, ...]}    ← risk_service 写入
+        格式2: [{"q": 4, "a": "C"}, {"q": 1, "a": "B"}]  ← 前端/外部直接写入
+        格式3: {"source": "demo"}                          ← 种子数据写入
+        格式4: [10, 5, 7, 20, ...]                         ← api/operations 写入
+
+        Returns:
+            list[dict]: 统一的 [{"q": int, "a": str}, ...] 列表，无法解析时返回空列表
+        """
+        if answers is None:
+            return []
+        # 格式1/3: JSON 对象 → 取 details/items 字段
+        if isinstance(answers, dict):
+            items = answers.get("details") or answers.get("items") or []
+            if isinstance(items, list):
+                return items
+            return []
+        # 格式2/4: JSON 数组
+        if isinstance(answers, list):
+            if not answers:
+                return []
+            # 格式2: [{"q": 1, "a": "A"}, ...]
+            if isinstance(answers[0], dict):
+                return answers
+            # 格式4: [10, 5, 7, ...] 整数数组，无法还原题号
+            return []
+        return []
+
     @staticmethod
     def _calc_loss_tolerance(risk_assessment) -> str:
         """从风评问卷答案中提取亏损承受能力"""
         if not risk_assessment or not risk_assessment.answers:
             return "10%-20%"  # 默认基准
-        answers = risk_assessment.answers
-        details = answers.get("details", [])
+        details = self._parse_questionnaire_answers(risk_assessment.answers)
         # 查找第4题（亏损承受）的答案
         for d in details:
             if d.get("q") == 4:
@@ -352,7 +442,312 @@ class ProfileService:
             return "20%-40%"
         return "40%以上"
 
-    async def _update_profile_after_assess(
+    # ── 双轨校准 → 行为数据采集辅助方法 ──────────────────────
+
+    async def _calc_losing_holdings_detail(self, customer_id: int) -> list:
+        """获取浮亏超过5%的持仓明细（用于CAL-01证据）"""
+        stmt = select(
+            FinHoldings.id, FinHoldings.profit_ratio, FinHoldings.current_value,
+            FinHoldings.cost_amount, FinHoldings.profit_loss, FinProduct.product_name,
+        ).join(FinProduct, FinHoldings.product_id == FinProduct.id).where(
+            FinHoldings.customer_id == customer_id,
+            FinHoldings.status == "持有",
+            FinHoldings.profit_ratio < -0.05,
+        ).limit(5)
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [
+            {
+                "holding_id": row[0],
+                "profit_ratio": float(row[1]) if row[1] is not None else 0,
+                "current_value": float(row[2]) if row[2] is not None else 0,
+                "cost_amount": float(row[3]) if row[3] is not None else 0,
+                "profit_loss": float(row[4]) if row[4] is not None else 0,
+                "product_name": row[5] or "未知产品",
+            }
+            for row in rows
+        ]
+
+    async def _calc_recent_redeems_detail(self, customer_id: int) -> list:
+        """获取近30天赎回明细（用于CAL-01证据）"""
+        from datetime import timedelta
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        stmt = select(
+            FinTransaction.id, FinTransaction.amount, FinTransaction.create_time,
+            FinTransaction.transaction_type, FinProduct.product_name,
+        ).join(FinProduct, FinTransaction.product_id == FinProduct.id).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= thirty_days_ago,
+            FinTransaction.transaction_type.in_(["redeem", "赎回"]),
+        ).order_by(FinTransaction.create_time.desc()).limit(5)
+        result = await self.db.execute(stmt)
+        rows = result.all()
+        return [
+            {
+                "transaction_id": f"T{row[0]}",
+                "amount": float(row[1]) if row[1] is not None else 0,
+                "date": str(row[2].date()) if row[2] else "",
+                "transaction_type": row[3] or "赎回",
+                "product_name": row[4] or "未知产品",
+            }
+            for row in rows
+        ]
+
+    async def _calc_max_losing_pct(self, customer_id: int) -> float:
+        """获取持仓中最大浮亏比例"""
+        from sqlalchemy import func as sql_func
+        stmt = select(sql_func.min(FinHoldings.profit_ratio)).where(
+            FinHoldings.customer_id == customer_id,
+            FinHoldings.status == "持有",
+        )
+        result = await self.db.execute(stmt)
+        val = result.scalar()
+        return float(val) if val is not None else 0.0
+
+    async def _calc_strategy_changes_90d(self, customer_id: int) -> int:
+        """统计近90天内调仓次数（买入/卖出/转换 操作次数作为策略变更代理）"""
+        from datetime import timedelta
+        ninety_days_ago = datetime.now() - timedelta(days=90)
+        stmt = select(func.count(FinTransaction.id)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_([
+                "purchase", "redeem", "transfer",
+                "申购", "赎回", "转换",
+            ]),
+        )
+        result = await self.db.execute(stmt)
+        count = result.scalar() or 0
+        # 每次买入+卖出算一次策略调整 → 除以2取近似
+        return int(count)
+
+    async def _calc_strategy_change_dates(self, customer_id: int) -> list:
+        """获取近90天内策略变更日期列表"""
+        from datetime import timedelta
+        ninety_days_ago = datetime.now() - timedelta(days=90)
+        stmt = select(
+            func.date(FinTransaction.create_time).label("trade_date"),
+        ).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_([
+                "purchase", "redeem", "transfer",
+                "申购", "赎回", "转换",
+            ]),
+        ).distinct().order_by(func.date(FinTransaction.create_time).desc()).limit(10)
+        result = await self.db.execute(stmt)
+        return [str(row[0]) for row in result.all()]
+
+    async def _calc_allocation_changes(self, customer_id: int) -> list:
+        """获取近90天内资产配置变更记录"""
+        # 简化实现：从持仓变更推断配置变化
+        from datetime import timedelta
+        ninety_days_ago = datetime.now() - timedelta(days=90)
+        stmt = select(
+            FinTransaction.id, FinTransaction.transaction_type, FinTransaction.amount,
+            FinTransaction.create_time, FinProduct.product_type,
+        ).join(FinProduct, FinTransaction.product_id == FinProduct.id).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_([
+                "purchase", "redeem", "transfer",
+                "申购", "赎回", "转换",
+            ]),
+        ).order_by(FinTransaction.create_time.desc()).limit(10)
+        result = await self.db.execute(stmt)
+        return [
+            {
+                "transaction_id": f"T{row[0]}",
+                "type": row[1],
+                "amount": float(row[2]) if row[2] is not None else 0,
+                "date": str(row[3].date()) if row[3] else "",
+                "product_type": row[4] or "未知",
+            }
+            for row in result.all()
+        ]
+
+    async def _calc_emotional_patterns(self, customer_id: int) -> list:
+        """检测情绪化交易模式（追涨杀跌/FOMO等）"""
+        patterns = []
+        # 从维度三的 emotional_triggers 已经包含了追涨杀跌和FOMO标记
+        # 这里基于交易数据做独立检测，与维度三互补
+        from datetime import timedelta
+        ninety_days_ago = datetime.now() - timedelta(days=90)
+
+        # 检测近90天是否有频繁的买入后短期卖出（追涨杀跌模式）
+        stmt = select(func.count(FinTransaction.id)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_(["redeem", "赎回"]),
+        )
+        result = await self.db.execute(stmt)
+        redeem_count = result.scalar() or 0
+
+        stmt2 = select(func.count(FinTransaction.id)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_(["purchase", "申购"]),
+        )
+        result2 = await self.db.execute(stmt2)
+        purchase_count = result2.scalar() or 0
+
+        # 频繁买卖（买入和卖出都超过3次）→ 潜在的追涨杀跌
+        if redeem_count >= 3 and purchase_count >= 3:
+            patterns.append("buy_at_peak")
+            patterns.append("sell_at_trough")
+
+        # 单笔买入超过月均交易额3倍 → FOMO
+        stmt3 = select(func.avg(FinTransaction.amount)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= ninety_days_ago,
+            FinTransaction.transaction_type.in_(["purchase", "申购"]),
+        )
+        result3 = await self.db.execute(stmt3)
+        avg_amount = result3.scalar()
+        if avg_amount and float(avg_amount) > 0:
+            stmt4 = select(func.max(FinTransaction.amount)).where(
+                FinTransaction.customer_id == customer_id,
+                FinTransaction.create_time >= ninety_days_ago,
+                FinTransaction.transaction_type.in_(["purchase", "申购"]),
+            )
+            result4 = await self.db.execute(stmt4)
+            max_amount = result4.scalar()
+            if max_amount and float(max_amount) > float(avg_amount) * 3:
+                patterns.append("fomo_large_buy")
+
+        # 去重
+        return list(set(patterns))
+
+    async def _calc_trade_count_365d(self, customer_id: int) -> int:
+        """近365天总交易笔数"""
+        from datetime import timedelta
+        one_year_ago = datetime.now() - timedelta(days=365)
+        stmt = select(func.count(FinTransaction.id)).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time >= one_year_ago,
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar() or 0
+
+    @staticmethod
+    async def _calc_self_stated_frequency(risk_assessment) -> Optional[str]:
+        """从风评问卷中提取客户自述的交易频率"""
+        if not risk_assessment or not risk_assessment.answers:
+            return None
+        details = ProfileService._parse_questionnaire_answers(risk_assessment.answers)
+        for d in details:
+            if d.get("q") == 5:  # 假设第5题是关于交易频率
+                answer = d.get("a", "")
+                if "极低" in answer or "几乎不" in answer:
+                    return "极低频"
+                elif "低" in answer:
+                    return "低频"
+                elif "中" in answer or "一般" in answer:
+                    return "中频"
+                elif "高" in answer or "频繁" in answer:
+                    return "高频"
+        return None
+
+    async def _calc_expired_risky_trades(
+        self, customer_id: int, risk_assessment
+    ) -> list:
+        """查询风评过期后仍进行的R3+交易"""
+        if not risk_assessment or not risk_assessment.valid_until:
+            return []
+        expiry_date = risk_assessment.valid_until
+        if isinstance(expiry_date, date):
+            from datetime import date as date_type
+        else:
+            return []
+
+        # 查询过期后的交易
+        stmt = select(
+            FinTransaction.id, FinTransaction.amount, FinTransaction.create_time,
+            FinProduct.risk_level, FinProduct.product_name,
+        ).join(FinProduct, FinTransaction.product_id == FinProduct.id).where(
+            FinTransaction.customer_id == customer_id,
+            FinTransaction.create_time > expiry_date,
+            FinProduct.risk_level.in_(["R3", "R4", "R5"]),
+            FinTransaction.transaction_type.in_(["purchase", "申购"]),
+        ).order_by(FinTransaction.create_time.desc()).limit(5)
+        result = await self.db.execute(stmt)
+        return [
+            {
+                "transaction_id": f"T{row[0]}",
+                "amount": float(row[1]) if row[1] is not None else 0,
+                "date": str(row[2].date()) if row[2] else "",
+                "product_level": row[3] or "R3",
+                "product_name": row[4] or "未知产品",
+            }
+            for row in result.all()
+        ]
+
+    async def _calc_holding_product_summary(self, customer_id: int) -> list:
+        """获取持仓产品摘要（用于CAL-06证据）"""
+        stmt = select(
+            FinProduct.product_name, FinProduct.risk_level, FinProduct.product_type,
+            FinHoldings.current_value,
+        ).join(FinProduct, FinHoldings.product_id == FinProduct.id).where(
+            FinHoldings.customer_id == customer_id,
+            FinHoldings.status == "持有",
+        ).limit(5)
+        result = await self.db.execute(stmt)
+        return [
+            {
+                "product_name": row[0] or "未知",
+                "risk_level": row[1] or "N/A",
+                "product_type": row[2] or "N/A",
+                "current_value": float(row[3]) if row[3] is not None else 0,
+            }
+            for row in result.all()
+        ]
+
+    async def _persist_calibration(
+        self, customer_id: int, calibration_info: CalibrationInfo, trigger_type: str
+    ):
+        """持久化校准记录到专用表 + 更新画像快照"""
+        from app.model.entities import FinCalibrationRecord
+
+        # 写入校准历史表
+        record = FinCalibrationRecord(
+            customer_id=customer_id,
+            calibrate_time=calibration_info.calibrate_time or datetime.now(),
+            direction=calibration_info.direction,
+            self_reported=calibration_info.self_reported,
+            behavioral=calibration_info.behavioral,
+            triggered_rules=[
+                {
+                    "rule_id": r.rule_id if hasattr(r, 'rule_id') else r.get("rule_id", ""),
+                    "rule_name": r.rule_name if hasattr(r, 'rule_name') else r.get("rule_name", ""),
+                    "direction": r.direction if hasattr(r, 'direction') else r.get("direction", ""),
+                    "detail": r.detail if hasattr(r, 'detail') else r.get("detail", ""),
+                    "evidence": r.evidence if hasattr(r, 'evidence') else r.get("evidence", {}),
+                }
+                for r in calibration_info.triggered_rules
+            ],
+            summary=calibration_info.summary,
+            trigger_type=trigger_type,
+        )
+        self.db.add(record)
+
+        # 同步更新画像主表的校准快照
+        stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
+        result = await self.db.execute(stmt)
+        profile = result.scalar_one_or_none()
+        if profile:
+            profile.calibration_json = {
+                "calibrate_time": calibration_info.calibrate_time.isoformat() if calibration_info.calibrate_time else None,
+                "direction": calibration_info.direction,
+                "self_reported": calibration_info.self_reported,
+                "behavioral": calibration_info.behavioral,
+                "triggered_rules": [
+                    r.model_dump() if hasattr(r, 'model_dump') else r
+                    for r in calibration_info.triggered_rules
+                ],
+                "summary": calibration_info.summary,
+            }
+
+        await self.db.flush()
         self, customer_id: int, risk_level: str, risk_score: int, dimension_scores: dict
     ):
         """研判后更新画像表（含完整画像 JSON）"""
