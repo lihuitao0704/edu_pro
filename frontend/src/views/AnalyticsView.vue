@@ -217,7 +217,7 @@ async function query() {
       message: question.value,
       user_id: auth.user?.user_id,
     })
-    editableSql.value = result.value.sql || ''
+    editableSql.value = result.value?.sql || ''
     await nextTick()
     renderChart()
   } catch (reason: any) {

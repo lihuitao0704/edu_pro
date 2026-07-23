@@ -1,6 +1,6 @@
 <template>
-  <div class="login-page">
-    <section class="login-story">
+  <div class="auth-page">
+    <section class="auth-hero">
       <div class="story-orbit orbit-one" />
       <div class="story-orbit orbit-two" />
       <div class="login-logo">澄</div>
@@ -13,29 +13,18 @@
         <div><strong>360°</strong><span>客户画像</span></div>
       </div>
     </section>
-    <section class="login-panel">
-      <form class="login-form" @submit.prevent="submit">
+    <section class="auth-panel">
+      <form class="auth-form" @submit.prevent="submit">
         <span class="eyebrow">安全工作区</span>
         <h2>欢迎回来</h2>
-        <p class="muted">选择演示身份，或输入已有账号。</p>
-        <div class="demo-roles">
-          <button
-            v-for="account in demoAccounts"
-            :key="account.username"
-            type="button"
-            :class="{ active: form.username === account.username }"
-            @click="selectAccount(account.username)"
-          >
-            <span>{{ account.icon }}</span>{{ account.label }}
-          </button>
-        </div>
-        <label>用户名<input v-model.trim="form.username" autocomplete="username" /></label>
-        <label>密码<input v-model="form.password" type="password" autocomplete="current-password" /></label>
+        <p class="muted">输入账号密码，系统将自动识别您的身份。</p>
+        <label>用户名<input v-model.trim="form.username" autocomplete="username" placeholder="请输入用户名" /></label>
+        <label>密码<input v-model="form.password" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
         <ErrorAlert :message="error" />
         <button class="primary-button login-submit" :disabled="loading">
-          {{ loading ? '正在验证身份…' : '进入工作台' }}
+          {{ loading ? '正在验证身份…' : '登录' }}
         </button>
-        <p class="demo-tip">演示账号统一密码：<code>Demo@123</code></p>
+        <p class="auth-switch">还没有账户？<a href="/register">立即注册</a></p>
       </form>
     </section>
   </div>
@@ -53,26 +42,14 @@ const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(false)
 const error = ref('')
-const form = reactive({ username: 'demo_customer_01', password: 'Demo@123' })
-const demoAccounts = [
-  { label: '客户', username: 'demo_customer_01', icon: '客' },
-  { label: '理财顾问', username: 'demo_advisor', icon: '顾' },
-  { label: '客户经理', username: 'demo_manager', icon: '经' },
-  { label: '风控专员', username: 'demo_risk', icon: '风' },
-  { label: '管理员', username: 'demo_admin', icon: '管' },
-]
-
-function selectAccount(username: string) {
-  form.username = username
-  form.password = 'Demo@123'
-}
+const form = reactive({ username: '', password: '' })
 
 async function submit() {
   loading.value = true
   error.value = ''
   try {
     await auth.login(form.username, form.password)
-    router.push(homeForRole(auth.user?.role || ''))
+    await router.push(homeForRole(auth.user?.role || ''))
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '登录失败'
   } finally {
