@@ -1,7 +1,17 @@
 """GraphRAG Tool — 将 GraphRAG Pipeline 包装为 LangChain 可调用工具"""
 
 from langchain_core.tools import tool
-from app.graph.graphrag_pipeline import GraphRAGPipeline
+from app.tool.graphrag_pipeline import GraphRAGPipeline
+
+# 模块级单例：避免每次工具调用都新建 Pipeline（含 Neo4j 连接初始化开销）
+_pipeline_instance = None
+
+
+def _get_pipeline():
+    global _pipeline_instance
+    if _pipeline_instance is None:
+        _pipeline_instance = GraphRAGPipeline()
+    return _pipeline_instance
 
 
 @tool
@@ -20,6 +30,6 @@ async def graphrag_tool(query: str) -> str:
     Returns:
         LLM 生成的回答文本（Markdown 格式），包含图谱查询结果和相关文档片段
     """
-    pipeline = GraphRAGPipeline()
+    pipeline = _get_pipeline()
     result = await pipeline.retrieve(query)
     return result

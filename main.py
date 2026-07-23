@@ -43,10 +43,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"  Scheduler: 启动失败 ({e})")
 
+    # 启动事件总线订阅消费者（阶段3：多Agent协作闭环）
+    event_subscriber_task = None
+    try:
+        import asyncio
+        from app.service.event_bus import start_event_subscriber
+        event_subscriber_task = asyncio.create_task(start_event_subscriber())
+        print("  EventBus: 事件订阅消费者已启动（监听 risk_alert）")
+    except Exception as e:
+        print(f"  EventBus: 启动失败 ({e})")
+
     print("  服务就绪，等待请求...\n")
     yield
 
     print("[关闭] 系统正在停止...")
+    if event_subscriber_task:
+        event_subscriber_task.cancel()
     try:
         from app.service.risk_scheduler import stop_scheduler
         stop_scheduler()

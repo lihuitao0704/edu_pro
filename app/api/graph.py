@@ -4,7 +4,7 @@
 """
 
 from fastapi import APIRouter, HTTPException
-from app.graph.neo4j_client import Neo4jClient
+from app.tool.neo4j_client import Neo4jClient
 from app.tool import graph_query_tool
 
 router = APIRouter()

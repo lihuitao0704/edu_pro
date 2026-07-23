@@ -137,13 +137,13 @@ class AdvisorAgent(BaseAgent):
         super().__init__(db, session_id)
         self._settings = get_settings()
 
-        # ── 初始化 LLM ──
+        # ── 初始化 LLM（投顾 Agent 单独压低 timeout，避免多轮工具调用叠加超时）──
         self._llm = ChatOpenAI(
             model=self._settings.llm.openai_model_chat,
             temperature=self._settings.llm.openai_temperature,
             max_tokens=self._settings.llm.openai_max_tokens,
-            timeout=self._settings.llm.openai_timeout,
-            max_retries=self._settings.llm.openai_max_retries,
+            timeout=60,
+            max_retries=1,
             openai_api_key=self._settings.llm.openai_api_key,
             openai_api_base=self._settings.llm.openai_base_url,
         )
@@ -195,11 +195,26 @@ class AdvisorAgent(BaseAgent):
         user_message = self._build_user_message(message, customer_id)
 
         try:
-            result = await self._agent.ainvoke(
-                {"messages": [HumanMessage(content=user_message)]}
+            import asyncio
+            result = await asyncio.wait_for(
+                self._agent.ainvoke(
+                    {"messages": [HumanMessage(content=user_message)]},
+                    config={"recursion_limit": 6},
+                ),
+                timeout=90,
             )
+        except asyncio.TimeoutError:
+            logger.warning("AdvisorAgent 执行超时(90s)，返回降级提示")
+            return {
+                "reply": "投顾分析超时，请尝试简化问题或稍后重试。",
+                "recommendations": [],
+                "customer_profile": None,
+                "holdings_analysis": None,
+                "reasoning": None,
+                "session_id": self.session_id,
+            }
         except Exception as e:
-            logger.error(f"AdvisorAgent 执行失败: {e}")
+            logger.error(f"AdvisorAgent 执行失败: {e}", exc_info=True)
             return {
                 "reply": f"投顾服务暂时不可用，请稍后重试。错误详情：{str(e)}",
                 "recommendations": [],

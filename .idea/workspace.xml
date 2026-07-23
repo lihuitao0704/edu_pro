@@ -1,15 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善用户画像和投顾agent功能">
+    <list default="true" id="c607de73-b98c-4661-b82a-79ac01a123a8" name="更改" comment="完善投顾agent的功能">
+      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agent/advisor_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agent/advisor_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/api/profile.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/profile.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/memory/session_memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/memory/session_memory.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/model/schemas.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/model/schemas.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/chat.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/chat.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api/graph.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api/graph.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config/settings.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/graph/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/graph/cypher_templates.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/graph/graphrag_pipeline.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/graph/neo4j_client.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/app/service/advisor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/advisor_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/profile_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/profile_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/service/risk_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/risk_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/agent_service.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/event_bus.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/event_bus.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/operator_agent.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/service/risk_monitor_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/service/risk_monitor_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tool/graph_query_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool/graph_query_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tool/graphrag_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tool/graphrag_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -98,7 +108,15 @@
       <option name="project" value="LOCAL" />
       <updated>1784693550357</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="完善投顾agent的功能">
+      <option name="closed" value="true" />
+      <created>1784728744570</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1784728744570</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -118,6 +136,7 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="搭建基础框架" />
     <MESSAGE value="完善用户画像和投顾agent功能" />
-    <option name="LAST_COMMIT_MESSAGE" value="完善用户画像和投顾agent功能" />
+    <MESSAGE value="完善投顾agent的功能" />
+    <option name="LAST_COMMIT_MESSAGE" value="完善投顾agent的功能" />
   </component>
 </project>

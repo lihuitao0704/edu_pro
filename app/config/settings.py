@@ -3,6 +3,12 @@
 基于 pydantic-settings 从 .env 文件加载所有配置
 """
 
+from dotenv import load_dotenv
+
+# 先把 .env 注入 os.environ，确保所有 os.getenv 调用都能读到配置
+# （llm_client.py 等模块用 os.getenv 读取，不走 pydantic settings 对象）
+load_dotenv()
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import Optional, List

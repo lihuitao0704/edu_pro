@@ -11,9 +11,9 @@ from app.model.schemas import (
     CustomerChatRequest, CustomerChatResponse,
     QueryRequest, QueryResponse, ApiResponse,
 )
-from app.service.agent_service import get_customer_service_agent
+from app.agent.customer_agent import get_customer_service_agent
 from app.service.nl2sql_service import NL2SQLService
-from app.service.operator_agent import operator_chat
+from app.agent.operator_agent import operator_chat
 from app.utils.response import success, error
 
 # 智能客服路由（/api/chat/customer）

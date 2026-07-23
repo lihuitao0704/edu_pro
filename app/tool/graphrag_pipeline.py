@@ -25,8 +25,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config.settings import get_settings
-from app.graph.neo4j_client import Neo4jClient
-from app.graph.cypher_templates import (
+from app.tool.neo4j_client import Neo4jClient
+from app.tool.cypher_templates import (
     CUSTOMERS_BY_INDUSTRY_AND_RISK,
     GRAPH_ENTITY_SEARCH,
     FULL_GRAPH_OVERVIEW,
@@ -357,8 +357,6 @@ class GraphRAGPipeline:
             from pymilvus import MilvusClient
             from app.config.database import init_milvus
             init_milvus()
-        self.vector_weight = settings.graphrag.vector_weight
-        self.graph_weight = settings.graphrag.graph_weight
 
             client = MilvusClient(
                 uri=f"http://{settings.milvus.host}:{settings.milvus.port}",

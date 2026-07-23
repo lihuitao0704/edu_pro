@@ -93,6 +93,22 @@ class RiskMonitorService:
         # Redis 双写
         await self._add_pending_alert(entity.id)
 
+        # 发布风控预警事件 → 通知投顾/客服 Agent 更新客户风险标记（阶段3协作闭环）
+        if alert["alert_level"] in ("medium", "high"):
+            try:
+                from app.service.event_bus import publish_event, EVENT_RISK_ALERT
+                await publish_event(EVENT_RISK_ALERT, {
+                    "alert_id": entity.id,
+                    "customer_id": alert["customer_id"],
+                    "alert_level": alert["alert_level"],
+                    "trigger_rules": alert["trigger_rules"],
+                    "confidence": alert["confidence"],
+                    "summary": alert["summary"],
+                })
+                logger.info(f"风控预警事件已广播: 客户{alert['customer_id']} {alert['alert_level']}级")
+            except Exception as e:
+                logger.warning(f"事件广播失败(不影响主流程): {e}")
+
         return entity.id
 
     async def _create_work_order(self, db: AsyncSession, alert: dict, alert_id: int):

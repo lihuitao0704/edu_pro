@@ -7,7 +7,7 @@
 from typing import List, Optional
 from sqlalchemy import text
 
-from app.graph.neo4j_client import Neo4jClient
+from app.tool.neo4j_client import Neo4jClient
 from app.config.database import async_session_factory
 
 

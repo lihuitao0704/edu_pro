@@ -53,7 +53,10 @@ class AdvisorService:
         if not profile:
             return {"recommendations": [], "customer_profile": None, "reasoning": "客户画像不存在，请先创建画像"}
 
-        customer_risk = risk_level or profile.risk_level or "C2"
+        customer_risk = risk_level or (
+            profile.get("risk_level") if isinstance(profile, dict)
+            else getattr(profile, "risk_level", None)
+        ) or "C2"
         allowed_levels = SUITABILITY_MATRIX.get(customer_risk, ["R1", "R2"])
 
         # 筛选
@@ -125,7 +128,10 @@ class AdvisorService:
     async def get_allocation(self, customer_id: int) -> AllocationResult:
         """资产配置建议"""
         profile = await self.profile_service.get_profile(customer_id)
-        risk_level = profile.risk_level if profile else "C2"
+        risk_level = (
+            profile.get("risk_level") if isinstance(profile, dict)
+            else getattr(profile, "risk_level", None)
+        ) if profile else "C2"
 
         template = ASSET_ALLOCATION_TEMPLATES.get(risk_level, ASSET_ALLOCATION_TEMPLATES["C2"])
 
