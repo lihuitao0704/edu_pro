@@ -43,4 +43,23 @@ describe('apiRequest', () => {
       }),
     )
   })
+
+  it('clears the saved session before raising a 401 error', async () => {
+    localStorage.setItem('wealth-token', 'expired-token')
+    localStorage.setItem('wealth-user', JSON.stringify({ user_id: 7, username: 'customer', role: '客户' }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ code: 401, message: '登录已过期', data: null, trace_id: 'trace-401' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    await expect(apiRequest('/auth/me')).rejects.toBeInstanceOf(ApiError)
+
+    expect(localStorage.getItem('wealth-token')).toBeNull()
+    expect(localStorage.getItem('wealth-user')).toBeNull()
+  })
 })

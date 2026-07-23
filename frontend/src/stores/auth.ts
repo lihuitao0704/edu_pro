@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { post } from '../api/http'
-import type { AuthUser } from '../api/types'
+import type { AuthUser, RegisterPayload } from '../api/types'
 
 interface LoginResult {
   access_token: string
@@ -23,6 +23,11 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('wealth-user', JSON.stringify(result.user))
   }
 
+  async function register(payload: RegisterPayload) {
+    await post('/auth/register', payload)
+    await login(payload.username, payload.password)
+  }
+
   function logout() {
     token.value = ''
     user.value = null
@@ -30,5 +35,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('wealth-user')
   }
 
-  return { token, user, isAuthenticated, login, logout }
+  return { token, user, isAuthenticated, login, register, logout }
 })

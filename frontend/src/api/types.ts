@@ -12,6 +12,13 @@ export interface AuthUser {
   role: '客户' | '理财顾问' | '客户经理' | '风控专员' | '管理员'
 }
 
+export interface RegisterPayload {
+  username: string
+  password: string
+  real_name: string
+  phone?: string
+}
+
 export interface Customer {
   customer_id: number
   username: string

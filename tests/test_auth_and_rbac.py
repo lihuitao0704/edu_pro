@@ -84,6 +84,32 @@ class AuthorizationTests(unittest.TestCase):
         self.assertEqual("", get_request_role(request))
 
 
+class RegisterEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_register_forces_customer_without_employee_role(self):
+        from app.api.auth import RegisterRequest, register
+
+        db = AsyncMock()
+        db.execute.side_effect = [
+            SimpleNamespace(first=lambda: None),
+            SimpleNamespace(lastrowid=42),
+        ]
+
+        result = await register(
+            RegisterRequest(
+                username="new_customer",
+                password="StrongPass@123",
+                real_name="新客户",
+                phone="13800138000",
+            ),
+            db,
+        )
+
+        _, params = db.execute.await_args_list[1].args
+        self.assertEqual("new_customer", params["username"])
+        self.assertNotIn("employee_role", params)
+        self.assertEqual("客户", result["data"]["role"])
+
+
 class OperatorEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_operator_ignores_claimed_role_and_uses_authenticated_role(self):
         from app.api.chat import OperatorChatRequest, chat_operator
