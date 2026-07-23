@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Tuple
 import hashlib
 import json
 import re
+import time
 import logging
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,16 @@ class NL2SQLService:
             "赎回": "fin_transaction",
             "流水": "fin_transaction",
             "画像": "fin_customer_profile",
+            "评估": "fin_risk_assessment",
+            "问卷": "fin_risk_assessment",
             "风险": "fin_risk_alert",
             "预警": "fin_risk_alert",
             "风控": "fin_risk_alert",
             "工单": "biz_work_order",
+            "对话": "conversation_archive",
+            "归档": "conversation_archive",
             "知识": "fin_knowledge_meta",
+            "文档": "fin_knowledge_meta",
         }
         self._schema_cache: Optional[str] = None
         logger.info("NL2SQLService 初始化完成")
@@ -109,6 +115,31 @@ class NL2SQLService:
             self._schema_cache = "\n\n".join(schema_parts)
             logger.info(f"已加载 {len(schema_parts)} 张表的 Schema")
             return self._schema_cache
+        finally:
+            db.close()
+
+    @staticmethod
+    def _get_foreign_keys() -> str:
+        """从 INFORMATION_SCHEMA 查询外键关系，辅助 LLM 生成 JOIN"""
+        logger.info("查询外键关系…")
+        db = SessionLocal()
+        try:
+            sql = text(
+                "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME "
+                "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
+                "WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL"
+            )
+            result = db.execute(sql)
+            rows = result.fetchall()
+            if not rows:
+                return ""
+            lines = ["【表关系】"]
+            for row in rows:
+                lines.append(f"`{row[0]}`.`{row[1]}` → `{row[2]}`.`{row[3]}`")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"外键查询失败: {e}")
+            return ""
         finally:
             db.close()
 
@@ -159,8 +190,9 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
         """根据自然语言生成 SQL"""
         logger.info(f"生成 SQL，用户查询: {query}")
         schema = self._get_dynamic_schema(query)
+        foreign_keys = self._get_foreign_keys()
         examples = self._get_few_shot_examples()
-        full_schema = schema + "\n" + examples
+        full_schema = schema + "\n" + foreign_keys + "\n" + examples
         sql = self.llm.generate_sql(query, full_schema)
         logger.info(f"生成 SQL: {sql}")
         return sql
@@ -254,15 +286,22 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
         finally:
             db.close()
 
-    def query_and_explain(self, query: str) -> Dict:
-        """完整流程：生成 SQL → 校验 → 执行 → 解读（带 Redis 缓存）"""
+    def query_and_explain(self, query: str, user_id: int = 0) -> Dict:
+        """完整流程：生成 SQL → 校验 → 执行 → 解读（带 Redis 缓存）
+
+        Args:
+            query: 用户自然语言查询
+            user_id: 用户 ID（用于缓存隔离，0 表示匿名）
+        """
+        t_start = time.time()
         logger.info(f"===== NL2SQL 完整流程开始 =====")
         logger.info(f"用户问题: {query}")
 
-        # 生成缓存 key：nl2sql:{md5(query)}
-        cache_key = f"nl2sql:{hashlib.md5(query.encode('utf-8')).hexdigest()}"
+        # 生成缓存 key：nl2sql:{user_id}:{md5(query)}
+        cache_key = f"nl2sql:{user_id}:{hashlib.md5(query.encode('utf-8')).hexdigest()}"
 
         # 尝试从 Redis 读取缓存
+        r = None  # ← 提前初始化，避免作用域 bug
         try:
             r = get_redis_client()
             if r:
@@ -274,7 +313,9 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
             logger.warning(f"Redis 读取缓存失败（不影响查询）: {e}")
 
         try:
+            t1 = time.time()
             sql = self.generate_sql(query)
+            t_generate = time.time() - t1
 
             valid, msg = self.validate_sql(sql)
             if not valid:
@@ -284,9 +325,13 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                     "query_result": None,
                     "explanation": None,
                     "error": msg,
+                    "safety": {"select_only": False, "row_limit": True, "no_sensitive": False},
                 }
 
+            t2 = time.time()
             result = self.execute_sql(sql)
+            t_execute = time.time() - t2
+
             if "error" in result:
                 return {
                     "success": False,
@@ -294,9 +339,14 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                     "query_result": None,
                     "explanation": None,
                     "error": result["error"],
+                    "safety": {"select_only": True, "row_limit": True, "no_sensitive": True},
                 }
 
+            t3 = time.time()
             explanation = self.llm.explain_result(query, result["rows"])
+            t_explain = time.time() - t3
+
+            exceeded = result.get("row_count", 0) >= _settings.nl2sql.max_rows
 
             response = {
                 "success": True,
@@ -304,17 +354,30 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                 "query_result": result["rows"],
                 "explanation": explanation,
                 "error": None,
+                "safety": {
+                    "select_only": True,
+                    "row_limit": not exceeded,
+                    "no_sensitive": True,
+                },
+                "truncated": exceeded,
+                "timing": {
+                    "generate_ms": round(t_generate * 1000),
+                    "execute_ms": round(t_execute * 1000),
+                    "explain_ms": round(t_explain * 1000),
+                    "total_ms": round((time.time() - t_start) * 1000),
+                },
             }
 
-            # 写入 Redis 缓存，TTL=600 秒
+            # 写入 Redis 缓存，TTL 从 settings 读取
             try:
                 if r:
-                    r.setex(cache_key, 600, json.dumps(response, ensure_ascii=False, default=str))
-                    logger.info(f"写入缓存: {cache_key} (TTL=600s)")
+                    ttl = _settings.nl2sql.cache_ttl
+                    r.setex(cache_key, ttl, json.dumps(response, ensure_ascii=False, default=str))
+                    logger.info(f"写入缓存: {cache_key} (TTL={ttl}s)")
             except Exception as e:
                 logger.warning(f"Redis 写入缓存失败（不影响查询）: {e}")
 
-            logger.info(f"===== NL2SQL 完整流程完成 =====")
+            logger.info(f"===== NL2SQL 完整流程完成 (总耗时 {response['timing']['total_ms']}ms) =====")
             return response
         except Exception as e:
             logger.error(f"NL2SQL 流程异常: {e}")
@@ -324,6 +387,8 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                 "query_result": None,
                 "explanation": None,
                 "error": str(e),
+                "safety": {"select_only": False, "row_limit": False, "no_sensitive": False},
+                "truncated": False,
             }
 
     @staticmethod

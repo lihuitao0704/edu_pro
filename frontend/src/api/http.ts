@@ -5,12 +5,14 @@ export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\
 export class ApiError extends Error {
   code: number
   traceId: string
+  data: any
 
-  constructor(message: string, code: number, traceId = '') {
+  constructor(message: string, code: number, traceId = '', data: any = null) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.traceId = traceId
+    this.data = data
   }
 }
 
@@ -41,6 +43,7 @@ export async function apiRequest<T>(
       envelope.message || `请求失败（HTTP ${response.status}）`,
       envelope.code || response.status,
       envelope.trace_id,
+      (envelope as any).data ?? null,
     )
   }
   return envelope.data

@@ -151,6 +151,7 @@ class SecuritySettings(BaseSettings):
 
 class NL2SQLSettings(BaseSettings):
     max_rows: int = Field(default=100, alias="NL2SQL_MAX_ROWS")
+    cache_ttl: int = Field(default=600, alias="NL2SQL_CACHE_TTL")
     blocked_keywords: str = Field(default="DROP,DELETE,UPDATE,INSERT,ALTER,TRUNCATE,CREATE", alias="NL2SQL_BLOCKED_KEYWORDS")
 
     @property
