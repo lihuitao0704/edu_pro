@@ -94,6 +94,21 @@ class LLMTool:
                     max_tokens=max_tokens,
                 )
 
+                # 调试：打印原始响应类型和内容
+                logger.info(f"LLM 原始响应类型: {type(response).__name__}")
+
+                # 检查 response 类型（某些情况下可能返回字符串）
+                if isinstance(response, str):
+                    logger.warning(f"LLM 返回字符串而非对象，可能是 API 错误: {response[:500]}")
+                    last_error = Exception(f"API 返回字符串: {response[:200]}")
+                    continue
+
+                # 检查 response 是否有 choices 属性
+                if not hasattr(response, 'choices'):
+                    logger.warning(f"LLM 响应缺少 choices 属性 | 类型: {type(response)} | 内容: {str(response)[:500]}")
+                    last_error = Exception(f"响应格式异常: {type(response)}")
+                    continue
+
                 choice = response.choices[0] if response.choices else None
                 message = choice.message if choice else None
 

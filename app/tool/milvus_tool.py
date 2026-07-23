@@ -46,23 +46,26 @@ class MilvusTool:
     """Milvus 向量数据库工具"""
 
     def __init__(self):
-        self.dim = settings.milvus.dim  # 1536
-        # 初始化 Milvus 连接
+        self.dim = settings.milvus.dim  # 1024
+        self._connected = False
+        # 初始化 Milvus 连接（延迟连接，失败不阻塞启动）
         self._init_connection()
 
     def _init_connection(self):
-        """初始化 Milvus 连接"""
+        """初始化 Milvus 连接（失败时标记为未连接，不抛出异常）"""
         try:
             # 使用默认别名 'default' 建立连接
             connections.connect(
                 alias="default",
                 host=settings.milvus.host,
                 port=settings.milvus.port,
+                timeout=5,  # 5秒超时
             )
+            self._connected = True
             logger.info(f"Milvus 连接成功: {settings.milvus.host}:{settings.milvus.port}")
         except Exception as e:
-            logger.error(f"Milvus 连接失败: {e}")
-            raise
+            self._connected = False
+            logger.warning(f"Milvus 连接失败，RAG 检索功能将不可用: {e}")
 
     def ensure_collection(self, collection_name: str, index_type: str = "IVF_FLAT"):
         """
@@ -139,35 +142,46 @@ class MilvusTool:
         Returns:
             检索结果列表，每项包含 content, metadata, score
         """
+        # 检查连接状态
+        if not self._connected:
+            logger.warning(f"Milvus 未连接，跳过检索 | collection={collection_name}")
+            return []
+
         output_fields = output_fields or ["content", "metadata"]
-        collection = Collection(collection_name)
-        collection.load()
 
-        search_params = {
-            "metric_type": "COSINE",
-            "params": {"ef": 64} if COLLECTION_CONFIGS.get(collection_name, {}).get("index_type") == "HNSW" else {"nprobe": 16},
-        }
+        try:
+            collection = Collection(collection_name)
+            collection.load()
 
-        results = collection.search(
-            data=[query_vector],
-            anns_field="embedding",
-            param=search_params,
-            limit=top_k,
-            output_fields=output_fields,
-        )
+            search_params = {
+                "metric_type": "COSINE",
+                "params": {"ef": 64} if COLLECTION_CONFIGS.get(collection_name, {}).get("index_type") == "HNSW" else {"nprobe": 16},
+            }
 
-        # 格式化结果
-        hits = []
-        for hits_batch in results:
-            for hit in hits_batch:
-                hits.append({
-                    "content": hit.entity.get("content"),
-                    "metadata": hit.entity.get("metadata"),
-                    "score": hit.score,
-                })
+            results = collection.search(
+                data=[query_vector],
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                output_fields=output_fields,
+            )
 
-        logger.info(f"向量检索完成 | collection={collection_name} | top_k={top_k} | hits={len(hits)}")
-        return hits
+            # 格式化结果
+            hits = []
+            for hits_batch in results:
+                for hit in hits_batch:
+                    hits.append({
+                        "content": hit.entity.get("content"),
+                        "metadata": hit.entity.get("metadata"),
+                        "score": hit.score,
+                    })
+
+            logger.info(f"向量检索完成 | collection={collection_name} | top_k={top_k} | hits={len(hits)}")
+            return hits
+
+        except Exception as e:
+            logger.error(f"Milvus 检索失败: {e}")
+            return []
 
     def delete_by_ids(self, collection_name: str, ids: list[int]):
         """

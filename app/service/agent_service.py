@@ -76,11 +76,31 @@ class CustomerServiceAgent:
                 sources = []
             else:
                 # 增强生成
-                reply = await self._generate_with_context(message, rag_results, history)
-                sources = self._build_sources(rag_results)
+                llm_response = await self._generate_with_context(message, rag_results, history)
+
+                # 解析 LLM 返回的 JSON
+                import json
+                try:
+                    llm_data = json.loads(llm_response)
+                    reply = llm_data.get("reply", llm_response)
+                    # 如果 LLM 返回了 sources，使用 LLM 的 sources
+                    if llm_data.get("sources"):
+                        sources = [SourceReference(
+                            title=s,
+                            source_file="",
+                            chunk_index=0,
+                            score=0.0,
+                            content_snippet=""
+                        ) for s in llm_data["sources"]]
+                    else:
+                        sources = self._build_sources(rag_results)
+                except (json.JSONDecodeError, AttributeError):
+                    # 解析失败，使用原始响应
+                    reply = llm_response
+                    sources = self._build_sources(rag_results)
 
                 # 安全审核
-                safety_result = await self.safety.check_content(reply)
+                safety_result = await self.safety.check_content(llm_response)
                 if not safety_result.passed:
                     reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
 
@@ -135,7 +155,10 @@ class CustomerServiceAgent:
     async def _generate_with_context(
         self, message: str, rag_results: list[dict], history: list[dict]
     ) -> str:
-        """基于 RAG 上下文生成回答"""
+        """基于 RAG 上下文生成回答，输出纯 JSON 格式"""
+        import json
+        import re
+
         # 加载 System Prompt
         prompt_path = Path(__file__).parent.parent / "prompts" / "customer_system.txt"
         if prompt_path.exists():
@@ -169,10 +192,79 @@ class CustomerServiceAgent:
 
         try:
             reply = await self.llm.chat(messages=messages, temperature=0.3, max_tokens=1024)
-            return reply
+
+            # 尝试解析 LLM 返回的 JSON
+            json_result = self._extract_json_from_text(reply)
+
+            if json_result:
+                # 确保是纯 JSON 字符串输出
+                return json.dumps(json_result, ensure_ascii=False)
+            else:
+                # 解析失败，构造兜底 JSON
+                logger.warning(f"LLM 返回内容无法解析为 JSON，使用兜底格式 | reply={reply[:100]}...")
+                fallback_json = {
+                    "reply": reply if reply else "抱歉，系统繁忙，请稍后重试。",
+                    "sources": [],
+                    "need_human": False,
+                    "confidence": 0.5
+                }
+                return json.dumps(fallback_json, ensure_ascii=False)
+
         except Exception as e:
             logger.error(f"LLM 生成失败: {e}")
-            return "抱歉，系统繁忙，请稍后重试。"
+            error_json = {
+                "reply": "抱歉，系统繁忙，请稍后重试。",
+                "sources": [],
+                "need_human": True,
+                "confidence": 0.0
+            }
+            return json.dumps(error_json, ensure_ascii=False)
+
+    def _extract_json_from_text(self, text: str) -> Optional[dict]:
+        """从 LLM 返回的文本中提取 JSON 对象"""
+        import json
+        import re
+
+        if not text:
+            return None
+
+        text = text.strip()
+
+        # 1. 去除可能的 markdown 代码块包裹
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+        text = text.strip()
+
+        # 2. 尝试直接解析
+        if text.startswith('{'):
+            try:
+                result = json.loads(text)
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+        # 3. 从文本中提取 JSON 对象
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+        # 4. 尝试提取关键字段
+        reply_match = re.search(r'"reply"\s*:\s*"([^"]*)"', text)
+        if reply_match:
+            return {
+                "reply": reply_match.group(1),
+                "sources": [],
+                "need_human": False,
+                "confidence": 0.5
+            }
+
+        return None
 
     def _build_sources(self, rag_results: list[dict]) -> list[SourceReference]:
         """构建来源引用列表"""

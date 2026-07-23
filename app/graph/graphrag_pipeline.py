@@ -357,8 +357,6 @@ class GraphRAGPipeline:
             from pymilvus import MilvusClient
             from app.config.database import init_milvus
             init_milvus()
-        self.vector_weight = settings.graphrag.vector_weight
-        self.graph_weight = settings.graphrag.graph_weight
 
             client = MilvusClient(
                 uri=f"http://{settings.milvus.host}:{settings.milvus.port}",
