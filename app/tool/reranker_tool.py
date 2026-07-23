@@ -82,10 +82,13 @@ class RerankerTool:
             query=query,
             documents=documents_text,
         )
-        messages = [{"role": "user", "content": prompt}]
+        messages = [
+            {"role": "system", "content": "你是一个评分工具。只输出JSON数组，不输出任何解释。"},
+            {"role": "user", "content": prompt},
+        ]
 
         try:
-            llm_response = await self.llm.chat(messages=messages, temperature=0.1, max_tokens=512)
+            llm_response = await self.llm.chat(messages=messages, temperature=0.1, max_tokens=1024)
             llm_scores = self._parse_scores(llm_response, len(documents))
             logger.info(f"LLM Reranker 调用成功 | 解析到 {len(llm_scores)} 个评分")
         except Exception as e:
