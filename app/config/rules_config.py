@@ -82,7 +82,7 @@ CIRCUIT_BREAKER_RULES = [
 ]
 
 # ==================== 置信度配置 ====================
-CONFIDENCE_SOURCE_INITIAL = {"questionnaire": 0.9, "ai_extract": 0.6, "self_report": 0.4, "default": 0.2}
+CONFIDENCE_SOURCE_INITIAL = {"questionnaire": 0.9, "behavior": 0.8, "ai_extract": 0.6, "self_report": 0.4, "default": 0.2}
 
 # ==================== 特殊场景 ====================
 SPECIAL_POPULATION_RULES = {
