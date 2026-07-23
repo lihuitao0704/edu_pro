@@ -51,14 +51,26 @@ class SafetyService:
         审核 LLM 输出内容
 
         Args:
-            text: 待审核文本
+            text: 待审核文本（可能是纯文本或 JSON 格式）
         Returns:
             SafetyCheckResult
         """
+        import json
+
+        # 尝试解析 JSON，提取 reply 字段进行审核
+        content_to_check = text
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and "reply" in data:
+                content_to_check = data["reply"]
+        except (json.JSONDecodeError, TypeError):
+            # 不是 JSON，直接审核原文本
+            pass
+
         # 1. 检查绝对违规模式（直接拦截）
         for pattern in self.PROHIBITED_PATTERNS:
-            if re.search(pattern, text):
-                logger.warning(f"安全审核不通过 | 包含违规内容: {pattern} | text={text[:50]}...")
+            if re.search(pattern, content_to_check):
+                logger.warning(f"安全审核不通过 | 包含违规内容: {pattern} | text={content_to_check[:50]}...")
                 return SafetyCheckResult(
                     passed=False,
                     reason=f"包含违规内容：{pattern}",
@@ -67,11 +79,11 @@ class SafetyService:
 
         # 2. 检查上下文敏感模式（否定语境下不拦截）
         for sensitive_pattern, negation_pattern in self.CONTEXTUAL_PATTERNS:
-            if re.search(sensitive_pattern, text):
+            if re.search(sensitive_pattern, content_to_check):
                 # 敏感词出现了，检查是否在否定语境中
-                if not re.search(negation_pattern, text):
+                if not re.search(negation_pattern, content_to_check):
                     # 不在否定语境中，判定为违规
-                    logger.warning(f"安全审核不通过 | 包含敏感内容: {sensitive_pattern} | text={text[:50]}...")
+                    logger.warning(f"安全审核不通过 | 包含敏感内容: {sensitive_pattern} | full_text={content_to_check}")
                     return SafetyCheckResult(
                         passed=False,
                         reason=f"包含敏感内容：{sensitive_pattern}",
