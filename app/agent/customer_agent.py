@@ -18,6 +18,32 @@ from app.utils.logger import get_logger
 
 logger = get_logger("service.agent")
 
+# 缓存 Prompt 文件内容，避免每次请求都同步读取文件
+_chitchat_prompt_cache: Optional[str] = None
+_customer_prompt_cache: Optional[str] = None
+
+
+def _load_chitchat_prompt() -> str:
+    global _chitchat_prompt_cache
+    if _chitchat_prompt_cache is None:
+        prompt_path = Path(__file__).parent.parent / "prompts" / "chitchat_reply.txt"
+        if prompt_path.exists():
+            _chitchat_prompt_cache = prompt_path.read_text(encoding="utf-8")
+        else:
+            _chitchat_prompt_cache = "你是XX科技智能财富管家的AI客服助手，请友好地回复用户，并引导回金融业务话题。"
+    return _chitchat_prompt_cache
+
+
+def _load_customer_prompt() -> str:
+    global _customer_prompt_cache
+    if _customer_prompt_cache is None:
+        prompt_path = Path(__file__).parent.parent / "prompts" / "customer_system.txt"
+        if prompt_path.exists():
+            _customer_prompt_cache = prompt_path.read_text(encoding="utf-8")
+        else:
+            _customer_prompt_cache = "你是XX科技智能财富管家的AI客服助手，请基于参考资料回答客户问题。"
+    return _customer_prompt_cache
+
 
 class CustomerServiceAgent:
     """智能客服Agent核心类"""
@@ -134,12 +160,7 @@ class CustomerServiceAgent:
 
     async def _handle_chitchat(self, message: str, history: list[dict]) -> str:
         """处理闲聊"""
-        # 加载闲聊回复 Prompt
-        prompt_path = Path(__file__).parent.parent / "prompts" / "chitchat_reply.txt"
-        if prompt_path.exists():
-            system_prompt = prompt_path.read_text(encoding="utf-8")
-        else:
-            system_prompt = "你是XX科技智能财富管家的AI客服助手，请友好地回复用户，并引导回金融业务话题。"
+        system_prompt = _load_chitchat_prompt()
 
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history[-4:])  # 最近2轮对话
@@ -159,12 +180,8 @@ class CustomerServiceAgent:
         import json
         import re
 
-        # 加载 System Prompt
-        prompt_path = Path(__file__).parent.parent / "prompts" / "customer_system.txt"
-        if prompt_path.exists():
-            system_prompt = prompt_path.read_text(encoding="utf-8")
-        else:
-            system_prompt = "你是XX科技智能财富管家的AI客服助手，请基于参考资料回答客户问题。"
+        # 加载 System Prompt（使用缓存）
+        system_prompt = _load_customer_prompt()
 
         # 拼接参考资料
         context_docs = []
@@ -181,12 +198,10 @@ class CustomerServiceAgent:
             role = "客户" if msg["role"] == "user" else "客服"
             history_text += f"{role}：{msg['content']}\n"
 
-        # 组装完整 Prompt
-        full_prompt = system_prompt.format(
-            context_documents=context_text,
-            chat_history=history_text,
-            user_question=message,
-        )
+        # 组装完整 Prompt（使用安全替换，避免用户输入中的 { } 导致 KeyError）
+        full_prompt = system_prompt.replace("{context_documents}", context_text)
+        full_prompt = full_prompt.replace("{chat_history}", history_text)
+        full_prompt = full_prompt.replace("{user_question}", message)
 
         messages = [{"role": "user", "content": full_prompt}]
 

@@ -4,6 +4,7 @@ LLM 客户端类 — 封装 OpenAI API 调用、SQL 生成、结果解读
 
 import os
 import time
+import asyncio
 import logging
 from typing import Optional, List, Dict
 from openai import OpenAI
@@ -66,7 +67,14 @@ class LLMClient:
                     f"LLM 调用失败 (第 {attempt + 1} 次): {e}，{wait}s 后重试"
                 )
                 if attempt < max_retries - 1:
-                    time.sleep(wait)
+                    # 优先使用 asyncio.sleep（如果在事件循环中），否则回退到 time.sleep
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # 在事件循环中，不能阻塞，用 time.sleep 的近似等待（此方法是同步的，
+                        # 用于 NL2SQL 等同步调用场景，这里做保守处理）
+                        time.sleep(wait)
+                    except RuntimeError:
+                        time.sleep(wait)
 
         logger.error(f"LLM 调用全部失败: {last_error}")
         return f"LLM调用失败: {str(last_error)}"

@@ -1,4 +1,5 @@
 """业务操作 API — 风评重做"""
+import json
 import uuid
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
@@ -53,7 +54,7 @@ async def redo_assessment(body: dict, db: AsyncSession = Depends(get_db)) -> Api
 
     await db.execute(
         text("INSERT INTO fin_risk_assessment (customer_id,assessment_date,total_score,risk_level,answers,valid_until,assessor_type) VALUES (:c,CURDATE(),:s,:r,:a,:v,'manual')"),
-        {"c": customer_id, "s": total_score, "r": risk_level, "a": str(answers), "v": valid_until},
+        {"c": customer_id, "s": total_score, "r": risk_level, "a": json.dumps(answers), "v": valid_until},
     )
     await db.commit()
     return ApiResponse(code=200, message="风评完成", data={"customer_id": customer_id, "risk_level": risk_level, "score": total_score, "valid_until": valid_until}, trace_id=uuid.uuid4().hex[:8])

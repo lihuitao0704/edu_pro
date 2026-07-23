@@ -123,6 +123,16 @@ class CircuitBreaker:
                 "detail": f"无收入且资产 {assets:.0f} 元（1-5 万），R3 持仓不超过总资产 30%",
             })
             result.warnings.append("R3 产品持仓不超过总资产 30%")
+            # 执行 R3 占比限制：如果 R3 持仓已超过总资产 30%，则禁止 R3 及以上
+            r3_holding = data.get("r3_holding_amount", 0) or 0
+            r3_limit = assets * 0.3
+            if r3_holding > r3_limit:
+                result.triggered_rules.append({
+                    "rule_id": "FM-02", "level": "restrict",
+                    "detail": f"R3 持仓 {r3_holding:.0f} 元已超过总资产 30% 限制（{r3_limit:.0f} 元），禁止 R3 及以上",
+                })
+                result.warnings.append(f"R3 持仓已超过总资产 30% 限制，禁止购买 R3 及以上产品")
+                result.blocked_levels.extend(["R3", "R4", "R5"])
 
     # ── FM-03：风评时效检查 ─────────────────────────────────
 

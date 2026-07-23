@@ -78,9 +78,22 @@ async def get_db():
 
 
 async def init_db():
-    """初始化数据库表（首次运行时创建所有表）"""
+    """初始化数据库表（首次运行时创建所有表 + 补充缺失列）"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # 补充历史遗留的缺失列（幂等操作，列已存在则跳过）
+        from sqlalchemy import text, inspect
+        def _ensure_columns(sync_conn):
+            inspector = inspect(sync_conn)
+            # sys_user 表确保有 balance 列（transfer.py 使用）
+            if "sys_user" in inspector.get_table_names():
+                cols = {c["name"] for c in inspector.get_columns("sys_user")}
+                if "balance" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE sys_user ADD COLUMN balance DECIMAL(18,2) NOT NULL DEFAULT 0.00"
+                    ))
+        await conn.run_sync(_ensure_columns)
 
 
 # ==================== Redis ====================
@@ -92,8 +105,18 @@ async def get_redis() -> aioredis.Redis:
     """获取 Redis 连接"""
     global _redis_pool
     if _redis_pool is None:
+        # 构建 Redis URL，包含密码（如果有）
+        password = settings.redis.password
+        if password:
+            redis_url = (
+                f"redis://:{password}@{settings.redis.host}:{settings.redis.port}/{settings.redis.db}"
+            )
+        else:
+            redis_url = (
+                f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}"
+            )
         _redis_pool = aioredis.from_url(
-            f"redis://{settings.redis.host}:{settings.redis.port}/{settings.redis.db}",
+            redis_url,
             max_connections=settings.redis.max_connections,
             decode_responses=True,
         )
@@ -122,6 +145,7 @@ def get_neo4j_driver():
             auth=(settings.neo4j.user, settings.neo4j.password),
             max_connection_lifetime=3600,
             max_connection_pool_size=10,
+            connection_acquisition_timeout=settings.neo4j.timeout,
         )
     return _neo4j_driver
 
@@ -143,12 +167,17 @@ def init_milvus():
     """初始化 Milvus 连接"""
     global _milvus_connected
     if not _milvus_connected:
-        milvus_connections.connect(
-            alias="default",
-            host=settings.milvus.host,
-            port=settings.milvus.port,
-        )
-        _milvus_connected = True
+        try:
+            milvus_connections.connect(
+                alias="default",
+                host=settings.milvus.host,
+                port=settings.milvus.port,
+            )
+            _milvus_connected = True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Milvus 连接失败（不影响核心服务）: {e}")
+            _milvus_connected = False
 
 
 def close_milvus():
@@ -179,26 +208,5 @@ def get_minio_client():
 
 
 # ==================== MySQL 同步引擎（NL2SQL 用） ====================
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-_sync_url = (
-    f"mysql+pymysql://{settings.mysql.user}:{settings.mysql.password}"
-    f"@{settings.mysql.host}:{settings.mysql.port}/{settings.mysql.database}"
-    f"?charset=utf8mb4"
-)
-
-sync_engine = create_engine(
-    _sync_url,
-    pool_size=settings.mysql.pool_size,
-    pool_recycle=settings.mysql.pool_recycle,
-    echo=settings.mysql.echo,
-    pool_pre_ping=True,
-)
-
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=sync_engine,
-)
+# 复用顶部已定义的 SessionLocal，不再重复创建
+# 如需在同步代码中使用，直接 from app.config.database import SessionLocal

@@ -107,6 +107,7 @@ RBAC_PERMISSIONS = {
 # 二次确认阈值
 CONFIRM_THRESHOLDS = {
     "purchase_product": 10000,    # 申购 > 1万 需确认
+    "redeem_product": 10000,      # 赎回 > 1万 需确认
     "transfer_funds": 50000,      # 转账 > 5万 需确认
 }
 

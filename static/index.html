@@ -156,8 +156,10 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
     <div class="ni" onclick="navigate('engine',this)"><span class="nv">⚙️</span> 引擎自测</div>
     <div class="ns">验证</div>
     <div class="ni" onclick="navigate('test',this)"><span class="nv">✅</span> 接口测试</div>
+    <div class="ni" onclick="navigate('security',this)"><span class="nv">🛡️</span> 安全测试</div>
+    <div class="ni" onclick="navigate('login',this)"><span class="nv">🔑</span> 认证登录</div>
   </div>
-  <div class="sb-status"><span class="sd"></span><span id="st">服务在线</span> · <span id="lm">--</span></div>
+  <div class="sb-status"><span class="sd" id="authDot"></span><span id="st">服务在线</span> · <span id="authUser">未登录</span></div>
 </div>
 
 <div class="main">
@@ -490,6 +492,63 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
       <div><div style="font-size:13px;font-weight:600;color:var(--ts);margin-bottom:8px">⚡ 数据 & 操作接口</div>
         <div class="tg" id="tOps"></div></div>
       <div id="tResults" style="margin-top:14px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Login Page ==================== -->
+<div class="page" id="pg-login">
+  <div class="g2">
+    <div class="card">
+      <div class="ch"><div class="ct">🔑 用户登录</div></div>
+      <div class="cb">
+        <div class="fg">
+          <div class="fgp"><label class="fl">用户名</label><input class="fi" id="lg_user" placeholder="username" value="admin"></div>
+          <div class="fgp"><label class="fl">密码</label><input class="fi" id="lg_pwd" type="password" placeholder="password" value="admin123"></div>
+        </div>
+        <button class="btn bp" style="margin-top:14px;width:100%" onclick="doLogin()">登录</button>
+        <div id="lg_result" style="margin-top:14px"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ch"><div class="ct">📋 当前认证状态</div>
+        <button class="btn bo bs" onclick="checkAuth()">刷新</button></div>
+      <div class="cb" id="authStatus">
+        <div style="font-size:13px;color:var(--ts)">点击下方按钮检测当前 Token 状态...</div>
+        <button class="btn bo" style="margin-top:10px" onclick="checkAuth()">检测 Token</button>
+        <button class="btn bd2" style="margin-top:10px;margin-left:8px" onclick="doLogout()">退出登录</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ch"><div class="ct">ℹ️ 认证说明</div></div>
+    <div class="cb" style="font-size:13px;line-height:1.8;color:var(--ts)">
+      <p>• <b>开发环境</b>：AUTH_MOCK_MODE=true，所有接口无需认证，自动以管理员身份操作</p>
+      <p>• <b>生产环境</b>：设置 AUTH_MOCK_MODE=false，所有接口需携带 JWT Token（Header: Authorization: Bearer &lt;token&gt;）</p>
+      <p>• 登录后 Token 自动保存在浏览器内存中，每次 API 请求自动携带</p>
+      <p>• 当前模式：<b id="authMode">检测中...</b></p>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Security Test Page ==================== -->
+<div class="page" id="pg-security">
+  <div class="sb" id="secSum" style="display:none">
+    <div class="sit"><div class="sn b" id="secTotal">0</div><div class="slb">总测试</div></div>
+    <div class="sit"><div class="sn g" id="secPass">0</div><div class="slb">通过</div></div>
+    <div class="sit"><div class="sn r" id="secFail">0</div><div class="slb">失败</div></div>
+  </div>
+  <div class="card">
+    <div class="ch"><div class="ct">🛡️ 安全加固验证</div>
+      <button class="btn bp" onclick="runSecTests()">🚀 运行全部安全测试</button></div>
+    <div class="cb">
+      <div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;color:var(--ts);margin-bottom:8px">🔒 NL2SQL 安全测试</div>
+        <div class="tg" id="secNL2SQL"></div></div>
+      <div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;color:var(--ts);margin-bottom:8px">🔑 认证授权测试</div>
+        <div class="tg" id="secAuth"></div></div>
+      <div><div style="font-size:13px;font-weight:600;color:var(--ts);margin-bottom:8px">🌐 CORS &amp; 响应安全</div>
+        <div class="tg" id="secCORS"></div></div>
+      <div id="secResults" style="margin-top:14px"></div>
     </div>
   </div>
 </div>

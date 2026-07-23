@@ -6,6 +6,7 @@ from app.config.database import SessionLocal
 from app.tool.llm_client import LLMClient
 from app.model import entities
 from app.config.redis_client import get_redis_client
+from app.config.settings import get_settings
 from sqlalchemy import text
 from typing import List, Dict, Optional, Tuple
 import hashlib
@@ -14,6 +15,8 @@ import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+_settings = get_settings()
 
 # 全部 10 张业务表（sys_table_dict 是内部管理表，不暴露）
 ALL_TABLES = [
@@ -28,6 +31,14 @@ ALL_TABLES = [
     "conversation_archive",
     "fin_knowledge_meta",
 ]
+
+# 敏感列黑名单（禁止在 SELECT 中查询这些列）
+SENSITIVE_COLUMNS = {
+    "password", "password_hash", "pwd", "passwd",
+    "api_key", "api_secret", "secret_key", "secret",
+    "token", "access_token", "refresh_token",
+    "private_key", "id_card", "身份证号",
+}
 
 
 class NL2SQLService:
@@ -155,43 +166,88 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
         return sql
 
     @staticmethod
+    def _strip_sql_comments(sql: str) -> str:
+        """去除 SQL 中的注释（防止绕过检测）"""
+        # 去除 /* ... */ 块注释
+        sql = re.sub(r'/\*[\s\S]*?\*/', '', sql)
+        # 去除 -- 行注释
+        sql = re.sub(r'--[^\n]*', '', sql)
+        # 去除 # 行注释（MySQL 风格）
+        sql = re.sub(r'#[^\n]*', '', sql)
+        return sql.strip()
+
+    @staticmethod
     def validate_sql(sql: str) -> Tuple[bool, str]:
-        """SQL 安全校验"""
+        """SQL 安全校验（强化版）"""
         if not sql or not sql.strip():
             logger.warning("SQL 为空")
             return False, "SQL 语句为空"
 
-        sql_upper = sql.upper().strip()
+        # 1. 先去除注释（防止注释绕过检测）
+        clean_sql = NL2SQLService._strip_sql_comments(sql)
+        sql_upper = clean_sql.upper().strip()
 
+        # 2. 必须以 SELECT 开头
         if not sql_upper.startswith("SELECT"):
-            logger.warning(f"SQL 非 SELECT 语句: {sql[:50]}...")
+            logger.warning(f"SQL 非 SELECT 语句: {clean_sql[:50]}...")
             return False, "只允许 SELECT 查询"
 
-        forbidden = [
-            "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
-            "TRUNCATE", "CREATE", "EXEC", "EXECUTE",
-        ]
-        for keyword in forbidden:
+        # 3. 禁止危险关键词（从 settings 读取，可扩展）
+        forbidden_keywords = _settings.nl2sql.blocked_keywords_list
+        # 额外加入运行时必须的禁止词
+        extra_forbidden = ["UNION", "INTO", "LOAD_FILE", "SELECT INTO", "EXEC", "EXECUTE"]
+        all_forbidden = set(forbidden_keywords) | set(extra_forbidden)
+
+        for keyword in all_forbidden:
             if re.search(rf"\b{keyword}\b", sql_upper):
                 logger.warning(f"SQL 包含禁止关键词: {keyword}")
                 return False, f"禁止执行危险操作: {keyword}"
+
+        # 4. 禁止查询敏感列
+        sql_lower = clean_sql.lower()
+        for col in SENSITIVE_COLUMNS:
+            # 检查 SELECT 子句中是否包含敏感列
+            if re.search(rf'\b{re.escape(col)}\b', sql_lower):
+                logger.warning(f"SQL 查询了敏感列: {col}")
+                return False, f"禁止查询敏感列: {col}"
+
+        # 5. 禁止子查询访问敏感表（只允许 SELECT，不允许 INSERT/UPDATE/DELETE 子句）
+        # 额外防御：检测多语句（分号后有第二个语句）
+        if ";" in clean_sql.rstrip(";"):
+            logger.warning("SQL 包含多语句")
+            return False, "禁止执行多语句"
 
         logger.info("SQL 校验通过")
         return True, ""
 
     @staticmethod
     def execute_sql(sql: str) -> Dict:
-        """执行 SQL 返回结果（最多 100 行）"""
+        """执行 SQL 返回结果（行数从 settings 读取）"""
+        max_rows = _settings.nl2sql.max_rows
         logger.info(f"执行 SQL: {sql[:100]}...")
         db = SessionLocal()
         try:
             result = db.execute(text(sql))
             columns = list(result.keys())
-            rows = result.fetchall()
-            rows = rows[:100]
-            data: List[Dict] = [dict(zip(columns, row)) for row in rows]
+
+            # 过滤掉敏感列（二次防御，即使 validate 放行也可能有遗漏）
+            safe_columns = [c for c in columns if c.lower() not in SENSITIVE_COLUMNS]
+            if len(safe_columns) < len(columns):
+                filtered_cols = set(columns) - set(safe_columns)
+                logger.warning(f"执行时过滤敏感列: {filtered_cols}")
+
+            rows = result.fetchmany(max_rows)
+            data: List[Dict] = []
+            for row in rows:
+                row_dict = dict(zip(columns, row))
+                # 删除敏感列的值
+                for col in SENSITIVE_COLUMNS:
+                    row_dict.pop(col, None)
+                    row_dict.pop(col.lower(), None)
+                data.append(row_dict)
+
             logger.info(f"查询返回 {len(data)} 行")
-            return {"columns": columns, "rows": data, "row_count": len(data)}
+            return {"columns": safe_columns, "rows": data, "row_count": len(data)}
         except Exception as e:
             logger.error(f"SQL 执行失败: {e}")
             return {"error": str(e)}

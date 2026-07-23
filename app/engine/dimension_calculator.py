@@ -21,8 +21,6 @@ from app.config.rules_config import (
     RISK_ASSESSMENT_MAPPING, EMOTIONAL_TRADING_PENALTY, LOSS_TOLERANCE_ADJUSTMENT,
     # 维度四
     BEHAVIOR_ABNORMAL_SCORE, BEHAVIOR_ABNORMAL_RULES,
-    # 等级映射 & 权重
-    RISK_LEVEL_MAPPING, SUITABILITY_MATRIX, DIMENSION_WEIGHTS,
 )
 
 
@@ -142,8 +140,8 @@ class RiskPrefDimension:
 
     def calc(self, customer: dict) -> dict:
         # ── 7.1 风评得分映射 ──
-        risk_level = customer.get("risk_assessment_level", "C2")
-        assessment_score = RISK_ASSESSMENT_MAPPING.get(risk_level, 10)
+        risk_level = customer.get("risk_assessment_level") or "C1"
+        assessment_score = RISK_ASSESSMENT_MAPPING.get(risk_level, 5)
 
         # ── 7.2 情绪化交易扣分 ──
         emotional_penalty = 0
@@ -254,20 +252,10 @@ class DimensionCalculator:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 等级映射
+# 等级映射（复用 score_mapper 中的实现，避免重复定义）
 # ══════════════════════════════════════════════════════════════════
 
-def map_score_to_risk_level(total_score: float) -> Tuple[str, str]:
-    """综合分 → (等级代码, 等级名称)"""
-    for min_s, max_s, code, name in RISK_LEVEL_MAPPING:
-        if min_s <= total_score <= max_s:
-            return code, name
-    return ("C5", "激进型") if total_score > 100 else ("C1", "保守型")
-
-
-def get_suitable_products(risk_level: str) -> List[str]:
-    """获取该风险等级可购买的产品等级列表"""
-    return SUITABILITY_MATRIX.get(risk_level, ["R1"])
+from app.engine.score_mapper import map_score_to_risk_level, get_suitable_products
 
 
 # ══════════════════════════════════════════════════════════════════

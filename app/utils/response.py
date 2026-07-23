@@ -31,5 +31,5 @@ def json_response(data: Any = None, message: str = "success", code: int = 200) -
             "data": data,
             "trace_id": str(uuid.uuid4()),
         },
-        status_code=200 if code < 500 else code,
+        status_code=code,
     )

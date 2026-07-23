@@ -114,7 +114,7 @@ class ProfileService:
                 "risk_pref": DimensionScore(**dimension_scores["risk_pref"]),
                 "behavior": DimensionScore(**dimension_scores["behavior"]),
             },
-            confidence_score=0.85,  # 默认，后续可扩展
+            confidence_score=self.confidence.calc_single("ai_extract"),
             circuit_breakers=cb_list,
             warnings=warnings,
             recommended_products=suitable,
@@ -142,7 +142,7 @@ class ProfileService:
                 })
                 if conflict:
                     # 冲突则更新为新标签（如果新标签胜出）
-                    if winning is tag:
+                    if winning is tag or (isinstance(winning, dict) and winning.get("tag_name") == tag.get("tag_name")):
                         old_tag.tag_value = tag["tag_value"]
                         old_tag.source = tag.get("source", old_tag.source)
                         old_tag.confidence = self.confidence.calc_single(tag.get("source", "default"))
@@ -212,16 +212,18 @@ class ProfileService:
             "trade_frequency": trade_frequency,
             "historical_return": historical_return,
             "loss_tolerance": loss_tolerance,
+            # TODO: 以下异常行为字段需从交易流水/风控数据动态获取，当前硬编码为安全值
+            # FM-04（身份异常）和 FM-05（交易熔断）依赖这些字段
             "abnormal_behaviors": [],
             "is_student": user.occupation == "在校学生",
-            "is_dishonest": False,
+            "is_dishonest": False,         # TODO: 从失信被执行人名单查询
             "is_foreign": False,
-            "id_expired_days": 0,
-            "identity_check_failed": False,
-            "on_sanction_list": False,
-            "daily_loss_pct": 0,
-            "consecutive_redeem_pct": 0,
-            "account_theft_suspected": False,
+            "id_expired_days": 0,          # TODO: 从身份证有效期计算
+            "identity_check_failed": False,  # TODO: 从联网核查结果获取
+            "on_sanction_list": False,      # TODO: 从制裁名单筛查
+            "daily_loss_pct": 0,            # TODO: 从当日交易流水计算
+            "consecutive_redeem_pct": 0,    # TODO: 从连续3日赎回记录计算
+            "account_theft_suspected": False,  # TODO: 从异常交易检测获取
             "self_assessment_level": risk_assessment.risk_level if risk_assessment else None,
         }
 
@@ -325,12 +327,12 @@ class ProfileService:
                     return "不能承受任何亏损"
                 elif "5%" in answer:
                     return "5%以内"
-                elif "10%" in answer or "20%" in answer:
-                    return "10%-20%"
-                elif "20%" in answer and "以上" in answer:
+                elif "20%" in answer and "以上" in answer:  # 更具体的条件先检查
                     return "20%-40%"
                 elif "40%" in answer:
                     return "40%以上"
+                elif "10%" in answer or "20%" in answer:
+                    return "10%-20%"
         # 未找到第4题答案，使用总分的保守推断
         total = risk_assessment.total_score or 50
         if total <= 30:

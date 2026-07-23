@@ -35,15 +35,16 @@ class SessionMemory:
 
         messages = [json.loads(m) for m in raw]
 
-        # 从旧到新累计 token，超过预算则截断
+        # 从新到旧累计 token，超过预算则截断（用 append+reverse 代替 insert(0) 避免 O(n²)）
         accumulated = 0
         result = []
         for msg in reversed(messages):
-            estimated = len(msg["content"]) // 2  # 粗略估算：2 字符 ≈ 1 token
+            estimated = max(len(msg["content"]) // 2, 1)  # 粗略估算：2 字符 ≈ 1 token，至少 1 token
             if accumulated + estimated > max_tokens:
                 break
-            result.insert(0, msg)
+            result.append(msg)
             accumulated += estimated
+        result.reverse()
 
         return result
 
@@ -79,8 +80,23 @@ class SessionMemory:
         if not messages:
             return 0
 
+        # 去重：检查该 session 是否已经归档过
+        from sqlalchemy import select, func
+        existing_count = await db.execute(
+            select(func.count()).select_from(ConversationArchive).where(
+                ConversationArchive.session_id == self.session_id
+            )
+        )
+        existing = existing_count.scalar() or 0
+        if existing >= len(messages):
+            # 已全部归档过，直接清理 Redis
+            await self.clear()
+            return 0
+
         count = 0
-        for msg in messages:
+        for i, msg in enumerate(messages):
+            if i < existing:
+                continue  # 跳过已归档的消息
             record = ConversationArchive(
                 session_id=self.session_id,
                 user_id=user_id,
@@ -92,6 +108,6 @@ class SessionMemory:
             count += 1
 
         await db.flush()
-        # 归档后清理 Redis 会话
+        # flush 成功后再清理 Redis（如果后续 commit 失败，数据已在 MySQL 中）
         await self.clear()
         return count

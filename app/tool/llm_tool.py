@@ -40,8 +40,9 @@ class LLMTool:
         self.retry_delays = settings.llm.retry_delays_list
 
         # 启动时打印配置信息（帮助诊断）
+        api_key_masked = settings.llm.openai_api_key[:6] + "***" if settings.llm.openai_api_key else "(空)"
         logger.info(f"LLMTool 初始化 | base_url={settings.llm.openai_base_url} | model={self.model}")
-        logger.info(f"LLMTool 初始化 | api_key={settings.llm.openai_api_key[:10]}...")
+        logger.info(f"LLMTool 初始化 | api_key={api_key_masked}")
         logger.info(f"LLMTool 初始化 | 已禁用自动代理检测 (trust_env=False)")
 
     async def chat(

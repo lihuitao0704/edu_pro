@@ -44,8 +44,12 @@ class DocumentParser:
             if text:
                 # 保留标题层级信息
                 if para.style.name.startswith("Heading"):
-                    level = para.style.name.replace("Heading ", "")
-                    paragraphs.append(f"{'#' * int(level)} {text}")
+                    level = para.style.name.replace("Heading ", "").strip()
+                    try:
+                        level_num = int(level)
+                    except ValueError:
+                        level_num = 1  # 无法解析层级时默认为 H1
+                    paragraphs.append(f"{'#' * level_num} {text}")
                 else:
                     paragraphs.append(text)
         return "\n\n".join(paragraphs)

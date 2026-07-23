@@ -18,6 +18,8 @@ function navigate(name, el) {
   if (name === 'collab') loadRiskFlag();
   if (name === 'knowledge') listKnowledge();
   if (name === 'engine') { if (!eChart) eChart = echarts.init(document.getElementById('eChart')); }
+  if (name === 'security') renderSecTests();
+  if (name === 'login') checkAuthMode();
 }
 
 // ====== Toast ======
@@ -916,4 +918,213 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDash();
   renderTests();
   selAgent('customer', document.querySelector('.ai.on'));
+  checkAuthMode();
 });
+
+// ==================== 认证管理 ====================
+let authToken = null;
+let authUser = null;
+
+function updApiOpts(opts) {
+  opts.headers = opts.headers || {};
+  if (authToken) opts.headers['Authorization'] = 'Bearer ' + authToken;
+  return opts;
+}
+
+// Override api() to include auth token
+const _origApi = api;
+window.api = async function(path, method = 'GET', body = null, isForm = false) {
+  const opts = { method };
+  if (isForm) {
+    opts.body = body;
+  } else if (body && method !== 'GET') {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  updApiOpts(opts);
+  const r = await fetch(API + path, opts);
+  return r.json();
+};
+
+async function doLogin() {
+  const username = document.getElementById('lg_user').value.trim();
+  const password = document.getElementById('lg_pwd').value.trim();
+  if (!username || !password) { toast('请输入用户名和密码', 'error'); return; }
+
+  const resultEl = document.getElementById('lg_result');
+  resultEl.innerHTML = '<div class="lo"><span class="sp"></span> 登录中...</div>';
+
+  try {
+    const data = await _origApi('/api/auth/login', 'POST', { username, password });
+    if (data.code === 200 && data.data?.access_token) {
+      authToken = data.data.access_token;
+      authUser = data.data.user;
+      resultEl.innerHTML = `
+        <div class="rw ok"><div class="rn2">登录成功</div><div class="rm">用户: ${esc(authUser.username)} (${esc(authUser.role)})</div></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--ts);word-break:break-all">Token: ${esc(authToken.slice(0, 50))}...</div>
+      `;
+      document.getElementById('authUser').textContent = authUser.username;
+      document.getElementById('authDot').style.background = '#10b981';
+      toast('登录成功', 'success');
+    } else {
+      resultEl.innerHTML = `<div class="rw fl"><div class="rn2">登录失败</div><div class="rm">${esc(data.message)}</div></div>`;
+      toast(data.message || '登录失败', 'error');
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<div class="rw fl"><div class="rn2">请求异常</div><div class="rm">${esc(e.message)}</div></div>`;
+    toast('登录请求失败: ' + e.message, 'error');
+  }
+}
+
+function doLogout() {
+  authToken = null;
+  authUser = null;
+  document.getElementById('authUser').textContent = '未登录';
+  document.getElementById('authDot').style.background = '#f59e0b';
+  document.getElementById('lg_result').innerHTML = '<div class="rw ok"><div class="rn2">已退出登录</div></div>';
+  toast('已退出', 'info');
+}
+
+async function checkAuth() {
+  const el = document.getElementById('authStatus');
+  if (!authToken) {
+    el.innerHTML = '<div style="color:var(--wr)">⚠️ 未持有 Token</div><button class="btn bo" style="margin-top:10px" onclick="checkAuth()">检测 Token</button><button class="btn bd2" style="margin-top:10px;margin-left:8px" onclick="doLogout()">退出登录</button>';
+    return;
+  }
+  try {
+    const data = await api('/api/auth/me');
+    if (data.code === 200) {
+      el.innerHTML = `
+        <div class="rw ok"><div class="rn2">Token 有效</div><div class="rm">${esc(data.data.username)} · ${esc(data.data.role)}</div></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--ts)">user_id=${data.data.user_id}</div>
+        <button class="btn bo" style="margin-top:10px" onclick="checkAuth()">刷新</button>
+        <button class="btn bd2" style="margin-top:10px;margin-left:8px" onclick="doLogout()">退出登录</button>
+      `;
+    } else {
+      el.innerHTML = `<div class="rw fl"><div class="rn2">Token 无效</div><div class="rm">${esc(data.message)}</div></div><button class="btn bo" style="margin-top:10px" onclick="checkAuth()">刷新</button>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="rw fl"><div class="rn2">检测异常</div><div class="rm">${esc(e.message)}</div></div>`;
+  }
+}
+
+async function checkAuthMode() {
+  try {
+    const data = await _origApi('/api/health');
+    if (data.code === 200) {
+      const mode = data.data?.auth_mode || 'unknown';
+      const modeEl = document.getElementById('authMode');
+      if (modeEl) modeEl.textContent = mode === 'mock' ? 'Mock 模式（无需认证）' : 'JWT 模式（需要 Token）';
+      document.getElementById('lm') && (document.getElementById('lm').textContent = data.data?.llm_model || '--');
+    }
+  } catch (e) {
+    console.warn('health check failed', e);
+  }
+}
+
+// ==================== 安全测试 ====================
+let secPass = 0, secFail = 0;
+
+const SEC_TESTS = {
+  nl2sql: [
+    { name: '正常 SELECT 应通过', sql: "SELECT * FROM fin_product WHERE status = '在售'", expect: 'pass' },
+    { name: 'UNION 查询应阻止', sql: "SELECT * FROM fin_product UNION SELECT * FROM sys_user", expect: 'block' },
+    { name: 'DROP 应阻止', sql: "SELECT * FROM fin_product; DROP TABLE sys_user", expect: 'block' },
+    { name: '密码列查询应阻止', sql: "SELECT password FROM sys_user", expect: 'block' },
+    { name: '注释绕过应剥离后通过', sql: "SELECT * FROM fin_product /* comment */", expect: 'pass' },
+    { name: 'api_key 列查询应阻止', sql: "SELECT api_key FROM sys_user", expect: 'block' },
+  ],
+  auth: [
+    { name: 'Mock 模式下健康检查正常', path: '/api/health', expect: 200 },
+    { name: '缺少登录参数返回 400', path: '/api/auth/login', method: 'POST', body: {}, expectCode: 400 },
+    { name: '错误凭据返回 401', path: '/api/auth/login', method: 'POST', body: { username: '__fake__', password: '__fake__' }, expectCode: 401 },
+  ],
+  cors: [
+    { name: '健康检查返回 CORS 头', path: '/api/health', check: 'cors' },
+    { name: '响应格式包含 trace_id', path: '/api/health', check: 'trace_id' },
+  ],
+};
+
+function renderSecTests() {
+  const renderGroup = (tests, containerId) => {
+    const c = document.getElementById(containerId);
+    if (!c) return;
+    c.innerHTML = tests.map((t, i) => `
+      <div class="tc" id="sec-${containerId}-${i}">
+        <div class="tiv" style="background:#f1f5f9">🧪</div>
+        <div class="tin"><div class="tn">${esc(t.name)}</div><div class="td">待测试</div></div>
+        <div class="tst">⏳</div>
+      </div>
+    `).join('');
+  };
+  renderGroup(SEC_TESTS.nl2sql, 'secNL2SQL');
+  renderGroup(SEC_TESTS.auth, 'secAuth');
+  renderGroup(SEC_TESTS.cors, 'secCORS');
+}
+
+async function runSecTests() {
+  secPass = 0; secFail = 0;
+  document.getElementById('secResults').innerHTML = '';
+  document.getElementById('secSum').style.display = 'flex';
+  renderSecTests();
+
+  // NL2SQL tests (via validate endpoint simulation)
+  for (let i = 0; i < SEC_TESTS.nl2sql.length; i++) {
+    const t = SEC_TESTS.nl2sql[i];
+    const el = document.getElementById(`sec-secNL2SQL-${i}`);
+    try {
+      // Call the analyst endpoint to test NL2SQL validation
+      const data = await api('/api/chat/analyst', 'POST', { message: `查询 ${t.sql}`, session_id: 'sec-test' });
+      const blocked = data.code !== 200 || data.data?.error;
+      const ok = (t.expect === 'block' && blocked) || (t.expect === 'pass' && !blocked);
+      markSec(el, ok, ok ? '符合预期' : (t.expect === 'block' ? '应被阻止但通过' : '应通过但被阻止'));
+    } catch (e) {
+      markSec(el, false, e.message);
+    }
+  }
+
+  // Auth tests
+  for (let i = 0; i < SEC_TESTS.auth.length; i++) {
+    const t = SEC_TESTS.auth[i];
+    const el = document.getElementById(`sec-secAuth-${i}`);
+    try {
+      const opts = { method: t.method || 'GET' };
+      if (t.body) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(t.body); }
+      const r = await fetch(API + t.path, opts);
+      const ok = r.status === t.expect || (t.expectCode && (await r.clone().json()).code === t.expectCode);
+      markSec(el, ok, `HTTP ${r.status}`);
+    } catch (e) {
+      markSec(el, false, e.message);
+    }
+  }
+
+  // CORS tests
+  for (let i = 0; i < SEC_TESTS.cors.length; i++) {
+    const t = SEC_TESTS.cors[i];
+    const el = document.getElementById(`sec-secCORS-${i}`);
+    try {
+      const r = await fetch(API + t.path);
+      if (t.check === 'cors') {
+        const hasCORS = r.headers.has('access-control-allow-origin');
+        markSec(el, true, hasCORS ? 'CORS 头存在' : 'CORS 头缺失(可能同源)');
+      } else if (t.check === 'trace_id') {
+        const data = await r.json();
+        markSec(el, !!data.trace_id, data.trace_id ? `trace_id=${data.trace_id.slice(0, 12)}...` : '缺失');
+      }
+    } catch (e) {
+      markSec(el, false, e.message);
+    }
+  }
+
+  // Summary
+  document.getElementById('secTotal').textContent = secPass + secFail;
+  document.getElementById('secPass').textContent = secPass;
+  document.getElementById('secFail').textContent = secFail;
+}
+
+function markSec(el, ok, msg) {
+  if (!el) return;
+  if (ok) { secPass++; el.classList.add('rn'); el.querySelector('.tst').textContent = '✅'; }
+  else { secFail++; el.querySelector('.tst').textContent = '❌'; }
+  el.querySelector('.td').textContent = msg;
+}

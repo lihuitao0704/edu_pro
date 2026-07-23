@@ -59,6 +59,11 @@ async def _run_calibration():
                     expired += 1
                 else:
                     # 更新 transaction_ids 里的置信度
+                    tx_ids = alert.transaction_ids or {}
+                    tx_ids["confidence"] = round(new_conf, 3)
+                    tx_ids["last_calibration"] = now.isoformat()
+                    alert.transaction_ids = tx_ids
+                    alert.update_time = now
                     updated += 1
 
         await db.flush()

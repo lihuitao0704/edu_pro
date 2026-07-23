@@ -1,5 +1,4 @@
 """业务操作 API — 转账"""
-import asyncio
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -11,33 +10,11 @@ from app.model.schemas import ApiResponse
 
 router = APIRouter()
 
-# 确保 sys_user 表有 balance 列（幂等执行，不影响已有数据）
-_balance_column_ready = False
-_balance_lock = asyncio.Lock()
-
-
-async def _ensure_balance_column(db: AsyncSession):
-    global _balance_column_ready
-    if _balance_column_ready:
-        return
-    async with _balance_lock:
-        if _balance_column_ready:  # double-check after acquiring lock
-            return
-        try:
-            await db.execute(text(
-                "ALTER TABLE sys_user ADD COLUMN balance DECIMAL(18,2) NOT NULL DEFAULT 0.00"
-            ))
-            await db.commit()
-        except Exception:
-            # 列已存在则忽略
-            pass
-        _balance_column_ready = True
-
 
 @router.post("/transfer")
 async def transfer_funds(body: dict, db: AsyncSession = Depends(get_db)) -> ApiResponse:
     """转账：校验余额 → 扣款 → 入账 → 双方流水"""
-    await _ensure_balance_column(db)
+    # balance 列已在 init_db() 启动时确保存在
 
     from_id = body.get("from_customer_id")
     to_id = body.get("to_customer_id")

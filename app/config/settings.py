@@ -41,9 +41,13 @@ class RedisSettings(BaseSettings):
 class MilvusSettings(BaseSettings):
     host: str = Field(default="127.0.0.1", alias="MILVUS_HOST")
     port: int = Field(default=19530, alias="MILVUS_PORT")
-    dim: int = Field(default=1536, alias="MILVUS_DIM")
+    dim: int = Field(default=1024, alias="MILVUS_DIM")
     top_k: int = Field(default=5, alias="MILVUS_TOP_K")
     score_threshold: float = Field(default=0.65, alias="MILVUS_SCORE_THRESHOLD")
+    timeout: int = Field(default=5, alias="MILVUS_TIMEOUT")
+    collection_faq: str = Field(default="faq_knowledge", alias="MILVUS_COLLECTION_FAQ")
+    collection_product: str = Field(default="product_knowledge", alias="MILVUS_COLLECTION_PRODUCT")
+    collection_policy: str = Field(default="policy_knowledge", alias="MILVUS_COLLECTION_POLICY")
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
@@ -70,7 +74,7 @@ class LLMSettings(BaseSettings):
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_model_chat: str = Field(default="gpt-4o", alias="OPENAI_MODEL_CHAT")
     ollama_embed_url: str = Field(default="http://127.0.0.1:11434", alias="OLLAMA_EMBED_URL")
-    ollama_model_embedding: str = Field(default="bge-m3", alias="OLLAMA_MODEL_EMBEDDING")
+    ollama_model_embedding: str = Field(default="bge-m3", alias="OPENAI_MODEL_EMBEDDING")
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=2048, alias="OPENAI_MAX_TOKENS")
     openai_timeout: int = Field(default=30, alias="OPENAI_TIMEOUT")
@@ -96,6 +100,7 @@ class ProfileSettings(BaseSettings):
     confidence_evidence_gain: float = Field(default=0.05, alias="PROFILE_CONFIDENCE_EVIDENCE_GAIN")
     confidence_gain_max: float = Field(default=0.3, alias="PROFILE_CONFIDENCE_GAIN_MAX")
     confidence_conflict_penalty: float = Field(default=0.1, alias="PROFILE_CONFIDENCE_CONFLICT_PENALTY")
+    drift_threshold: float = Field(default=0.6, alias="PROFILE_DRIFT_THRESHOLD")
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
@@ -122,6 +127,49 @@ class LogSettings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+class SecuritySettings(BaseSettings):
+    """安全配置"""
+    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+    # 开发阶段默认允许所有，生产环境请在 .env 中配置白名单:
+    # CORS_ORIGINS=http://localhost:3000,https://wealth.example.com
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+class NL2SQLSettings(BaseSettings):
+    max_rows: int = Field(default=100, alias="NL2SQL_MAX_ROWS")
+    blocked_keywords: str = Field(default="DROP,DELETE,UPDATE,INSERT,ALTER,TRUNCATE,CREATE", alias="NL2SQL_BLOCKED_KEYWORDS")
+
+    @property
+    def blocked_keywords_list(self) -> list[str]:
+        return [k.strip() for k in self.blocked_keywords.split(",") if k.strip()]
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+class SSESettings(BaseSettings):
+    enabled: bool = Field(default=True, alias="SSE_ENABLED")
+    chunk_size: int = Field(default=50, alias="SSE_CHUNK_SIZE")
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+class ChunkSettings(BaseSettings):
+    size: int = Field(default=512, alias="CHUNK_SIZE")
+    overlap: int = Field(default=64, alias="CHUNK_OVERLAP")
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+class LongCatSettings(BaseSettings):
+    api_key: str = Field(default="", alias="LONGCAT_API_KEY")
+    base_url: str = Field(default="https://api.longcat.chat/openai", alias="LONGCAT_BASE_URL")
+    model: str = Field(default="LongCat-2.0", alias="LONGCAT_MODEL")
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
 class Settings(BaseSettings):
     mysql: MySQLSettings = MySQLSettings()
     redis: RedisSettings = RedisSettings()
@@ -134,6 +182,11 @@ class Settings(BaseSettings):
     recommendation: RecommendationSettings = RecommendationSettings()
     graphrag: GraphRAGSettings = GraphRAGSettings()
     log: LogSettings = LogSettings()
+    nl2sql: NL2SQLSettings = NL2SQLSettings()
+    sse: SSESettings = SSESettings()
+    chunk: ChunkSettings = ChunkSettings()
+    longcat: LongCatSettings = LongCatSettings()
+    security: SecuritySettings = SecuritySettings()
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

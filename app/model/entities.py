@@ -179,7 +179,7 @@ class FinHoldings(Base):
     current_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
     profit_loss: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
     profit_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4))
-    status: Mapped[Optional[str]] = mapped_column(String(16), default="持有")
+    status: Mapped[Optional[str]] = mapped_column(String(16), default="持有中")
     create_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
     update_time: Mapped[Optional[datetime]] = mapped_column(DateTime)
 

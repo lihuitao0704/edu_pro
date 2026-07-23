@@ -145,7 +145,7 @@ class AdvisorAgent(BaseAgent):
             timeout=60,
             max_retries=1,
             openai_api_key=self._settings.llm.openai_api_key,
-            openai_api_base=self._settings.llm.openai_base_url,
+            base_url=self._settings.llm.openai_base_url,
         )
 
         # ── 初始化内置工具（需要 db session 的动态工具） ──

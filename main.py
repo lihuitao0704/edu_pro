@@ -81,14 +81,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+# CORS — 从配置读取允许的域名（生产环境请在 .env 中设置 CORS_ORIGINS 白名单）
+_cors_origins = settings.security.cors_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# JWT 认证中间件
+# AUTH_MOCK_MODE=true 时跳过认证（开发阶段兼容）；生产环境设为 false
+from app.middleware.auth import JWTAuthMiddleware
+app.add_middleware(JWTAuthMiddleware)
 
 # 全局异常处理中间件
 from app.middleware.exception_handler import register_exception_handlers
@@ -108,6 +114,13 @@ async def index():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 # ---- 注册路由 ----
+# 认证路由（公开，无需 Token）
+try:
+    from app.api.auth import router as auth_router
+    app.include_router(auth_router, prefix="/api/auth", tags=["认证"])
+except Exception as e:
+    print(f"  [WARN] 认证路由加载失败: {e}")
+
 try:
     from app.api.profile import router as profile_router
     app.include_router(profile_router, prefix="/api/profile", tags=["客户画像"])

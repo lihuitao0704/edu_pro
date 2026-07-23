@@ -12,9 +12,9 @@
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from langchain.agents import create_agent
+from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from app.agent.base_agent import BaseAgent
 from app.config.settings import get_settings
@@ -111,18 +111,24 @@ class ProfileAgent(BaseAgent):
             timeout=self._settings.llm.openai_timeout,
             max_retries=self._settings.llm.openai_max_retries,
             openai_api_key=self._settings.llm.openai_api_key,
-            openai_api_base=self._settings.llm.openai_base_url,
+            base_url=self._settings.llm.openai_base_url,
         )
 
         # ── 初始化工具 ──
         self._profile_tool = ProfileTool(db=db)
 
         # ── 创建 LangChain Agent ──
-        self._agent = create_agent(
-            model=self._llm,
+        self._prompt = ChatPromptTemplate.from_messages([
+            ("system", PROFILE_AGENT_SYSTEM_PROMPT),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ])
+        agent = create_tool_calling_agent(
+            llm=self._llm,
             tools=[self._profile_tool],
-            system_prompt=PROFILE_AGENT_SYSTEM_PROMPT,
+            prompt=self._prompt,
         )
+        self._agent = AgentExecutor(agent=agent, tools=[self._profile_tool])
 
     # ═══════════════════════════════════════════════════════════════
     # 对外接口
@@ -144,13 +150,11 @@ class ProfileAgent(BaseAgent):
         # 构造发送给 LLM 的消息
         user_message = self._build_user_message(message, customer_id)
         try:
-            result = await self._agent.ainvoke(
-                {"messages": [HumanMessage(content=user_message)]}
-            )
+            result = await self._agent.ainvoke({"input": user_message})
         except Exception as e:
             logger.error(f"Agent 执行失败: {e}")
             return {
-                "reply": f"画像分析服务暂时不可用，请稍后重试。错误详情：{str(e)}",
+                "reply": "画像分析服务暂时不可用，请稍后重试。",
                 "session_id": self.session_id,
             }
 
@@ -189,20 +193,20 @@ class ProfileAgent(BaseAgent):
 
     @staticmethod
     def _extract_reply(result: dict) -> str:
-        """从 Agent 结果中提取最后一条 AI 消息"""
+        """从 Agent 结果中提取 AI 回复"""
+        output = result.get("output", "")
+        if output and isinstance(output, str):
+            return output
+
+        # 兜底：从 messages 中找最后一条 AI 消息
         messages = result.get("messages", [])
-        # 从后往前找最后一条 AI 消息
         for msg in reversed(messages):
-            # LangChain v1 中 AI 消息可能有 content 属性
-            content = getattr(msg, "content", None)
-            if content and isinstance(content, str) and len(content) > 20:
-                return content
-            # 也可能有 type 属性
             msg_type = getattr(msg, "type", "")
+            content = getattr(msg, "content", None)
             if msg_type == "ai" and content:
                 return content
 
-        # 兜底：返回最后一条有内容的消息
+        # 再兜底：返回最后一条有内容的消息
         for msg in reversed(messages):
             content = getattr(msg, "content", None)
             if content:

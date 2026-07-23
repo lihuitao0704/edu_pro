@@ -55,9 +55,9 @@ class SpecialCaseHandler:
             result.adjustments.append(INCOMPLETE_INFO_RULES["联系方式失效"])
             missing_count += 1
 
-        # 多项缺失
-        if missing_count > 3:
-            result.adjustments.append(INCOMPLETE_INFO_RULES["多项缺失(>3项)"])
+        # 多项缺失（3项及以上触发人工审核）
+        if missing_count >= 3:
+            result.adjustments.append(INCOMPLETE_INFO_RULES["多项缺失(≥3项)"])
             result.requires_manual_review = True
 
     def _handle_self_assessment_conflict(self, data: dict, ai_level: str, result: SpecialCaseResult):

@@ -112,7 +112,7 @@ class GraphRAGPipeline:
             timeout=settings.llm.openai_timeout,
             max_retries=settings.llm.openai_max_retries,
             openai_api_key=settings.llm.openai_api_key,
-            openai_api_base=settings.llm.openai_base_url,
+            base_url=settings.llm.openai_base_url,
         )
 
         # Embedding 客户端（向量检索用）
@@ -233,6 +233,12 @@ class GraphRAGPipeline:
                     CUSTOMERS_BY_INDUSTRY_AND_RISK, params
                 )
                 for row in data:
+                    # 基于匹配质量动态计算图谱分数
+                    match_count = sum([
+                        1 if industry and row.get("industry_name") == industry else 0,
+                        1 if risk_level and row.get("risk_level") == risk_level else 0,
+                    ])
+                    graph_score = 0.6 + 0.15 * match_count  # 0.6(部分) / 0.75(单匹配) / 0.9(全匹配)
                     results.append({
                         "type": "customer_industry",
                         "customer_id": row.get("customer_id"),
@@ -242,7 +248,7 @@ class GraphRAGPipeline:
                         "risk_description": row.get("risk_description"),
                         "industry": row.get("industry_name"),
                         "holdings": row.get("holdings", []),
-                        "graph_score": 0.9,  # 精确匹配给高分
+                        "graph_score": graph_score,
                         "source": "graph",
                     })
             except Exception as e:
@@ -310,7 +316,7 @@ class GraphRAGPipeline:
             )
         try:
             resp = await self._embedding_client.embeddings.create(
-                model=settings.llm.openai_model_embedding,
+                model=settings.llm.ollama_model_embedding,
                 input=text,
             )
             return resp.data[0].embedding
@@ -332,7 +338,7 @@ class GraphRAGPipeline:
                 resp = await client.post(
                     f"{ollama_url}/api/embeddings",
                     json={
-                        "model": settings.llm.openai_model_embedding,
+                        "model": settings.llm.ollama_model_embedding,
                         "prompt": text,
                     },
                 )
@@ -427,46 +433,75 @@ class GraphRAGPipeline:
         vector_results: List[dict],
     ) -> List[dict]:
         """
-        加权融合排序
+        加权融合排序（含去重 + 互证加分）
 
         - 图谱结果以 graph_score（0-1）参与
         - 向量结果以 vector_score（0-1，已归一化）参与
         - 综合分 = graph_weight × graph_score + vector_weight × vector_score
+        - 如果同一实体在两个来源都出现，给予 1.2x 互证加分并去重
         """
-        merged = []
+        # 用于去重的 key → merged item 映射
+        merged_map: Dict[str, dict] = {}
 
-        # 图谱结果：graph_score 已是结构化精确度
+        # 图谱结果
         for item in graph_results:
-            merged.append({
+            # 用 customer_id 或 name 作为去重 key
+            dedup_key = (
+                str(item.get("customer_id", ""))
+                or item.get("name", "")
+                or item.get("content", "")[:80]
+            )
+            if dedup_key in merged_map:
+                # 已存在，取更高分
+                existing = merged_map[dedup_key]
+                existing["graph_score"] = max(existing["graph_score"], item.get("graph_score", 0.5))
+                continue
+            merged_map[dedup_key] = {
                 "content": json.dumps(item, ensure_ascii=False, default=str),
                 "graph_score": item.get("graph_score", 0.5),
                 "vector_score": 0,
-                "final_score": self.graph_weight * item.get("graph_score", 0.5),
+                "final_score": 0,
                 "source": "graph",
                 "type": item.get("type", ""),
-            })
+                "title": item.get("name", item.get("customer_name", "")),
+                "_dedup_key": dedup_key,
+            }
 
         # 向量结果
         for item in vector_results:
             vs = item.get("vector_score", 0)
-            merged.append({
+            dedup_key = (item.get("title", "") or item.get("content", "")[:80]).strip()
+            if dedup_key in merged_map:
+                # 同一实体在两个来源都出现 → 互证加分
+                existing = merged_map[dedup_key]
+                existing["vector_score"] = max(existing["vector_score"], vs)
+                existing["source"] = "both"
+                continue
+            merged_map[dedup_key] = {
                 "content": item.get("content", ""),
                 "title": item.get("title", ""),
                 "graph_score": 0,
                 "vector_score": vs,
-                "final_score": self.vector_weight * vs,
+                "final_score": 0,
                 "source": "vector",
                 "collection": item.get("collection", ""),
-            })
+                "_dedup_key": dedup_key,
+            }
 
-        # 综合分重新计算（考虑双向加成）
+        # 计算综合分（互证项给予 1.2x 加成）
+        for item in merged_map.values():
+            base = (
+                self.graph_weight * item["graph_score"]
+                + self.vector_weight * item["vector_score"]
+            )
+            if item["source"] == "both":
+                base *= 1.2  # 互证加分
+            item["final_score"] = base
+
+        merged = sorted(merged_map.values(), key=lambda x: x["final_score"], reverse=True)
+        # 移除内部去重 key
         for item in merged:
-            if item["source"] == "graph":
-                item["final_score"] = self.graph_weight * item["graph_score"]
-            else:
-                item["final_score"] = self.vector_weight * item["vector_score"]
-
-        merged.sort(key=lambda x: x["final_score"], reverse=True)
+            item.pop("_dedup_key", None)
         return merged
 
     # ═══════════════════════════════════════════════════════════
@@ -544,8 +579,12 @@ class GraphRAGPipeline:
             vector_context=vector_ctx or "无",
         )
 
-        # 如果两路都没有结果
-        if not graph_ctx and not vector_ctx:
+        # 如果两路都没有结果（_format_* 返回的固定空提示文本）
+        _EMPTY_GRAPH_INDICATORS = ("图谱查询未返回结果", "无图谱查询结果")
+        _EMPTY_VECTOR_INDICATORS = ("未检索到相关文档片段",)
+        graph_empty = any(ind in graph_ctx for ind in _EMPTY_GRAPH_INDICATORS)
+        vector_empty = any(ind in vector_ctx for ind in _EMPTY_VECTOR_INDICATORS)
+        if graph_empty and vector_empty:
             return (
                 "抱歉，未能在知识图谱和文档库中找到与您问题相关的信息。\n\n"
                 f"您的问题是：「{query}」\n\n"

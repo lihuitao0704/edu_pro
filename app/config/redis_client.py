@@ -2,9 +2,10 @@
 Redis 同步客户端 — 用于 NL2SQL 缓存等场景
 """
 
-import os
 import redis
 import logging
+
+from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,12 @@ def get_redis_client() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
         try:
+            settings = get_settings()
             _redis_client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "127.0.0.1"),
-                port=int(os.getenv("REDIS_PORT", "6379")),
-                password=os.getenv("REDIS_PASSWORD") or None,
-                db=int(os.getenv("REDIS_DB", "0")),
+                host=settings.redis.host,
+                port=settings.redis.port,
+                password=settings.redis.password or None,
+                db=settings.redis.db,
                 decode_responses=True,
                 socket_connect_timeout=2,
                 socket_timeout=2,
