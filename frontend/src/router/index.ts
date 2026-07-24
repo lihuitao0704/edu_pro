@@ -14,6 +14,7 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
         children: [
           { path: '', redirect: '/chat' },
           { path: 'chat', component: () => import('../views/ChatView.vue') },
+          { path: 'dashboard', component: () => import('../views/DashboardView.vue') },
           { path: 'profile', component: () => import('../views/ProfileView.vue') },
           { path: 'advisor', component: () => import('../views/AdvisorWorkspaceView.vue') },
           { path: 'operations', component: () => import('../views/OperationsView.vue') },
