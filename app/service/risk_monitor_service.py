@@ -54,6 +54,11 @@ class RiskMonitorService:
             bool(triggered_ids & _extract_rule_ids(a.get("trigger_rules", [])))
             for a in history
         )
+        # 权重叠加：多条中低危规则累计权重≥2.5 → 升级为high
+        total_weight = sum(r.weight for r in triggered)
+        if total_weight >= 2.5:
+            return "high"
+
         adjusted = count + (1 if is_repeat else 0)
         if adjusted == 1 and not is_repeat:
             return "low"
@@ -62,8 +67,9 @@ class RiskMonitorService:
         return "high"
 
     def build_alert(self, tx: dict, triggered: list[BaseAMLRule], level: str, confidence: float) -> dict:
-        """组装预警对象"""
-        rule_list = [{"rule_id": r.rule_id, "rule_name": r.rule_name, "risk_level": r.risk_level} for r in triggered]
+        """组装预警对象（含可解释性增强：每条规则带触发条件说明）"""
+        rule_list = [{"rule_id": r.rule_id, "rule_name": r.rule_name, "risk_level": r.risk_level,
+                      "trigger_condition": r.trigger_condition} for r in triggered]
         names = "、".join(r.rule_name for r in triggered)
         rec = {"low": "记录并持续关注", "medium": "1个工作日内核实", "high": "立即核实，必要时冻结上报"}
         return {
