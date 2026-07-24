@@ -191,14 +191,36 @@ class AdvisorAgent(BaseAgent):
         """
         customer_id = kwargs.get("customer_id")
 
-        # 构造消息（注入 customer_id 上下文）
+        # ── 记忆召回：短期记忆（同 session 多轮） ──
+        history_messages: list[HumanMessage] = []
+        if self.memory:
+            try:
+                history = await self.memory.get_messages(max_tokens=2048)
+                for msg in history[-6:]:  # 最多注入 3 轮（6 条）
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if not content:
+                        continue
+                    if role == "user":
+                        history_messages.append(HumanMessage(content=content))
+                    else:
+                        from langchain_core.messages import AIMessage
+
+                        history_messages.append(AIMessage(content=content))
+            except Exception as e:
+                logger.warning(f"投顾Agent记忆召回失败: {e}")
+
+        # 构造当前用户消息（注入 customer_id 上下文）
         user_message = self._build_user_message(message, customer_id)
+
+        # 组装完整消息列表：历史 + 当前
+        all_messages = history_messages + [HumanMessage(content=user_message)]
 
         try:
             import asyncio
             result = await asyncio.wait_for(
                 self._agent.ainvoke(
-                    {"messages": [HumanMessage(content=user_message)]},
+                    {"messages": all_messages},
                     config={"recursion_limit": 6},
                 ),
                 timeout=90,
@@ -229,6 +251,14 @@ class AdvisorAgent(BaseAgent):
         customer_profile = self._extract_tool_result(result, "profile_tool")
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
+
+        # ── 记忆写入：保存本轮对话到短期记忆 ──
+        if self.memory:
+            try:
+                await self.memory.add_message("user", message)
+                await self.memory.add_message("assistant", reply)
+            except Exception as e:
+                logger.warning(f"投顾Agent记忆写入失败: {e}")
 
         return {
             "reply": reply,
