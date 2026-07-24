@@ -53,8 +53,26 @@ export interface RiskAlert {
   alert_id: string
   customer_id: number
   alert_level: 'low' | 'medium' | 'high'
-  trigger_rules: Array<{ rule_id: string; rule_name: string }>
+  trigger_rules: Array<{ rule_id: string; rule_name: string; trigger_condition?: string }>
   summary: string
   status: string
   created_at: string
+  confidence?: number
+  alert_type?: string
+}
+
+export interface RiskDailyReport {
+  date: string
+  summary: {
+    total_alerts: number; high_new: number; medium_new: number; low_new: number
+    resolved_today: number; pending_total: number
+  }
+  top_high_risk_customers: Array<{ customer_id: number; count: number }>
+  top_rules: Array<{ rule_id: string; count: number }>
+}
+
+export interface RiskStatistics {
+  trend: Array<{ date: string; count: number }>
+  level_distribution: { high: number; medium: number; low: number }
+  total: number
 }

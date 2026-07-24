@@ -12,6 +12,11 @@
         v-if="message.response?.metadata.recommendation"
         :recommendation="message.response.metadata.recommendation"
       />
+      <!-- 风评失效/缺失提示入口 -->
+      <div v-if="message.role === 'assistant' && hasAssessmentPrompt" class="assessment-inline-cta">
+        <span>📋 你的风险评估可能已失效或不存在</span>
+        <button type="button" @click="emit('open-assessment')">前往风评问卷 →</button>
+      </div>
       <div v-if="message.response?.suggestions.length" class="action-suggestions">
         <span>推荐操作</span>
         <button v-for="suggestion in message.response.suggestions" :key="suggestion" type="button">
@@ -31,6 +36,8 @@ import type { ChatMessage } from '../stores/conversation'
 import { renderAssistantMarkdown } from '../utils/markdown'
 
 const props = defineProps<{ message: ChatMessage }>()
+const emit = defineEmits<{ 'open-assessment': [] }>()
+
 const agentNames: Record<string, string> = {
   investment: '投资建议引擎',
   risk: '风险评估引擎',
@@ -40,6 +47,13 @@ const agentNames: Record<string, string> = {
 const agentName = computed(() => agentNames[props.message.response?.agent || ''] || '金融智能引擎')
 const confidence = computed(() => Math.round((props.message.response?.confidence || 0) * 100))
 const assistantHtml = computed(() => renderAssistantMarkdown(props.message.content))
+
+// 检测AI回复中是否提及风评失效/不存在/建议测评
+const hasAssessmentPrompt = computed(() => {
+  const text = props.message.content || ''
+  const keywords = ['风评', '风险评估', '测评', '风险测评', '风险问卷', '适当性评估', '评估已失效', '评估不存在', '及时评测', '完成风险']
+  return keywords.some(kw => text.includes(kw))
+})
 </script>
 
 <style scoped>
@@ -56,4 +70,38 @@ const assistantHtml = computed(() => renderAssistantMarkdown(props.message.conte
 .assistant-markdown :deep(code) { padding: 1px 5px; border-radius: 4px; color: #bae6fd; background: #0d263e; font-family: Consolas, monospace; }
 .assistant-markdown :deep(hr) { border: 0; border-top: 1px solid #31516d; margin: 14px 0; }
 .assistant-markdown :deep(strong) { color: #e1f3ff; }
+
+/* 风评失效/不存在入口 */
+.assessment-inline-cta {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(245,158,11,.35);
+  border-radius: 10px;
+  background: rgba(245,158,11,.07);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.assessment-inline-cta span {
+  color: #fcd58a;
+  font-size: 13px;
+  font-weight: 500;
+}
+.assessment-inline-cta button {
+  padding: 8px 14px;
+  border: 1px solid #0b7f78;
+  border-radius: 8px;
+  color: #fff;
+  background: #0b7f78;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .2s;
+}
+.assessment-inline-cta button:hover {
+  background: #086f69;
+}
 </style>

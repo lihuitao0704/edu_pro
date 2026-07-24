@@ -87,7 +87,7 @@ function normalizeUnifiedChatResponse(response: UnifiedChatPayload): ChatRespons
     answer: response.reply,
     agent: response.agent,
     confidence: response.confidence,
-    suggestions: recommendation ? ['查看方案详情', '比较同类产品', '预约专属顾问'] : ['继续咨询', '查看服务记录'],
+    suggestions: recommendation ? ['查看方案详情', '比较同类产品', '预约专属顾问'] : [],
     metadata: { risk_level: response.data?.risk_level, recommendation, session_id: response.session_id },
   }
 }

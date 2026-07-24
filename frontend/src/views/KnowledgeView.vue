@@ -1,12 +1,12 @@
 <template>
   <div class="page-stack">
     <section class="page-intro">
-      <div><span class="eyebrow">KNOWLEDGE OPERATIONS</span><h2>让 Agent 使用可信知识</h2><p>文档上传后自动完成解析、切片、向量化和来源追踪。</p></div>
+      <div><h2>让 Agent 使用可信知识</h2><p>文档上传后自动完成解析、切片、向量化和来源追踪。</p></div>
       <div class="milvus-state" :class="{ online: status?.milvus_connected }"><i /><span>Milvus</span><strong>{{ status?.milvus_connected ? 'ONLINE' : 'OFFLINE' }}</strong></div>
     </section>
     <section class="knowledge-grid">
       <div class="surface-card upload-card">
-        <div class="card-heading"><span class="eyebrow">INGEST DOCUMENT</span><h3>上传知识文档</h3></div>
+        <div class="card-heading"><h3>上传知识文档</h3></div>
         <label class="drop-zone">
           <input type="file" accept=".txt,.md,.docx" @change="selectFile" />
           <span class="upload-glyph">＋</span>
@@ -17,7 +17,7 @@
         <button class="primary-button" :disabled="!file || uploading" @click="upload">{{ uploading ? '正在入库…' : '上传并向量化' }}</button>
       </div>
       <div class="surface-card collection-card">
-        <div class="card-heading"><span class="eyebrow">VECTOR COLLECTIONS</span><h3>向量集合状态</h3></div>
+        <div class="card-heading"><h3>向量集合状态</h3></div>
         <div class="collection-list">
           <div v-for="(count, name) in status?.collections" :key="name"><span><i />{{ name }}</span><strong>{{ count ?? '—' }}</strong></div>
         </div>
@@ -25,7 +25,7 @@
     </section>
     <ErrorAlert :message="error" />
     <section class="surface-card">
-      <div class="card-heading split"><div><span class="eyebrow">DOCUMENT LIBRARY</span><h3>知识文档</h3></div><button class="secondary-button" @click="load">刷新</button></div>
+      <div class="card-heading split"><div><h3>知识文档</h3></div><button class="secondary-button" @click="load">刷新</button></div>
       <LoadingPanel v-if="loading" />
       <div v-else class="knowledge-list">
         <article v-for="item in items" :key="item.id">

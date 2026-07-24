@@ -1,6 +1,6 @@
 <template>
   <section class="risk-score-trend surface-card">
-    <div class="card-heading split"><div><span class="eyebrow">RISK SCORE HISTORY</span><h3>历次风险评估趋势</h3></div><span class="trend-caption">综合评分与四维度演变</span></div>
+    <div class="card-heading split"><div><h3>历次风险评估趋势</h3></div><span class="trend-caption">综合评分与四维度演变</span></div>
     <div v-if="!records.length" class="trend-empty">暂无评估记录</div>
     <div v-else ref="chartElement" class="risk-score-chart" />
   </section>

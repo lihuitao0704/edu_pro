@@ -1,7 +1,7 @@
 <template>
   <div class="page-stack">
     <section class="page-intro">
-      <div><span class="eyebrow">CUSTOMER 360</span><h2>用户画像</h2><p>聚合基础属性、风险偏好、投资经验和行为信号。</p></div>
+      <div><h2>用户画像</h2><p>聚合基础属性、风险偏好、投资经验和行为信号。</p></div>
       <form v-if="auth.user?.role !== '客户'" class="inline-search" @submit.prevent="load">
         <input v-model.number="customerId" type="number" min="1" placeholder="客户 ID" />
         <button class="primary-button">查询画像</button>
@@ -13,7 +13,7 @@
     <template v-else-if="profile">
       <section class="profile-hero">
         <div class="avatar-orbit"><span>{{ String(profile.customer_id).padStart(2, '0') }}</span></div>
-        <div><span class="eyebrow">客户编号 {{ profile.customer_id }}</span><h2>{{ profile.risk_level || '待评估' }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
+        <div><h2>{{ profile.risk_level || '待评估' }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
         <div class="risk-seal" :data-level="profile.risk_flag"><span>风险标记</span><strong>{{ riskFlagLabel }}</strong></div>
       </section>
       <section class="metric-grid profile-metric-grid">
@@ -24,7 +24,7 @@
       </section>
       <section class="two-column">
         <div class="surface-card">
-          <div class="card-heading"><span class="eyebrow">DIMENSION SCORE</span><h3>四维度能力雷达</h3></div>
+          <div class="card-heading"><h3>四维度能力雷达</h3></div>
           <div v-for="dimension in dimensions" :key="dimension.label" class="score-row">
             <span>{{ dimension.label }}</span>
             <div><i :style="{ width: `${dimension.value * 4}%` }" /></div>
@@ -32,7 +32,7 @@
           </div>
         </div>
         <div class="surface-card">
-          <div class="card-heading"><span class="eyebrow">PROFILE TAGS</span><h3>关键研判标签</h3></div>
+          <div class="card-heading"><h3>关键研判标签</h3></div>
           <div class="tag-cloud">
             <span>{{ profile.risk_level || '待评估' }}</span>
             <span>{{ profile.investment_experience || '经验待补充' }}</span>
@@ -117,3 +117,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => stopProfileUpdates())
 </script>
+
+<style scoped>
+.profile-hero h2 { font-size: 32px; }
+.score-row span { color: #94a3b8; }
+.score-row strong { color: #e5edf9; }
+</style>

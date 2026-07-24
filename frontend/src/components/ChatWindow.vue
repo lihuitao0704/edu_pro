@@ -17,17 +17,17 @@
           <button v-for="prompt in prompts" :key="prompt" type="button" @click="ask(prompt)">{{ prompt }}</button>
         </div>
       </div>
-      <MessageCard v-for="(message, index) in messages" :key="index" :message="message" />
+      <MessageCard v-for="(message, index) in messages" :key="index" :message="message" @open-assessment="emit('open-assessment')" />
       <div v-if="loading" class="assistant-loading"><i /> 正在协调金融智能服务…</div>
     </div>
 
     <p v-if="error" class="chat-error">{{ error }}</p>
     <form class="chat-composer" @submit.prevent="send">
-      <textarea v-model="input" rows="2" placeholder="例如：我有 50 万闲置资金，希望稳健增值" @keydown.enter.exact.prevent="send" />
-      <div>
-        <span>建议仅供参考，具体投资请以适当性评估与产品文件为准</span>
+      <div class="composer-row">
+        <textarea v-model="input" rows="1" placeholder="例如：我有 50 万闲置资金，希望稳健增值" @keydown.enter.exact.prevent="send" />
         <button class="finance-primary" :disabled="!input.trim() || loading">{{ loading ? '分析中' : '发送咨询' }}</button>
       </div>
+      <span class="composer-hint">建议仅供参考，具体投资请以适当性评估与产品文件为准</span>
     </form>
   </section>
 </template>
@@ -40,6 +40,7 @@ import MessageCard from './MessageCard.vue'
 import { useConversationStore } from '../stores/conversation'
 
 const props = withDefaults(defineProps<{ userId?: string | number; userRole?: string; customerName?: string }>(), { userId: 0, userRole: '客户', customerName: '' })
+const emit = defineEmits<{ 'open-assessment': [] }>()
 const conversations = useConversationStore()
 const userKey = computed(() => String(props.userId))
 const session = computed(() => conversations.sessionFor(userKey.value))
