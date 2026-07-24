@@ -163,6 +163,7 @@ class FinRiskAlert(Base):
     status: Mapped[Optional[str]] = mapped_column(String(16), default="pending", comment="pending/processing/resolved/false_positive")
     handler_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     handle_result: Mapped[Optional[str]] = mapped_column(Text)
+    reminder_key: Mapped[Optional[str]] = mapped_column(String(64), unique=True, comment="scheduler idempotency key")
     create_time: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="创建时间")
     update_time: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="更新时间")
 

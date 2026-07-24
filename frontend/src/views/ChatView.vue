@@ -8,7 +8,7 @@
       </div>
       <div class="chat-capabilities"><span>产品咨询</span><span>投资建议</span><span>风险评估</span><span>账户服务</span></div>
     </section>
-    <ChatWindow :user-id="auth.user?.user_id || 0" :user-role="auth.user?.role || '客户'" />
+    <ChatWindow :user-id="auth.user?.user_id || 0" :user-role="auth.user?.role || '客户'" :customer-name="auth.user?.real_name || auth.user?.username || ''" />
   </div>
 </template>
 

@@ -1,10 +1,13 @@
 """风险评估 API 路由"""
 
 import logging
+from datetime import date
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.service.risk_service import RiskService
+from app.model.entities import RiskAssessment
 from app.model.schemas import AssessmentRequest, SuitabilityCheckRequest, TransactionEvent, AlertHandleRequest
 from app.utils.response import success, error
 from app.utils.exceptions import ProfileNotFound
@@ -16,6 +19,28 @@ from app.security.authorization import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.get("/assessment-status")
+async def assessment_status(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("客户", "理财顾问", "管理员")),
+):
+    """Expose the current customer's assessment validity for login-time reminders."""
+    customer_id = authenticated_actor_id(user)
+    assessment = (await db.execute(
+        select(RiskAssessment)
+        .where(RiskAssessment.customer_id == customer_id)
+        .order_by(RiskAssessment.create_time.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    valid_until = assessment.valid_until if assessment else None
+    needs_assessment = valid_until is None or valid_until < date.today()
+    return success(data={
+        "customer_id": customer_id,
+        "needs_assessment": needs_assessment,
+        "valid_until": valid_until.isoformat() if valid_until else None,
+    })
 
 
 @router.get("/questionnaire")

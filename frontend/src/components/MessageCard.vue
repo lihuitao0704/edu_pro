@@ -25,15 +25,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import type { ChatResponse } from '../api/chat'
 import RecommendationCard from './RecommendationCard.vue'
-
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  response?: ChatResponse
-  isMock?: boolean
-}
+import type { ChatMessage } from '../stores/conversation'
 
 const props = defineProps<{ message: ChatMessage }>()
 const agentNames: Record<string, string> = {

@@ -5,12 +5,12 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.config.database import async_session_factory
-from app.model.entities import FinRiskAlert
+from app.model.entities import FinRiskAlert, RiskAssessment
 from app.engine.confidence import ConfidenceCalculator
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ _confidence = ConfidenceCalculator()
 def _weekly_calibration():
     """每周日执行：重算所有待处理预警的置信度，标记过期预警"""
     import asyncio
-    asyncio.create_task(_run_calibration())
+    asyncio.run(_run_calibration())
 
 
 async def _run_calibration():
@@ -66,8 +66,41 @@ async def _run_calibration():
                     alert.update_time = now
                     updated += 1
 
+        expiry_reminders = await _create_expiry_reminders(db)
         await db.flush()
-        logger.info(f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, 更新{updated}条")
+        await db.commit()
+        logger.info(f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, 更新{updated}条, 风评提醒{expiry_reminders}条")
+
+
+async def _create_expiry_reminders(db) -> int:
+    """Create one pending alert per customer for assessments expiring within 30 days."""
+    today = date.today()
+    deadline = today + timedelta(days=30)
+    assessments = (await db.execute(
+        select(RiskAssessment).where(RiskAssessment.valid_until.is_not(None))
+    )).scalars().all()
+    latest_by_customer = {}
+    for assessment in assessments:
+        current = latest_by_customer.get(assessment.customer_id)
+        if current is None or assessment.create_time > current.create_time:
+            latest_by_customer[assessment.customer_id] = assessment
+    created = 0
+    for assessment in latest_by_customer.values():
+        if not today <= assessment.valid_until <= deadline:
+            continue
+        result = await db.execute(text("""
+            INSERT IGNORE INTO fin_risk_alert
+            (customer_id, alert_type, alert_level, trigger_detail, transaction_ids, reminder_key, status, create_time, update_time)
+            VALUES (:customer_id, 'risk_assessment_expiring', 'medium', :detail, :payload, :reminder_key, 'pending', :now, :now)
+        """), {
+            "customer_id": assessment.customer_id,
+            "reminder_key": f"risk_expiry:{assessment.id}",
+            "detail": f"风险评估将于 {assessment.valid_until.isoformat()} 到期",
+            "payload": __import__("json").dumps({"assessment_id": assessment.id, "valid_until": assessment.valid_until.isoformat()}),
+            "now": datetime.now(),
+        })
+        created += int(result.rowcount or 0)
+    return created
 
 
 def start_scheduler():

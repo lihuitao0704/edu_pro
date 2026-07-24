@@ -147,5 +147,49 @@ class OperatorEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unified_chat_uses_authenticated_identity_over_claimed_body_identity(self):
+        from app.api.unified_chat import unified_chat
+        from app.model.schemas import UnifiedChatRequest
+
+        request = UnifiedChatRequest(
+            message="查询我的账户信息",
+            session_id="scope-test",
+            user_id=999,
+            user_role="管理员",
+        )
+        routed = SimpleNamespace(
+            intent="business_operation",
+            agent="operator",
+            confidence=0.99,
+            session_id="scope-test",
+            reply="已识别账户服务请求",
+            data=None,
+            model_dump=lambda: {
+                "intent": "business_operation",
+                "agent": "operator",
+                "confidence": 0.99,
+                "session_id": "scope-test",
+                "reply": "已识别账户服务请求",
+                "data": None,
+            },
+        )
+        router_agent = SimpleNamespace(route=AsyncMock(return_value=routed))
+
+        with patch("app.api.unified_chat.RouterAgent", return_value=router_agent):
+            await unified_chat(
+                request,
+                AsyncMock(),
+                {"user_id": 7, "role": "客户"},
+            )
+
+        router_agent.route.assert_awaited_once_with(
+            message="查询我的账户信息",
+            session_id="scope-test",
+            user_id=7,
+            user_role="客户",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

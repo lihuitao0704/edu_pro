@@ -18,7 +18,7 @@ from app.utils.response import success, error
 from app.utils.sse import stream_chat_result
 from app.utils.logger import get_logger
 from app.security.authorization import (
-    get_request_role,
+    authenticated_actor_id,
     require_roles,
 )
 from app.config.settings import get_settings
@@ -54,8 +54,8 @@ async def unified_chat(
         result = await agent.route(
             message=req.message,
             session_id=req.session_id,
-            user_id=req.user_id or user.get("user_id", 0),
-            user_role=req.user_role or get_request_role(Request),
+            user_id=authenticated_actor_id(user),
+            user_role=get_request_role_from_user(user),
         )
         logger.info(
             f"统一入口响应 | intent={result.intent} | agent={result.agent} "
@@ -90,8 +90,8 @@ async def unified_chat_stream(
         result = await agent.route(
             message=req.message,
             session_id=req.session_id,
-            user_id=req.user_id or user.get("user_id", 0),
-            user_role=req.user_role or get_request_role(Request),
+            user_id=authenticated_actor_id(user),
+            user_role=get_request_role_from_user(user),
         )
         payload = result.model_dump()
         # 补充 agent_type 供 SSE meta 事件使用
@@ -108,3 +108,8 @@ async def unified_chat_stream(
             yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
             yield {"event": "done", "data": json.dumps({"session_id": req.session_id})}
         return EventSourceResponse(error_stream())
+
+
+def get_request_role_from_user(user: dict) -> str:
+    """Use the authenticated role, never a client-claimed chat role."""
+    return str(user.get("role") or "")

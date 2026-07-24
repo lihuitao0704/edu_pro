@@ -3,15 +3,17 @@
 风评问卷 / 答题评分 / 适当性匹配
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.model.entities import RiskAssessment, FinCustomerProfile
+from app.model.entities import CustomerTag, RiskAssessment, FinCustomerProfile
 from app.model.schemas import QuestionnaireItem, AssessmentAnswer, AssessmentResult, SuitabilityCheckResult
 from app.engine.score_mapper import check_suitability, map_score_to_risk_level
 from app.memory.profile_cache import ProfileCache
+from app.memory.long_term import LongTermMemory
+from app.tool.neo4j_sync import sync_risk_level
 from app.utils.exceptions import ProfileNotFound, SuitabilityMismatch
 
 
@@ -58,6 +60,7 @@ class RiskService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.cache = ProfileCache()
+        self.long_term = LongTermMemory(db)
 
     def get_questionnaire(self) -> List[QuestionnaireItem]:
         """获取风评问卷"""
@@ -72,6 +75,7 @@ class RiskService:
 
         # 计算总分
         total = 0
+        score_by_question: dict[int, int] = {}
         question_map = {q["q"]: q for q in QUESTIONNAIRE}
         answer_detail = []
         for ans in answers:
@@ -81,6 +85,7 @@ class RiskService:
                     if ans.a in opt:
                         score = opt["score"]
                         total += score
+                        score_by_question[ans.q] = score
                         answer_detail.append({"q": ans.q, "a": ans.a, "score": score})
                         break
 
@@ -90,7 +95,7 @@ class RiskService:
         QUESTIONNAIRE_MAX = 160
         normalized = round((total - QUESTIONNAIRE_MIN) / (QUESTIONNAIRE_MAX - QUESTIONNAIRE_MIN) * 100)
         normalized = max(0, min(100, normalized))
-        risk_level, _ = map_score_to_risk_level(normalized)
+        risk_level, risk_level_name = map_score_to_risk_level(normalized)
 
         valid_until = date.today() + timedelta(days=365)
 
@@ -98,7 +103,7 @@ class RiskService:
         assessment = RiskAssessment(
             customer_id=customer_id,
             assessment_date=date.today(),
-            total_score=total,
+            total_score=normalized,
             risk_level=risk_level,
             answers={"details": answer_detail},
             assessor_type="AI评估",
@@ -109,26 +114,78 @@ class RiskService:
         # 更新画像
         if profile:
             profile.risk_level = risk_level
-            profile.risk_score = total
-            profile.update_time = date.today()
+            profile.risk_score = normalized
+            profile.update_time = datetime.now()
         else:
             profile = FinCustomerProfile(
                 customer_id=customer_id,
                 risk_level=risk_level,
-                risk_score=total,
+                risk_score=normalized,
                 confidence_score=0.9,
             )
             self.db.add(profile)
 
         await self.db.flush()
+        await self._upsert_questionnaire_risk_tag(customer_id, risk_level_name, valid_until)
+        await self.long_term.archive_rating_record(
+            customer_id=customer_id,
+            dimension_scores=self._questionnaire_dimension_scores(score_by_question),
+            total_score=normalized,
+            risk_level=risk_level,
+            circuit_breakers=[],
+            trigger_type="manual",
+        )
+        await self.db.flush()
         await self.cache.invalidate(customer_id)
+        await self.db.commit()
+        try:
+            await sync_risk_level(customer_id, risk_level)
+        except Exception as exc:
+            # Graph synchronization is eventual; questionnaire persistence remains authoritative.
+            import logging
+            logging.getLogger(__name__).warning("Neo4j risk-level sync failed for customer %s: %s", customer_id, exc)
 
         return AssessmentResult(
             customer_id=customer_id,
-            total_score=total,
+            total_score=normalized,
             risk_level=risk_level,
             valid_until=valid_until,
         )
+
+    async def _upsert_questionnaire_risk_tag(self, customer_id: int, risk_level: str, valid_until: date) -> None:
+        stmt = select(CustomerTag).where(
+            CustomerTag.customer_id == customer_id,
+            CustomerTag.tag_name == "risk_preference",
+        )
+        tag = (await self.db.execute(stmt)).scalar_one_or_none()
+        if tag:
+            tag.tag_value = risk_level
+            tag.source = "questionnaire"
+            tag.valid_until = valid_until
+            tag.update_time = datetime.now()
+            return
+        self.db.add(CustomerTag(
+            customer_id=customer_id,
+            tag_name="risk_preference",
+            tag_value=risk_level,
+            source="questionnaire",
+            confidence=1,
+            valid_until=valid_until,
+        ))
+
+    @staticmethod
+    def _questionnaire_dimension_scores(score_by_question: dict[int, int]) -> dict:
+        groups = {
+            "basic": (1, 2, 7, 10, 11),
+            "experience": (3, 8, 13, 15, 16),
+            "risk_pref": (4, 5, 6, 9, 12, 14),
+            "behavior": (9, 12, 14),
+        }
+        result = {}
+        for name, questions in groups.items():
+            answers = [score_by_question[q] for q in questions if q in score_by_question]
+            result[name] = {"score": round(sum(answers) / (len(answers) * 10) * 100, 2) if answers else 0}
+        return result
 
     async def check_suitability(self, customer_id: int, product_code: str) -> SuitabilityCheckResult:
         """适当性匹配校验"""

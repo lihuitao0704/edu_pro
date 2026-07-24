@@ -1,6 +1,6 @@
 """Recommendation Tool — 产品推荐打分工具"""
 
-from typing import List
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.service.advisor_service import AdvisorService
 
@@ -11,6 +11,9 @@ class RecommendationTool:
     def __init__(self, db: AsyncSession):
         self.advisor_service = AdvisorService(db)
 
-    async def recommend(self, customer_id: int, top_n: int = 3) -> dict:
-        """推荐产品"""
-        return await self.advisor_service.recommend_products(customer_id, top_n)
+    async def recommend(self, customer_id: int, top_n: int = 3,
+                        fallback_risk: Optional[str] = None) -> dict:
+        """推荐产品，支持画像不存在时回退风险等级"""
+        return await self.advisor_service.recommend_products(
+            customer_id, top_n, fallback_risk=fallback_risk,
+        )
