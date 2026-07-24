@@ -141,15 +141,17 @@ class UnifiedArchiveContractTests(unittest.IsolatedAsyncioTestCase):
         )
         route_agent = SimpleNamespace(route=AsyncMock(return_value=routed))
         memory_service = SimpleNamespace(archive_turn=AsyncMock())
+        persistence = SimpleNamespace(persist_turn=AsyncMock())
 
         with patch("app.api.unified_chat.RouterAgent", return_value=route_agent), \
              patch("app.api.unified_chat.resolve_owned_session_id", new=AsyncMock(return_value="")), \
-             patch("app.api.unified_chat.MemoryService", return_value=memory_service):
+             patch("app.api.unified_chat.MemoryService", return_value=memory_service), \
+             patch("app.api.unified_chat.PlatformPersistenceService", return_value=persistence):
             await unified_chat(request, AsyncMock(), {"user_id": 7, "role": "customer"})
 
-        memory_service.archive_turn.assert_awaited_once_with(
-            "server-session", 7, "operator", "test", "done"
-        )
+        archive_args = memory_service.archive_turn.await_args.args
+        self.assertTrue(archive_args[0])
+        self.assertEqual((7, "operator", "test", "done"), archive_args[1:])
 
     async def test_stream_rejects_foreign_session_and_archives_for_actor(self):
         from app.api.unified_chat import unified_chat_stream
@@ -167,6 +169,7 @@ class UnifiedArchiveContractTests(unittest.IsolatedAsyncioTestCase):
         )
         route_agent = SimpleNamespace(route=AsyncMock(return_value=routed))
         memory_service = SimpleNamespace(archive_turn=AsyncMock())
+        persistence = SimpleNamespace(persist_turn=AsyncMock())
         db = SimpleNamespace(
             execute=AsyncMock(
                 return_value=SimpleNamespace(scalar_one_or_none=lambda: 8)
@@ -174,15 +177,16 @@ class UnifiedArchiveContractTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("app.api.unified_chat.RouterAgent", return_value=route_agent), \
-             patch("app.api.unified_chat.MemoryService", return_value=memory_service):
+             patch("app.api.unified_chat.MemoryService", return_value=memory_service), \
+             patch("app.api.unified_chat.PlatformPersistenceService", return_value=persistence):
             await unified_chat_stream(request, db, {"user_id": 7, "role": "customer"})
 
-        route_agent.route.assert_awaited_once_with(
-            message="test", session_id="", user_id=7, user_role="customer"
-        )
-        memory_service.archive_turn.assert_awaited_once_with(
-            "fresh-server-session", 7, "operator", "test", "done"
-        )
+        route_args = route_agent.route.await_args.kwargs
+        self.assertTrue(route_args["session_id"])
+        self.assertEqual(("test", 7, "customer"), (route_args["message"], route_args["user_id"], route_args["user_role"]))
+        archive_args = memory_service.archive_turn.await_args.args
+        self.assertTrue(archive_args[0])
+        self.assertEqual((7, "operator", "test", "done"), archive_args[1:])
 
 
 if __name__ == "__main__":

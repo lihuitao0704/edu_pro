@@ -177,9 +177,11 @@ class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
         router_agent = SimpleNamespace(route=AsyncMock(return_value=routed))
 
         memory_service = SimpleNamespace(archive_turn=AsyncMock())
+        persistence = SimpleNamespace(persist_turn=AsyncMock())
         with patch("app.api.unified_chat.RouterAgent", return_value=router_agent), \
              patch("app.api.unified_chat.resolve_owned_session_id", new=AsyncMock(return_value="scope-test")), \
-             patch("app.api.unified_chat.MemoryService", return_value=memory_service):
+             patch("app.api.unified_chat.MemoryService", return_value=memory_service), \
+             patch("app.api.unified_chat.PlatformPersistenceService", return_value=persistence):
             await unified_chat(
                 request,
                 AsyncMock(),
@@ -191,6 +193,7 @@ class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
             session_id="scope-test",
             user_id=7,
             user_role="客户",
+            context={"entities": {}},
         )
         memory_service.archive_turn.assert_awaited_once_with(
             "scope-test", 7, "operator", request.message, routed.reply

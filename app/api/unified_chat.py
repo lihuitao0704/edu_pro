@@ -7,12 +7,14 @@
 禁止前端直接调用业务 Agent。
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.config.database import get_db
-from app.model.entities import ConversationArchive
+from app.model.entities import ConversationArchive, FinChatFeedback, FinChatSession
 from app.model.schemas import UnifiedChatRequest, UnifiedChatResponse
 from app.agent.router_agent import RouterAgent
 from app.utils.response import success, error
@@ -25,6 +27,9 @@ from app.security.authorization import (
 from app.config.settings import get_settings
 from sqlalchemy import select
 from app.service.memory_service import MemoryService
+from app.common_services.orchestration.chat_orchestrator import ChatOrchestrator
+from app.common_services.safety_guard.input_filter import InputSafetyFilter
+from app.common_services.platform_persistence import PlatformPersistenceService
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -39,6 +44,10 @@ async def resolve_owned_session_id(db: AsyncSession, session_id: str, actor_id: 
     """
     if not session_id:
         return ""
+    if hasattr(db, "get"):
+        platform_session = await db.get(FinChatSession, session_id)
+        if platform_session is not None:
+            return session_id if int(platform_session.user_id) == actor_id else ""
     owner = (
         await db.execute(
             select(ConversationArchive.user_id)
@@ -59,9 +68,51 @@ async def get_chat_history(
     user: dict = Depends(
         require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
     ),
+    view: str = "messages",
+    session_id: str = "",
+    intent: str = "",
+    agent_name: str = "",
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ):
     """Return the most recent persisted conversation for the authenticated user."""
     actor_id = authenticated_actor_id(user)
+    if view == "sessions" or any((session_id, intent, agent_name, start_time, end_time)):
+        statement = select(FinChatSession).where(FinChatSession.user_id == actor_id)
+        if session_id:
+            statement = statement.where(FinChatSession.session_id == session_id)
+        if intent:
+            statement = statement.where(FinChatSession.last_intent == intent)
+        if agent_name:
+            statement = statement.where(FinChatSession.last_agent == agent_name)
+        if start_time:
+            statement = statement.where(FinChatSession.update_time >= start_time)
+        if end_time:
+            statement = statement.where(FinChatSession.update_time <= end_time)
+        sessions = (await db.execute(
+            statement.order_by(FinChatSession.update_time.desc()).limit(50)
+        )).scalars().all()
+        session_ids = [item.session_id for item in sessions]
+        ratings = {}
+        if session_ids:
+            feedback = (await db.execute(
+                select(FinChatFeedback)
+                .where(FinChatFeedback.user_id == actor_id, FinChatFeedback.session_id.in_(session_ids))
+                .order_by(FinChatFeedback.created_time.desc())
+            )).scalars().all()
+            for item in feedback:
+                ratings.setdefault(item.session_id, item.rating)
+        return success(data={"items": [
+            {
+                "session_id": item.session_id,
+                "summary": item.summary or "",
+                "intent": item.last_intent,
+                "agents": [item.last_agent] if item.last_agent else [],
+                "rating": ratings.get(item.session_id),
+                "updated_time": item.update_time.isoformat() if item.update_time else None,
+            }
+            for item in sessions
+        ]})
     records = (
         await db.execute(
             select(ConversationArchive)
@@ -112,16 +163,16 @@ async def unified_chat(
     try:
         actor_id = authenticated_actor_id(user)
         session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
-        agent = RouterAgent(db)
-        result = await agent.route(
-            message=req.message,
-            session_id=session_id,
-            user_id=actor_id,
-            user_role=get_request_role_from_user(user),
+        orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
+        result = await orchestrator.handle(
+            req.message, session_id, actor_id, get_request_role_from_user(user)
         )
-        await MemoryService(db).archive_turn(
-            result.session_id, actor_id, result.agent, req.message, result.reply
-        )
+        safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+        if result.agent != "safety_guard":
+            await MemoryService(db).archive_turn(
+                result.session_id, actor_id, result.agent, safe_input, result.reply
+            )
+        await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
         logger.info(
             f"统一入口响应 | intent={result.intent} | agent={result.agent} "
             f"| session={result.session_id}"
@@ -153,16 +204,16 @@ async def unified_chat_stream(
     try:
         actor_id = authenticated_actor_id(user)
         session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
-        agent = RouterAgent(db)
-        result = await agent.route(
-            message=req.message,
-            session_id=session_id,
-            user_id=actor_id,
-            user_role=get_request_role_from_user(user),
+        orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
+        result = await orchestrator.handle(
+            req.message, session_id, actor_id, get_request_role_from_user(user)
         )
-        await MemoryService(db).archive_turn(
-            result.session_id, actor_id, result.agent, req.message, result.reply
-        )
+        safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+        if result.agent != "safety_guard":
+            await MemoryService(db).archive_turn(
+                result.session_id, actor_id, result.agent, safe_input, result.reply
+            )
+        await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
         payload = result.model_dump()
         # 补充 agent_type 供 SSE meta 事件使用
         payload["agent_type"] = result.agent

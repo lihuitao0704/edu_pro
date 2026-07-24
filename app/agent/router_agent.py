@@ -45,6 +45,7 @@ class RouterAgent:
         session_id: str = "",
         user_id: int = 0,
         user_role: str = "客户",
+        context: Optional[dict] = None,
     ) -> UnifiedChatResponse:
         """
         统一路由入口
@@ -61,6 +62,10 @@ class RouterAgent:
             user_id: 用户ID
             user_role: 用户角色
         """
+        if context and context.get("entities", {}).get("product_name"):
+            product_name = context["entities"]["product_name"]
+            message = f"{message}\n\n[平台上下文：当前产品={product_name}]"
+
         if not session_id:
             session_id = uuid.uuid4().hex
 

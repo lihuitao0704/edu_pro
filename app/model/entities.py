@@ -278,6 +278,127 @@ class ConversationArchive(Base):
     )
 
 
+class FinChatSession(Base):
+    """Platform-owned session record and durable shared context."""
+    __tablename__ = "fin_chat_session"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text)
+    last_intent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    last_agent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    context_json: Mapped[Optional[dict]] = mapped_column(JSON)
+    flagged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    update_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (Index("idx_chat_session_user_updated", "user_id", "update_time"),)
+
+
+class FinChatMessage(Base):
+    """Normalized turn messages for filtering and management queries."""
+    __tablename__ = "fin_chat_message"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[Optional[str]] = mapped_column(Text)
+    intent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_chat_message_session_time", "session_id", "create_time"),
+        Index("idx_chat_message_query", "user_id", "intent", "agent_name", "create_time"),
+    )
+
+
+class FinChatEntity(Base):
+    """Entities resolved by the shared context manager."""
+    __tablename__ = "fin_chat_entity"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_id: Mapped[Optional[str]] = mapped_column(String(64))
+    attributes_json: Mapped[Optional[dict]] = mapped_column(JSON)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    last_seen_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (Index("idx_chat_entity_session_type", "session_id", "entity_type"),)
+
+
+class FinChatFeedback(Base):
+    """Authenticated user feedback for a completed chat session."""
+    __tablename__ = "fin_chat_feedback"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    intent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (Index("idx_chat_feedback_session_user", "session_id", "user_id"),)
+
+
+class FinAgentTrace(Base):
+    """Masked request-level trace record."""
+    __tablename__ = "fin_agent_trace"
+
+    trace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    intent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    target_agent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    input_masked: Mapped[Optional[str]] = mapped_column(Text)
+    output_masked: Mapped[Optional[str]] = mapped_column(Text)
+    total_latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    created_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class FinAgentTraceSpan(Base):
+    """Agent, tool, LLM, or database operation span."""
+    __tablename__ = "fin_agent_trace_span"
+
+    span_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    parent_span_id: Mapped[Optional[str]] = mapped_column(String(64))
+    span_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    component_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_masked: Mapped[Optional[str]] = mapped_column(Text)
+    output_masked: Mapped[Optional[str]] = mapped_column(Text)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    token_input: Mapped[Optional[int]] = mapped_column(Integer)
+    token_output: Mapped[Optional[int]] = mapped_column(Integer)
+    created_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class FinChatMetricDaily(Base):
+    """Pre-aggregated analytics for the management dashboard."""
+    __tablename__ = "fin_chat_metric_daily"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    intent: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    session_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    turn_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    avg_rating: Mapped[Optional[Decimal]] = mapped_column(Numeric(4, 2))
+    fallback_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    avg_response_ms: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+
+
 class FinKnowledgeMeta(Base):
     """金融知识元数据表"""
     __tablename__ = "fin_knowledge_meta"
