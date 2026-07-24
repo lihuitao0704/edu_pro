@@ -295,9 +295,11 @@ class AdvisorAgent(BaseAgent):
         if smart_rec:
             recommendations = smart_rec.get("recommendations", [])
             customer_profile = smart_rec.get("customer_profile")
+            allocation = smart_rec.get("allocation")
         else:
             recommendations = self._extract_tool_result(result, "recommend_products")
             customer_profile = self._extract_tool_result(result, "profile_tool")
+            allocation = None
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
 
@@ -313,6 +315,7 @@ class AdvisorAgent(BaseAgent):
             "reply": reply,
             "recommendations": recommendations,
             "customer_profile": customer_profile,
+            "allocation": allocation,
             "holdings_analysis": holdings_analysis,
             "reasoning": reasoning,
             "session_id": self.session_id,

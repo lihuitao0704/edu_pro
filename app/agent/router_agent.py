@@ -200,7 +200,9 @@ class RouterAgent:
             "reply": result.get("reply", ""),
             "data": {
                 "recommendations": result.get("recommendations", []),
+                "allocation": result.get("allocation"),
                 "customer_profile": result.get("customer_profile"),
+                "holdings_analysis": result.get("holdings_analysis"),
                 "reasoning": result.get("reasoning"),
             },
         }
