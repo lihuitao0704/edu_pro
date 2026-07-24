@@ -275,7 +275,7 @@ class ProfileService:
             .join(FinHoldings, FinHoldings.product_id == FinProduct.id)
             .where(
                 FinHoldings.customer_id == customer_id,
-                FinHoldings.status == "持有",
+                FinHoldings.status == "持有中",
             )
         )
         result = await self.db.execute(stmt)
@@ -329,7 +329,7 @@ class ProfileService:
             func.sum(FinHoldings.profit_loss).label("total_pl"),
         ).where(
             FinHoldings.customer_id == customer_id,
-            FinHoldings.status == "持有",
+            FinHoldings.status == "持有中",
         )
         result = await self.db.execute(stmt)
         row = result.one_or_none()
@@ -357,7 +357,7 @@ class ProfileService:
             func.count(FinHoldings.id)
         ).where(
             FinHoldings.customer_id == customer_id,
-            FinHoldings.status == "持有",
+            FinHoldings.status == "持有中",
             FinHoldings.profit_ratio < -0.05,
         )
         result = await self.db.execute(stmt)
@@ -450,7 +450,7 @@ class ProfileService:
             FinHoldings.cost_amount, FinHoldings.profit_loss, FinProduct.product_name,
         ).join(FinProduct, FinHoldings.product_id == FinProduct.id).where(
             FinHoldings.customer_id == customer_id,
-            FinHoldings.status == "持有",
+            FinHoldings.status == "持有中",
             FinHoldings.profit_ratio < -0.05,
         ).limit(5)
         result = await self.db.execute(stmt)
@@ -497,7 +497,7 @@ class ProfileService:
         from sqlalchemy import func as sql_func
         stmt = select(sql_func.min(FinHoldings.profit_ratio)).where(
             FinHoldings.customer_id == customer_id,
-            FinHoldings.status == "持有",
+            FinHoldings.status == "持有中",
         )
         result = await self.db.execute(stmt)
         val = result.scalar()
@@ -688,7 +688,7 @@ class ProfileService:
             FinHoldings.current_value,
         ).join(FinProduct, FinHoldings.product_id == FinProduct.id).where(
             FinHoldings.customer_id == customer_id,
-            FinHoldings.status == "持有",
+            FinHoldings.status == "持有中",
         ).limit(5)
         result = await self.db.execute(stmt)
         return [
