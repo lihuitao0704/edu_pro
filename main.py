@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
         import asyncio
         from app.service.event_bus import start_event_subscriber
         event_subscriber_task = asyncio.create_task(start_event_subscriber())
-        print("  EventBus: 事件订阅消费者已启动（risk_alert→risk_flag + profile_update + work_order_change）")
+        print("  EventBus: 事件订阅消费者已启动（risk_alert + profile_update + work_order_change + graph_sync）")
     except Exception as e:
         print(f"  EventBus: 启动失败 ({e})")
 

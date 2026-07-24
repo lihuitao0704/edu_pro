@@ -6,10 +6,12 @@ P0: 支持 产品申购 + 产品查询 两种意图
 """
 
 import os
+import re
 import uuid
 import json
 import httpx
 from typing import Optional
+from datetime import datetime, time, timedelta
 
 from openai import AsyncOpenAI
 
@@ -25,6 +27,8 @@ from app.api.operations.workorder import create_work_order
 from app.tool.graph_query_tool import (
     get_customer_products,
     get_suitable_products,
+    get_customer_community,
+    get_industry_distribution,
     resolve_customer_id,
     resolve_product_id,
 )
@@ -40,35 +44,54 @@ settings = get_settings()
 
 _MAX_AMOUNT = 10_000_000  # 单笔金额上限 1000 万
 
+# P5 新增常量
+_MIN_TRANSFER_AMOUNT = 100  # 转账最低金额（元），避免无意义小额转账
+_PURCHASE_AMOUNT_MULTIPLE = 100  # 申购金额必须是此值的整数倍（货币基金除外）
+_REDEEM_SHARES_DECIMAL_PLACES = 2  # 赎回份额最大小数位数
+_SUSPICIOUS_REPEAT_WINDOW_HOURS = 24  # 可疑交易防重复上报窗口（小时）
+
 
 def _safe_float(value, field: str = "金额") -> tuple[float, Optional[str]]:
-    """安全转换为 float，失败时返回 (0.0, 错误信息)"""
+    """安全转换为 float，使用 Decimal 中间层避免精度丢失。
+    失败时返回 (0.0, 错误信息)
+    """
     try:
-        v = float(value)
-        if v <= 0:
+        from decimal import Decimal, InvalidOperation
+        d = Decimal(str(value))
+        if d <= 0:
             return 0.0, f"{field}必须大于0"
-        if v > _MAX_AMOUNT:
+        if d > _MAX_AMOUNT:
             return 0.0, f"{field}超过上限（{_MAX_AMOUNT}元）"
-        return v, None
-    except (ValueError, TypeError):
+        return float(d), None
+    except (ValueError, TypeError, InvalidOperation):
         return 0.0, f"{field}格式错误（无法转为数字）"
 
 
 # ==================== P0 业务校验辅助函数 ====================
 
 # 适当性匹配矩阵：客户风险等级 → 可购买产品风险等级
+# 按设计文档《个人投资者适当性管理指南》§12：正向匹配（C_n 可买 R_1..R_{n+1}）
+# C1 特殊：可购买 R1、R2（设计文档§12 明确）
+# 豁免规则（C3→R4 / C4→R5）由 _check_suitability_combined 的非阻断警告处理
 _SUITABILITY_MAP = {
-    "C1": ["R1"],                           # 保守型 → 仅 R1
-    "C2": ["R1", "R2"],                     # 稳健型 → R1, R2
-    "C3": ["R1", "R2", "R3"],               # 平衡型 → R1-R3
-    "C4": ["R1", "R2", "R3", "R4"],         # 进取型 → R1-R4
+    "C1": ["R1", "R2"],                     # 保守型 → R1, R2
+    "C2": ["R1", "R2", "R3"],               # 稳健型 → R1-R3
+    "C3": ["R1", "R2", "R3", "R4"],         # 平衡型 → R1-R4（R4 需豁免，见下方）
+    "C4": ["R1", "R2", "R3", "R4", "R5"],   # 进取型 → R1-R5（R5 需豁免，见下方）
     "C5": ["R1", "R2", "R3", "R4", "R5"],   # 激进型 → R1-R5
     # 兼容中文名
-    "保守型": ["R1"],
-    "稳健型": ["R1", "R2"],
-    "平衡型": ["R1", "R2", "R3"],
-    "进取型": ["R1", "R2", "R3", "R4"],
+    "保守型": ["R1", "R2"],
+    "稳健型": ["R1", "R2", "R3"],
+    "平衡型": ["R1", "R2", "R3", "R4"],
+    "进取型": ["R1", "R2", "R3", "R4", "R5"],
     "激进型": ["R1", "R2", "R3", "R4", "R5"],
+}
+
+# 豁免匹配：客户等级 → 可"超风险等级"购买的产品（需签署风险揭示书）
+# 来源：《个人投资者适当性管理指南》§15
+_SUITABILITY_EXEMPTION = {
+    "C3": {"R4": "C3平衡型投资者购买R4中高风险产品，须签署《产品风险超越投资者风险承受能力揭示书》，且单只R4产品持仓不超过总资产20%"},
+    "C4": {"R5": "C4进取型投资者购买R5高风险产品，须签署《产品风险超越投资者风险承受能力揭示书》，且单只R5产品持仓不超过总资产10%"},
 }
 
 # 中文名 → C编号 映射
@@ -111,25 +134,34 @@ async def _get_product_risk_level(product_id: int, db) -> Optional[str]:
         return None
 
 
-async def _check_suitability(customer_id: int, product_id: int, db) -> Optional[str]:
+async def _check_suitability_combined(customer_id: int, product_id: int, db) -> tuple[Optional[str], Optional[str]]:
     """
-    适当性校验：客户风险等级是否匹配产品风险等级
-    返回 None 表示通过，否则返回错误信息字符串
+    适当性校验（合并版）：同时返回阻断错误和非阻断豁免警告。
+    避免分开调用导致重复查询 fin_risk_assessment / fin_product。
+    返回 (block_error, exemption_warning)：
+      - block_error 非 None → 适当性不匹配，必须阻断
+      - exemption_warning 非 None → 豁免购买提示，需签署风险揭示书（非阻断）
     """
     customer_level = await _get_customer_risk_level(customer_id, db)
     if not customer_level:
-        return "客户尚未完成风险评估，请先完成风评"
+        return "客户尚未完成风险评估，请先完成风评", None
 
     product_level = await _get_product_risk_level(product_id, db)
     if not product_level:
-        return None  # 产品信息获取失败，跳过校验（让下游接口处理）
+        return None, None  # 产品信息获取失败，跳过校验（让下游接口处理）
 
     allowed_levels = _SUITABILITY_MAP.get(customer_level, [])
     if product_level not in allowed_levels:
         return (f"⚠️ 适当性不匹配：客户风险等级 {customer_level}，"
                 f"产品风险等级 {product_level}，"
-                f"允许购买 {', '.join(allowed_levels)} 级别产品")
-    return None
+                f"允许购买 {', '.join(allowed_levels)} 级别产品"), None
+
+    # 标准匹配通过，检查是否有豁免提示（C3→R4 / C4→R5 等边界场景）
+    exemption_rules = _SUITABILITY_EXEMPTION.get(customer_level, {})
+    warning_text = exemption_rules.get(product_level)
+    if warning_text:
+        return None, f"⚠️ 豁免购买提示：{warning_text}"
+    return None, None
 
 
 async def _check_holdings(customer_id: int, product_id: int, shares: float, db) -> Optional[str]:
@@ -198,7 +230,514 @@ async def _check_customer_status(customer_id: int, db) -> Optional[str]:
     return None
 
 
-# ==================== LLM 客户端 ====================
+# ==================== 新增业务校验（P3 补全） ====================
+
+# 单日累计限额（反洗钱要求）
+_DAILY_CUMULATIVE_LIMIT = 2_000_000  # 200万
+
+# 交易时间窗口
+_TRADING_START = time(9, 30)   # 9:30
+_TRADING_END = time(15, 0)     # 15:00
+
+
+async def _check_risk_assessment_validity(customer_id: int, db) -> Optional[str]:
+    """
+    风评有效期校验：检查客户风险评估是否在有效期内
+    返回 None 表示通过，否则返回错误信息字符串
+    """
+    try:
+        row = await db.execute(
+            text("SELECT risk_level, valid_until FROM fin_risk_assessment "
+                 "WHERE customer_id = :cid ORDER BY create_time DESC LIMIT 1"),
+            {"cid": customer_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return "客户尚未完成风险评估，请先完成风评"
+
+        valid_until = row.get("valid_until")
+        if valid_until:
+            # valid_until 可能是 date 或 datetime
+            if hasattr(valid_until, 'date'):
+                expiry_date = valid_until.date() if callable(valid_until.date) else valid_until
+            else:
+                expiry_date = valid_until
+
+            today = datetime.now().date()
+            if hasattr(expiry_date, 'date'):
+                expiry_date = expiry_date.date()
+
+            if expiry_date < today:
+                return (f"⚠️ 客户风险评估已过期（有效期至 {expiry_date}），"
+                        f"请重新完成风险评估后再操作")
+    except Exception as e:
+        return f"风评有效期查询失败: {e}"
+    return None
+
+
+# 2026 年法定节假日（非交易日），仅覆盖当年；次年需更新
+# 数据来源：国务院办公厅关于2026年部分节假日安排的通知（示例值，上线前须核实）
+_HOLIDAYS_2026 = {
+    # 元旦
+    "2026-01-01", "2026-01-02", "2026-01-03",
+    # 春节（示例：1月26日-2月1日）
+    "2026-01-26", "2026-01-27", "2026-01-28", "2026-01-29",
+    "2026-01-30", "2026-01-31", "2026-02-01",
+    # 清明节
+    "2026-04-04", "2026-04-05", "2026-04-06",
+    # 劳动节
+    "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+    # 端午节
+    "2026-06-19", "2026-06-20", "2026-06-21",
+    # 中秋节
+    "2026-09-25", "2026-09-26", "2026-09-27",
+    # 国庆节
+    "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04",
+    "2026-10-05", "2026-10-06", "2026-10-07",
+}
+
+
+def _check_trading_hours() -> Optional[str]:
+    """
+    交易时间校验：基金交易应在 9:30-15:00 交易时间内
+    非交易时间允许操作但提示风险
+    返回 None 表示在交易时间内，否则返回警告信息（不阻断）
+    """
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    # 法定节假日
+    if today_str in _HOLIDAYS_2026:
+        return "⚠️ 当前为法定节假日非交易日，操作将顺延至下一交易日处理"
+    # 周末不交易
+    if now.weekday() >= 5:
+        return "⚠️ 当前为周末非交易日，操作将顺延至下一交易日处理"
+    current_time = now.time()
+    if current_time < _TRADING_START or current_time > _TRADING_END:
+        return ("⚠️ 当前非交易时间（交易时间 9:30-15:00），"
+                "操作将顺延至下一交易日处理")
+    return None
+
+
+async def _check_daily_cumulative(customer_id: int, amount: float, db,
+                                  exclude_types: tuple = ()) -> Optional[str]:
+    """
+    单日累计限额校验：反洗钱要求，同一客户当日累计交易不得超过限额
+    返回 None 表示通过，否则返回错误信息字符串
+    注：exclude_types 为空时不加 NOT IN 条件，避免 MySQL NOT IN () 语法错误
+    """
+    try:
+        today = datetime.now().date()
+        params = {"cid": customer_id, "today": today}
+
+        # 累计限额统计资金流出方向的操作（排除 transfer_in 收入）
+        # transfer_in 不应占用客户当日流出额度（反洗钱限额针对资金转出）
+        _EXCLUDE_FROM_CUMULATIVE = ("transfer_in",)
+
+        if exclude_types:
+            all_excludes = _EXCLUDE_FROM_CUMULATIVE + tuple(exclude_types)
+            sql = """
+                SELECT COALESCE(SUM(amount), 0) AS total
+                FROM fin_transaction
+                WHERE customer_id = :cid
+                  AND DATE(create_time) = :today
+                  AND status IN ('已确认', '待确认')
+                  AND transaction_type NOT IN :exclude_types
+            """
+            params["exclude_types"] = all_excludes
+        else:
+            sql = """
+                SELECT COALESCE(SUM(amount), 0) AS total
+                FROM fin_transaction
+                WHERE customer_id = :cid
+                  AND DATE(create_time) = :today
+                  AND status IN ('已确认', '待确认')
+                  AND transaction_type NOT IN :exclude_types
+            """
+            params["exclude_types"] = _EXCLUDE_FROM_CUMULATIVE
+
+        row = await db.execute(text(sql), params)
+        row = row.mappings().first()
+        daily_total = float(row["total"]) if row else 0
+
+        if daily_total + amount > _DAILY_CUMULATIVE_LIMIT:
+            return (f"⚠️ 超出单日累计限额：今日已交易 {daily_total:,.2f} 元，"
+                    f"本次 {amount:,.2f} 元，"
+                    f"累计将超过限额 {_DAILY_CUMULATIVE_LIMIT:,.0f} 元")
+    except Exception as e:
+        return f"单日累计限额查询失败: {e}"
+    return None
+
+
+def _check_self_transfer(from_customer_id: int, to_customer_id: int) -> Optional[str]:
+    """
+    自转账检测：转出方和转入方不能是同一客户
+    返回 None 表示通过，否则返回错误信息字符串
+    """
+    if from_customer_id == to_customer_id:
+        return "⚠️ 转出方和转入方不能是同一客户"
+    return None
+
+
+async def _check_risk_flag(customer_id: int, db, customer_label: str = "客户") -> Optional[str]:
+    """
+    风控标记校验：检查客户是否被标记为高风险
+    返回 None 表示通过，否则返回警告信息（非阻断）
+    """
+    try:
+        row = await db.execute(
+            text("SELECT risk_flag FROM fin_customer_profile WHERE customer_id = :cid"),
+            {"cid": customer_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None  # 无画像，跳过
+
+        risk_flag = row.get("risk_flag", "normal")
+        if risk_flag == "high":
+            return f"⚠️ {customer_label}被标记为【高风险】，请确认是否继续操作"
+        elif risk_flag == "warning":
+            return f"⚠️ {customer_label}存在【风险预警】，请注意核实"
+    except Exception:
+        pass  # 查询失败不阻断
+    return None
+
+
+async def _check_pending_risk_alerts(customer_id: int, db, customer_label: str = "客户") -> Optional[str]:
+    """
+    待处理风控预警校验：检查客户是否有未处理的高级别预警
+    返回 None 表示通过，否则返回警告信息（非阻断）
+    """
+    try:
+        row = await db.execute(
+            text("""
+                SELECT COUNT(*) AS cnt, MAX(alert_level) AS max_level
+                FROM fin_risk_alert
+                WHERE customer_id = :cid
+                  AND status = 'pending'
+                  AND create_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            """),
+            {"cid": customer_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None
+
+        cnt = row.get("cnt", 0)
+        max_level = row.get("max_level", "")
+
+        if cnt > 0:
+            level_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(max_level, "⚪")
+            return f"{level_icon} {customer_label}近30天有 {cnt} 条待处理风控预警（最高级别: {max_level}）"
+    except Exception:
+        pass  # 查询失败不阻断
+    return None
+
+
+# ==================== P4 新增校验 ====================
+
+# 单日赎回次数上限（反洗钱合规）
+_DAILY_REDEEM_COUNT_LIMIT = 3
+
+# 大额操作备注阈值（元）
+_LARGE_AMOUNT_NOTE_THRESHOLD = 500_000
+
+# 最低保留份额
+_MIN_REMAINING_SHARES = 100
+
+# 联系方式正则
+_PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+
+async def _check_product_status(product_id: int, operation: str, db) -> Optional[str]:
+    """
+    产品状态前置校验：申购/赎回前检查产品是否可操作
+    operation: 'purchase' | 'redeem'
+    返回 None 表示通过，否则返回错误信息
+    注：DB 存储中文状态值（在售/已下架/暂停申购/已结清/已终止/清算中），
+        同时兼容英文值（on_sale/off_sale/suspended/ended/terminated/liquidating）
+    """
+    # 统一状态映射：中文 → (英文key, 中文显示名)
+    # 申购允许的状态
+    _PURCHASE_ALLOWED = {"在售", "on_sale"}
+    # 申购阻断状态
+    _PURCHASE_BLOCKED = {
+        "已下架": "已下架", "off_sale": "已下架",
+        "暂停申购": "暂停申购", "suspended": "暂停申购",
+        "已结清": "已结清", "ended": "已结清",
+    }
+    # 赎回阻断状态
+    _REDEEM_BLOCKED = {
+        "已终止": "已终止", "terminated": "已终止",
+        "清算中": "清算中", "liquidating": "清算中",
+    }
+
+    try:
+        row = await db.execute(
+            text("SELECT status, product_name FROM fin_product WHERE id = :pid"),
+            {"pid": product_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None  # 产品信息获取失败，让下游处理
+        status = row["status"]
+        product_name = row.get("product_name", "")
+        if operation == "purchase" and status not in _PURCHASE_ALLOWED:
+            status_label = _PURCHASE_BLOCKED.get(status, status)
+            return f"产品【{product_name}】当前状态为【{status_label}】，无法申购"
+        if operation == "redeem" and status in _REDEEM_BLOCKED:
+            status_label = _REDEEM_BLOCKED[status]
+            return f"产品【{product_name}】当前状态为【{status_label}】，无法赎回"
+    except Exception as e:
+        return f"产品状态查询失败: {e}"
+    return None
+
+
+async def _check_daily_redeem_count(customer_id: int, product_id: int, db) -> Optional[str]:
+    """
+    单日赎回次数限制：反洗钱合规，同一客户同一产品当日赎回不超过 N 次
+    返回 None 表示通过，否则返回错误信息
+    """
+    try:
+        today = datetime.now().date()
+        row = await db.execute(
+            text("""
+                SELECT COUNT(*) AS cnt FROM fin_transaction
+                WHERE customer_id = :cid AND product_id = :pid
+                  AND transaction_type = 'redeem'
+                  AND DATE(create_time) = :today
+                  AND status IN ('已确认', '待确认')
+            """),
+            {"cid": customer_id, "pid": product_id, "today": today},
+        )
+        row = row.mappings().first()
+        cnt = int(row["cnt"]) if row else 0
+        if cnt >= _DAILY_REDEEM_COUNT_LIMIT:
+            return (f"⚠️ 该产品今日已赎回 {cnt} 次，"
+                    f"达到单日上限（{_DAILY_REDEEM_COUNT_LIMIT}次），请明日再操作")
+    except Exception as e:
+        return f"赎回次数查询失败: {e}"
+    return None
+
+
+def _check_contact_format(field: str, value: str) -> Optional[str]:
+    """
+    联系方式格式校验：手机号/邮箱
+    返回 None 表示通过，否则返回错误信息
+    """
+    if not value or not value.strip():
+        return "联系方式不能为空"
+    value = value.strip()
+    if field == "phone":
+        if not _PHONE_RE.match(value):
+            return f"手机号格式错误：{value}，应为11位大陆手机号（1开头）"
+    elif field == "email":
+        if not _EMAIL_RE.match(value):
+            return f"邮箱格式错误：{value}"
+    return None
+
+
+async def _check_transfer_eligibility(to_id: int, db) -> Optional[str]:
+    """
+    转入方资格校验：检查转入方账户是否可以接收转账
+    返回 None 表示通过，否则返回错误信息
+    """
+    try:
+        row = await db.execute(
+            text("SELECT status FROM sys_user WHERE id = :id"),
+            {"id": to_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return "转入方账户不存在"
+        status = row["status"]
+        if status == "注销":
+            return "转入方账户已注销，无法接收转账"
+        if status == "冻结":
+            return "转入方账户已冻结，无法正常接收转账（资金可能被冻结）"
+    except Exception as e:
+        return f"转入方资格查询失败: {e}"
+    return None
+
+
+async def _check_min_remaining_shares(customer_id: int, product_id: int,
+                                       redeem_shares: float, db) -> Optional[str]:
+    """
+    最低保留份额校验：赎回后剩余份额不得低于 _MIN_REMAINING_SHARES，
+    否则需要全部赎回。
+    返回 None 表示通过，否则返回错误信息
+    """
+    try:
+        row = await db.execute(
+            text("SELECT shares FROM fin_holdings "
+                 "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中'"),
+            {"cid": customer_id, "pid": product_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None  # 无持仓，让下游处理
+        holding = Decimal(str(row["shares"] or 0))
+        redeem = Decimal(str(redeem_shares))
+        remaining = holding - redeem
+        # 剩余份额在 (0, _MIN_REMAINING_SHARES) 范围内，提示需全部赎回
+        if remaining > 0 and remaining < Decimal(str(_MIN_REMAINING_SHARES)):
+            return (f"⚠️ 赎回后剩余份额 {remaining} 份，"
+                    f"低于最低持有要求 {_MIN_REMAINING_SHARES} 份。"
+                    f"请全部赎回（{holding} 份）或减少赎回份额")
+    except Exception as e:
+        return f"最低保留份额校验失败: {e}"
+    return None
+
+
+# ==================== P5 新增校验 ====================
+
+
+def _check_purchase_amount_multiple(amount: float) -> Optional[str]:
+    """
+    申购金额整数倍校验：申购金额必须是 _PURCHASE_AMOUNT_MULTIPLE 的整数倍
+    基金申购通常为 100 的整数倍（货币基金除外，但此处统一校验，
+    货币基金可通过产品配置豁免，暂不实现）
+    返回 None 表示通过，否则返回错误信息
+    """
+    if amount <= 0:
+        return None  # 由 _safe_float 处理
+    amt = Decimal(str(amount))
+    multiple = Decimal(str(_PURCHASE_AMOUNT_MULTIPLE))
+    if amt % multiple != 0:
+        return (f"🚫 申购金额必须为 {_PURCHASE_AMOUNT_MULTIPLE} 元的整数倍，"
+                f"当前金额 {amount} 元")
+    return None
+
+
+def _check_min_transfer_amount(amount: float) -> Optional[str]:
+    """
+    转账最低金额校验：避免无意义的小额转账（如 0.01 元）
+    返回 None 表示通过，否则返回错误信息
+    """
+    if amount < _MIN_TRANSFER_AMOUNT:
+        return (f"🚫 转账金额不得低于 {_MIN_TRANSFER_AMOUNT} 元，"
+                f"当前金额 {amount} 元")
+    return None
+
+
+async def _check_product_min_purchase_amount(product_id: int, amount: float,
+                                             db) -> Optional[str]:
+    """
+    产品最低起购金额校验：申购金额不得低于产品设定的最低起购金额
+    返回 None 表示通过，否则返回错误信息
+    注：若 fin_product 表尚未添加 min_purchase_amount 字段，则跳过校验
+    """
+    try:
+        row = await db.execute(
+            text("SELECT min_purchase_amount, product_name FROM fin_product "
+                 "WHERE id = :pid"),
+            {"pid": product_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None  # 产品信息获取失败，让下游处理
+        min_amount = row.get("min_purchase_amount")
+        if min_amount is None:
+            return None  # 未配置，跳过
+        if Decimal(str(amount)) < Decimal(str(min_amount)):
+            product_name = row.get("product_name", "")
+            return (f"🚫 产品【{product_name}】最低起购金额为 {min_amount} 元，"
+                    f"当前申购金额 {amount} 元不足")
+    except Exception as e:
+        err_str = str(e).lower()
+        # 字段不存在时跳过校验（DB 尚未迁移）
+        if "unknown column" in err_str or "no such column" in err_str:
+            return None
+        return f"产品起购金额查询失败: {e}"
+    return None
+
+
+async def _check_product_raise_quota(product_id: int, amount: float,
+                                     db) -> Optional[str]:
+    """
+    产品剩余额度校验：募集类基金产品有规模上限，申购时需检查剩余额度
+    返回 None 表示通过，否则返回错误信息
+    注：若 fin_product 表尚未添加 max_raise_amount 字段，则跳过校验
+    """
+    try:
+        row = await db.execute(
+            text("SELECT max_raise_amount, raised_amount, product_name "
+                 "FROM fin_product WHERE id = :pid"),
+            {"pid": product_id},
+        )
+        row = row.mappings().first()
+        if not row:
+            return None
+        max_raise = row.get("max_raise_amount")
+        if max_raise is None or max_raise == 0:
+            return None  # 未设置规模上限，跳过
+        raised = Decimal(str(row.get("raised_amount") or 0))
+        max_amt = Decimal(str(max_raise))
+        quota = max_amt - raised
+        if quota < Decimal(str(amount)):
+            product_name = row.get("product_name", "")
+            return (f"🚫 产品【{product_name}】募集额度不足："
+                    f"剩余额度 {quota} 元，本次申购 {amount} 元")
+    except Exception as e:
+        err_str = str(e).lower()
+        # 字段不存在时跳过校验（DB 尚未迁移）
+        if "unknown column" in err_str or "no such column" in err_str:
+            return None
+        return f"产品额度查询失败: {e}"
+    return None
+
+
+def _check_redeem_shares_precision(shares: float) -> Optional[str]:
+    """
+    赎回份额精度校验：赎回份额最多保留 _REDEEM_SHARES_DECIMAL_PLACES 位小数
+    返回 None 表示通过，否则返回错误信息
+    """
+    if shares <= 0:
+        return None  # 由 _safe_float 处理
+    s = Decimal(str(shares))
+    # as_tuple().exponent 为负数表示小数位数
+    decimal_places = abs(s.as_tuple().exponent)
+    if decimal_places > _REDEEM_SHARES_DECIMAL_PLACES:
+        return (f"🚫 赎回份额最多保留 {_REDEEM_SHARES_DECIMAL_PLACES} 位小数，"
+                f"当前 {shares} 位精度过高")
+    return None
+
+
+async def _check_suspicious_repeat(customer_id: int, reason: str,
+                                   db) -> Optional[str]:
+    """
+    可疑交易防重复上报：同一客户在 _SUSPICIOUS_REPEAT_WINDOW_HOURS 小时内
+    是否已有相似原因的上报记录（用于提示，非阻断）
+    返回 None 表示通过，否则返回警告信息
+    注：若 fin_suspicious_report 表不存在，则跳过校验
+    """
+    try:
+        # 取最近的 reason 做相似度比对（简化：完全相同视为重复）
+        row = await db.execute(
+            text("""
+                SELECT reason, create_time FROM fin_suspicious_report
+                WHERE customer_id = :cid
+                  AND create_time >= DATE_SUB(NOW(), INTERVAL :hours HOUR)
+                ORDER BY create_time DESC LIMIT 5
+            """),
+            {"cid": customer_id, "hours": _SUSPICIOUS_REPEAT_WINDOW_HOURS},
+        )
+        rows = row.mappings().all()
+        if not rows:
+            return None
+        reason_stripped = reason.strip()
+        for r in rows:
+            if r.get("reason", "").strip() == reason_stripped:
+                last_time = r.get("create_time")
+                time_str = last_time.strftime("%m-%d %H:%M") if last_time else "近期"
+                return (f"⚠️ 该客户于 {time_str} 已上报过相同原因，"
+                        f"请确认是否需要重复上报")
+    except Exception:
+        pass  # 查询失败（包括表不存在）不阻断
+    return None
+
+
+
 
 # 使用 AsyncOpenAI 异步客户端，避免阻塞事件循环
 _http_client = httpx.AsyncClient(trust_env=False, timeout=settings.llm.openai_timeout)
@@ -218,8 +757,11 @@ _CONFIRM_TTL = 120  # 120 秒有效
 
 
 async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
-                                 user_id: int, user_role: str) -> bool:
-    """将待确认操作存入 Redis，等待用户确认。返回是否保存成功。"""
+                                 user_id: int, user_role: str,
+                                 note_required: bool = False) -> bool:
+    """将待确认操作存入 Redis，等待用户确认。返回是否保存成功。
+    note_required: 大额操作(≥50万)是否强制要求操作员填写备注原因。
+    """
     try:
         from app.config.database import get_redis
         r = await get_redis()
@@ -229,7 +771,7 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
             _CONFIRM_TTL,
             json.dumps({"action": action, "arguments": arguments,
                         "user_id": user_id, "user_role": user_role,
-                        "summary": summary}),
+                        "summary": summary, "note_required": note_required}),
         )
         return True
     except Exception:
@@ -266,17 +808,25 @@ def _build_confirmation_summary(action: str, arguments: dict) -> str:
     2. 存入 Redis，确认时校验一致性
     """
     if action == "purchase_product":
-        return (f"申购：客户 {arguments.get('customer_name','')} "
-                f"购买 {arguments.get('product_name','')}，"
-                f"金额 {arguments.get('amount', 0)} 元")
+        amount = arguments.get('amount', 0)
+        summary = (f"申购：客户 {arguments.get('customer_name','')} "
+                   f"购买 {arguments.get('product_name','')}，"
+                   f"金额 {amount} 元")
+        if amount >= _LARGE_AMOUNT_NOTE_THRESHOLD:
+            summary += "\n⚠️ 大额操作，请回复'确认 备注：<原因>'（如：确认 备注：客户主动要求）"
+        return summary
     if action == "redeem_product":
         return (f"赎回：客户 {arguments.get('customer_name','')} "
                 f"赎回 {arguments.get('product_name','')}，"
                 f"份额 {arguments.get('shares', 0)}")
     if action == "transfer_funds":
-        return (f"转账：{arguments.get('from_customer_name','')} → "
-                f"{arguments.get('to_customer_name','')}，"
-                f"金额 {arguments.get('amount', 0)} 元")
+        amount = arguments.get('amount', 0)
+        summary = (f"转账：{arguments.get('from_customer_name','')} → "
+                   f"{arguments.get('to_customer_name','')}，"
+                   f"金额 {amount} 元")
+        if amount >= _LARGE_AMOUNT_NOTE_THRESHOLD:
+            summary += "\n⚠️ 大额操作，请回复'确认 备注：<原因>'（如：确认 备注：内部资金调拨）"
+        return summary
     return f"执行 {action}，参数 {arguments}"
 
 # ==================== RBAC 权限矩阵 ====================
@@ -578,6 +1128,13 @@ def needs_confirmation(action: str, amount: float = 0) -> bool:
 
 async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None) -> dict:
     """执行工具函数"""
+    # 写操作需要有效的 operator_id 用于审计留痕
+    _WRITE_OPS = {"purchase_product", "redeem_product", "transfer_funds",
+                  "redo_assessment", "update_contact", "report_suspicious",
+                  "create_work_order"}
+    if tool_name in _WRITE_OPS and not operator_id:
+        return {"success": False, "message": "系统异常：操作员身份未识别，请重新登录后再试"}
+
     if tool_name == "purchase_product":
         customer_name = arguments.get("customer_name", "")
         product_name = arguments.get("product_name", "")
@@ -597,13 +1154,58 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         # P0 校验：客户状态 + 适当性匹配
         from app.config.database import async_session_factory
         async with async_session_factory() as db:
+            # P5 新增：申购金额必须为 100 的整数倍
+            amount_mult_err = _check_purchase_amount_multiple(amount)
+            if amount_mult_err:
+                return {"success": False, "message": amount_mult_err}
+
+            # P5 新增：产品最低起购金额校验
+            min_purchase_err = await _check_product_min_purchase_amount(product_id, amount, db)
+            if min_purchase_err:
+                return {"success": False, "message": min_purchase_err}
+
+            # P5 新增：产品剩余额度校验
+            quota_err = await _check_product_raise_quota(product_id, amount, db)
+            if quota_err:
+                return {"success": False, "message": quota_err}
+
+            # P4 新增：产品状态前置校验
+            prod_status_err = await _check_product_status(product_id, "purchase", db)
+            if prod_status_err:
+                return {"success": False, "message": prod_status_err}
+
             status_err = await _check_customer_status(customer_id, db)
             if status_err:
                 return {"success": False, "message": status_err}
 
-            suitability_err = await _check_suitability(customer_id, product_id, db)
+            suitability_err, exemption_warn = await _check_suitability_combined(customer_id, product_id, db)
             if suitability_err:
                 return {"success": False, "message": suitability_err}
+
+            # P3 新增校验：风评有效期
+            validity_err = await _check_risk_assessment_validity(customer_id, db)
+            if validity_err:
+                return {"success": False, "message": validity_err}
+
+            # P3 新增校验：单日累计限额
+            cumulative_err = await _check_daily_cumulative(customer_id, amount, db)
+            if cumulative_err:
+                return {"success": False, "message": cumulative_err}
+
+            # P3 新增校验：风控标记 + 待处理预警
+            risk_warnings = []
+            # 适当性豁免警告（C3→R4 / C4→R5 需签署风险揭示书，非阻断）
+            if exemption_warn:
+                risk_warnings.append(exemption_warn)
+            risk_warn = await _check_risk_flag(customer_id, db, "客户")
+            if risk_warn:
+                risk_warnings.append(risk_warn)
+            alerts_warn = await _check_pending_risk_alerts(customer_id, db, "客户")
+            if alerts_warn:
+                risk_warnings.append(alerts_warn)
+
+        # P3 新增校验：交易时间（非阻断，附加提示）
+        trading_warn = _check_trading_hours()
 
         # 调用申购接口（需要传入 db session，这里简化处理）
         async with async_session_factory() as db:
@@ -616,9 +1218,16 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
                 },
                 db=db,
             )
+            msg = result.message
+            # 附加交易时间警告
+            if result.code == 200 and trading_warn:
+                msg = f"{msg}（{trading_warn}）"
+            # 附加风控警告
+            if result.code == 200 and risk_warnings:
+                msg = f"{msg}\n\n⚠️ 风控提示:\n" + "\n".join(risk_warnings)
             return {
                 "success": result.code == 200,
-                "message": result.message,
+                "message": msg,
                 "data": result.data,
             }
 
@@ -670,6 +1279,12 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         shares, err = _safe_float(arguments.get("shares", 0), "赎回份额")
         if err:
             return {"success": False, "message": err}
+
+        # P5 新增：赎回份额精度校验
+        precision_err = _check_redeem_shares_precision(shares)
+        if precision_err:
+            return {"success": False, "message": precision_err}
+
         customer_id = await resolve_customer_id(customer_name)
         if not customer_id:
             return {"success": False, "message": f"未找到客户: {customer_name}"}
@@ -677,9 +1292,17 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         if not product_id:
             return {"success": False, "message": f"未找到产品: {product_name}"}
 
+        # P3 新增校验：交易时间（非阻断，附加提示）
+        trading_warn = _check_trading_hours()
+
         # P0 校验：客户状态 + 持仓充足
         from app.config.database import async_session_factory
         async with async_session_factory() as db:
+            # P4 新增：产品状态前置校验
+            prod_status_err = await _check_product_status(product_id, "redeem", db)
+            if prod_status_err:
+                return {"success": False, "message": prod_status_err}
+
             status_err = await _check_customer_status(customer_id, db)
             if status_err:
                 return {"success": False, "message": status_err}
@@ -688,9 +1311,55 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
             if holdings_err:
                 return {"success": False, "message": holdings_err}
 
+            # P4 新增：单日赎回次数限制
+            redeem_count_err = await _check_daily_redeem_count(customer_id, product_id, db)
+            if redeem_count_err:
+                return {"success": False, "message": redeem_count_err}
+
+            # 赎回纳入单日累计限额（按持仓估算赎回金额）
+            holding_row = await db.execute(
+                text("SELECT shares, current_value, cost_amount FROM fin_holdings "
+                     "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中'"),
+                {"cid": customer_id, "pid": product_id},
+            )
+            holding = holding_row.mappings().first()
+            if holding and holding["shares"] and holding["shares"] > 0:
+                # current_value 可能为 NULL（净值未更新等场景），fallback 到 cost_amount
+                raw_value = holding["current_value"]
+                if raw_value is None or float(raw_value) <= 0:
+                    raw_value = holding.get("cost_amount") or 0
+                est_price = float(raw_value) / float(holding["shares"])
+                est_redeem_amount = shares * est_price
+                cumulative_err = await _check_daily_cumulative(customer_id, est_redeem_amount, db)
+                if cumulative_err:
+                    return {"success": False, "message": cumulative_err}
+
+            # P4 新增：最低保留份额校验（非阻断，提示）
+            min_shares_warn = await _check_min_remaining_shares(customer_id, product_id, shares, db)
+            # 收集为警告，不阻断（因为全部赎回时 remaining=0 是合法的）
+
+            # P3 新增校验：风控标记 + 待处理预警
+            risk_warnings = []
+            risk_warn = await _check_risk_flag(customer_id, db, "客户")
+            if risk_warn:
+                risk_warnings.append(risk_warn)
+            alerts_warn = await _check_pending_risk_alerts(customer_id, db, "客户")
+            if alerts_warn:
+                risk_warnings.append(alerts_warn)
+
         async with async_session_factory() as db:
             result = await redeem_product(body={"customer_id": customer_id, "product_id": product_id, "shares": shares, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
+            msg = result.message
+            # 附加交易时间警告
+            if result.code == 200 and trading_warn:
+                msg = f"{msg}（{trading_warn}）"
+            # 附加最低保留份额警告
+            if result.code == 200 and min_shares_warn:
+                msg = f"{msg}\n\n{min_shares_warn}"
+            # 附加风控警告
+            if result.code == 200 and risk_warnings:
+                msg = f"{msg}\n\n⚠️ 风控提示:\n" + "\n".join(risk_warnings)
+            return {"success": result.code == 200, "message": msg, "data": result.data}
 
     elif tool_name == "transfer_funds":
         from_name = arguments.get("from_customer_name", "")
@@ -698,12 +1367,26 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         amount, err = _safe_float(arguments.get("amount", 0), "转账金额")
         if err:
             return {"success": False, "message": err}
+
+        # P5 新增：转账最低金额校验
+        min_transfer_err = _check_min_transfer_amount(amount)
+        if min_transfer_err:
+            return {"success": False, "message": min_transfer_err}
+
         from_id = await resolve_customer_id(from_name)
         to_id = await resolve_customer_id(to_name)
         if not from_id:
             return {"success": False, "message": f"未找到转出客户: {from_name}"}
         if not to_id:
             return {"success": False, "message": f"未找到转入客户: {to_name}"}
+
+        # P3 新增校验：自转账检测
+        self_transfer_err = _check_self_transfer(from_id, to_id)
+        if self_transfer_err:
+            return {"success": False, "message": self_transfer_err}
+
+        # P3 新增校验：交易时间（非阻断，附加提示）
+        trading_warn = _check_trading_hours()
 
         # P0 校验：转出方状态 + 余额充足 + 转入方状态
         from app.config.database import async_session_factory
@@ -716,13 +1399,43 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
             if balance_err:
                 return {"success": False, "message": balance_err}
 
-            to_status_err = await _check_customer_status(to_id, db)
-            if to_status_err:
-                return {"success": False, "message": f"转入方{to_status_err}"}
+            # 转入方资格校验（比通用状态检查提供更精确的错误信息）
+            to_eligibility_err = await _check_transfer_eligibility(to_id, db)
+            if to_eligibility_err:
+                return {"success": False, "message": to_eligibility_err}
+
+            # P3 新增校验：单日累计限额
+            cumulative_err = await _check_daily_cumulative(from_id, amount, db)
+            if cumulative_err:
+                return {"success": False, "message": cumulative_err}
+
+            # P3 新增校验：风控标记（转出方 + 转入方）
+            risk_warnings = []
+            from_risk_warn = await _check_risk_flag(from_id, db, "转出方")
+            if from_risk_warn:
+                risk_warnings.append(from_risk_warn)
+            to_risk_warn = await _check_risk_flag(to_id, db, "转入方")
+            if to_risk_warn:
+                risk_warnings.append(to_risk_warn)
+
+            # P3 新增校验：待处理风控预警（转出方 + 转入方）
+            from_alerts_warn = await _check_pending_risk_alerts(from_id, db, "转出方")
+            if from_alerts_warn:
+                risk_warnings.append(from_alerts_warn)
+            to_alerts_warn = await _check_pending_risk_alerts(to_id, db, "转入方")
+            if to_alerts_warn:
+                risk_warnings.append(to_alerts_warn)
 
         async with async_session_factory() as db:
             result = await transfer_funds(body={"from_customer_id": from_id, "to_customer_id": to_id, "amount": amount, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
+            msg = result.message
+            # 附加交易时间警告
+            if result.code == 200 and trading_warn:
+                msg = f"{msg}（{trading_warn}）"
+            # 附加风控警告
+            if result.code == 200 and risk_warnings:
+                msg = f"{msg}\n\n⚠️ 风控提示:\n" + "\n".join(risk_warnings)
+            return {"success": result.code == 200, "message": msg, "data": result.data}
 
     elif tool_name == "redo_assessment":
         customer_name = arguments.get("customer_name", "")
@@ -733,6 +1446,17 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         if not answers:
             return {"success": False, "message": "请先让客户完成风险评估问卷，获取答案后再执行风评重做"}
 
+        # 逐题校验：每道答案必须为 1-20 的整数
+        if not isinstance(answers, list):
+            return {"success": False, "message": "answers 必须为列表"}
+        for i, ans in enumerate(answers):
+            try:
+                v = int(ans)
+                if v < 1 or v > 20:
+                    return {"success": False, "message": f"第{i+1}题答案 {ans} 超出范围（应为 1-20）"}
+            except (ValueError, TypeError):
+                return {"success": False, "message": f"第{i+1}题答案 {ans} 格式错误（应为整数）"}
+
         # P0 校验：客户状态
         from app.config.database import async_session_factory
         async with async_session_factory() as db:
@@ -740,9 +1464,24 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
             if status_err:
                 return {"success": False, "message": status_err}
 
+            # 防重复提示：24小时内已做过风评
+            recent_row = await db.execute(
+                text("SELECT create_time FROM fin_risk_assessment "
+                     "WHERE customer_id = :cid "
+                     "AND create_time >= DATE_SUB(NOW(), INTERVAL 1 DAY) "
+                     "ORDER BY create_time DESC LIMIT 1"),
+                {"cid": customer_id},
+            )
+            recent = recent_row.mappings().first()
+
         async with async_session_factory() as db:
             result = await redo_assessment(body={"customer_id": customer_id, "answers": answers, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
+            msg = result.message
+            # 附加防重复提示（非阻断）
+            if result.code == 200 and recent:
+                last_time = recent["create_time"].strftime("%Y-%m-%d %H:%M") if recent.get("create_time") else "近期"
+                msg = f"{msg}\n\n⚠️ 提示：该客户于 {last_time} 刚完成过风评，请确认是否需要重做"
+            return {"success": result.code == 200, "message": msg, "data": result.data}
 
     elif tool_name == "update_contact":
         customer_name = arguments.get("customer_name", "")
@@ -751,6 +1490,15 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         customer_id = await resolve_customer_id(customer_name)
         if not customer_id:
             return {"success": False, "message": f"未找到客户: {customer_name}"}
+
+        # P4 新增：联系方式格式校验
+        format_err = _check_contact_format(field, value)
+        if format_err:
+            return {"success": False, "message": format_err}
+
+        # 字段值长度校验（防止超长输入溢出）
+        if len(value.strip()) > 128:
+            return {"success": False, "message": f"联系方式长度超限（最大128字符），当前: {len(value)} 字符"}
 
         # P0 校验：客户状态
         from app.config.database import async_session_factory
@@ -770,16 +1518,28 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         if not customer_id:
             return {"success": False, "message": f"未找到客户: {customer_name}"}
 
-        # P0 校验：客户状态
+        # 原因内容校验
+        if not reason or not reason.strip():
+            return {"success": False, "message": "可疑交易上报原因不能为空"}
+        if len(reason) > 2000:
+            return {"success": False, "message": f"上报原因长度超限（最大2000字符），当前: {len(reason)} 字符"}
+
+        # P5 新增：防重复上报提示（非阻断）+ P0 客户状态校验（合并为同一 session）
+        repeat_warn = None
         from app.config.database import async_session_factory
         async with async_session_factory() as db:
+            repeat_warn = await _check_suspicious_repeat(customer_id, reason, db)
             status_err = await _check_customer_status(customer_id, db)
             if status_err:
                 return {"success": False, "message": status_err}
 
         async with async_session_factory() as db:
             result = await report_suspicious(body={"customer_id": customer_id, "reason": reason, "reporter_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
+            msg = result.message
+            # 附加防重复提示
+            if result.code == 200 and repeat_warn:
+                msg = f"{msg}\n\n{repeat_warn}"
+            return {"success": result.code == 200, "message": msg, "data": result.data}
 
     elif tool_name == "create_work_order":
         customer_name = arguments.get("customer_name", "")
@@ -788,6 +1548,16 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         customer_id = await resolve_customer_id(customer_name)
         if not customer_id:
             return {"success": False, "message": f"未找到客户: {customer_name}"}
+
+        # 工单内容校验
+        if not content or not content.strip():
+            return {"success": False, "message": "工单内容不能为空"}
+        if len(content) > 5000:
+            return {"success": False, "message": f"工单内容长度超限（最大5000字符），当前: {len(content)} 字符"}
+        # 工单类型白名单
+        _VALID_ORDER_TYPES = {"投诉", "建议", "咨询", "风控", "其他"}
+        if order_type not in _VALID_ORDER_TYPES:
+            return {"success": False, "message": f"工单类型无效: {order_type}，可选: {', '.join(_VALID_ORDER_TYPES)}"}
 
         # P0 校验：客户状态
         from app.config.database import async_session_factory
@@ -807,6 +1577,25 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         transaction_type = arguments.get("transaction_type", "")
         min_amount = arguments.get("min_amount", 0)
         days = arguments.get("days", 30)
+
+        # 参数上限校验（防止 DoS / 异常查询）
+        try:
+            days = int(days)
+            min_amount = float(min_amount)
+        except (ValueError, TypeError):
+            return {"success": False, "message": "days 和 min_amount 必须为数字"}
+        if days < 1 or days > 365:
+            return {"success": False, "message": f"查询天数 days 超出范围（1-365），当前: {days}"}
+        if min_amount < 0:
+            return {"success": False, "message": "min_amount 不能为负数"}
+        if min_amount > _MAX_AMOUNT:
+            return {"success": False, "message": f"min_amount 超过上限（{_MAX_AMOUNT}元）"}
+
+        # transaction_type 白名单校验（防止 LLM 幻觉传入非法值）
+        if transaction_type and transaction_type not in _TRANSACTION_TYPE_WHITELIST:
+            return {"success": False,
+                    "message": f"无效的交易类型: {transaction_type}，"
+                               f"可选: {', '.join(sorted(_TRANSACTION_TYPE_WHITELIST))}"}
 
         # 构建查询条件
         conditions = ["1=1"]
@@ -948,14 +1737,19 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         # 8. 行业分布
         industry = await get_industry_distribution(customer_name)
 
-        # 组装全景数据
+        # 组装全景数据（手机号/邮箱脱敏，防止 data 字段绕过 mask_text）
+        _phone_raw = user.get("phone", "") or ""
+        _email_raw = user.get("email", "") or ""
+        _phone_masked = (_phone_raw[:3] + "****" + _phone_raw[-4:]) if len(_phone_raw) >= 7 else _phone_raw
+        _email_masked = (_email_raw[:2] + "***" + _email_raw[_email_raw.index("@"):]) if "@" in _email_raw else _email_raw
+
         panoramic = {
             "customer_id": customer_id,
             "customer_name": customer_name,
             "basic_info": {
                 "real_name": user["real_name"],
-                "phone": user.get("phone", ""),
-                "email": user.get("email", ""),
+                "phone": _phone_masked,
+                "email": _email_masked,
                 "balance": float(user.get("balance", 0)),
                 "status": user.get("status", "正常"),
                 "register_time": user["create_time"].strftime("%Y-%m-%d") if user.get("create_time") else "",
@@ -1000,6 +1794,14 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         risk_level = arguments.get("risk_level", "")
         status = arguments.get("status", "")
 
+        # 参数上限校验
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            return {"success": False, "message": "limit 必须为整数"}
+        if limit < 1 or limit > 500:
+            return {"success": False, "message": f"limit 超出范围（1-500），当前: {limit}"}
+
         # 构建查询条件
         conditions = ["u.user_type = 'CUSTOMER'"]
         params = {"limit": limit}
@@ -1011,31 +1813,33 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
         # 查询客户列表
         from app.config.database import async_session_factory
         async with async_session_factory() as db:
-            # 基础查询
-            base_query = f"""
-                SELECT u.id, u.real_name, u.phone, u.email, u.balance, u.status, u.create_time
-                FROM sys_user u
-                WHERE {' AND '.join(conditions)}
-                ORDER BY u.create_time DESC
-                LIMIT :limit
-            """
+            # 如果有风险等级筛选，用 JOIN 一次查完（避免 N+1）
+            if risk_level:
+                base_query = f"""
+                    SELECT u.id, u.real_name, u.phone, u.email, u.balance, u.status, u.create_time
+                    FROM sys_user u
+                    INNER JOIN (
+                        SELECT customer_id, risk_level,
+                               ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY create_time DESC) AS rn
+                        FROM fin_risk_assessment
+                    ) ra ON ra.customer_id = u.id AND ra.rn = 1
+                    WHERE {' AND '.join(conditions)}
+                      AND ra.risk_level = :risk_level
+                    ORDER BY u.create_time DESC
+                    LIMIT :limit
+                """
+                params["risk_level"] = risk_level
+            else:
+                base_query = f"""
+                    SELECT u.id, u.real_name, u.phone, u.email, u.balance, u.status, u.create_time
+                    FROM sys_user u
+                    WHERE {' AND '.join(conditions)}
+                    ORDER BY u.create_time DESC
+                    LIMIT :limit
+                """
 
             result = await db.execute(text(base_query), params)
             customers = result.mappings().all()
-
-            # 如果有风险等级筛选，需要联表查询
-            if risk_level:
-                filtered_customers = []
-                for c in customers:
-                    risk_row = await db.execute(
-                        text("SELECT risk_level FROM fin_risk_assessment "
-                             "WHERE customer_id = :cid ORDER BY create_time DESC LIMIT 1"),
-                        {"cid": c["id"]}
-                    )
-                    risk = risk_row.mappings().first()
-                    if risk and risk["risk_level"] == risk_level:
-                        filtered_customers.append(c)
-                customers = filtered_customers
 
         customer_list = []
         for c in customers:
@@ -1065,6 +1869,155 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
     return {"success": False, "message": f"未知工具: {tool_name}"}
 
 
+# ==================== 记忆归档辅助 ====================
+
+async def _archive_memory(memory: "SessionMemory", user_id: int) -> None:
+    """将会话记忆归档到 MySQL（静默失败，不影响主流程）"""
+    try:
+        from app.config.database import async_session_factory
+        async with async_session_factory() as db:
+            await memory.archive(db, user_id, agent_type="operator")
+    except Exception:
+        pass  # 归档失败不影响主流程
+
+
+async def _recall_recent_operations(user_id: int) -> str:
+    """
+    跨 session 记忆召回：从 conversation_archive 中回忆该员工近期的操作记录。
+    返回简洁的文本摘要，注入到系统提示词中。
+    """
+    if not user_id:
+        return ""
+    try:
+        from sqlalchemy import text
+        from app.config.database import async_session_factory
+        async with async_session_factory() as db:
+            result = await db.execute(
+                text("""
+                    SELECT content, create_time
+                    FROM conversation_archive
+                    WHERE user_id = :uid AND agent_type = 'operator' AND role = 'assistant'
+                      AND (content LIKE '%✅%' OR content LIKE '%操作%' OR content LIKE '%成功%')
+                    ORDER BY create_time DESC
+                    LIMIT 10
+                """),
+                {"uid": user_id},
+            )
+            rows = result.mappings().all()
+
+        if not rows:
+            return ""
+
+        # 从归档内容中提取关键操作摘要
+        summaries = []
+        for row in rows:
+            content = row["content"] or ""
+            time_str = row["create_time"].strftime("%m-%d %H:%M") if row.get("create_time") else ""
+            # 提取第一行作为摘要（通常是操作结果标题）
+            first_line = content.split("\n")[0][:80]
+            if first_line:
+                summaries.append(f"[{time_str}] {first_line}")
+
+        if summaries:
+            return "近期操作:\n" + "\n".join(summaries[:5])
+        return ""
+    except Exception:
+        return ""
+
+
+# ==================== 审计工单自动创建 ====================
+
+# 需要自动创建审计工单的操作
+_AUDIT_OPS = {"purchase_product", "redeem_product", "transfer_funds"}
+
+
+async def _create_audit_work_order(action: str, arguments: dict, data: dict,
+                                    operator_id: int) -> None:
+    """
+    操作成功后自动创建审计工单，记录操作人、操作内容、执行结果。
+    用于事后审计留痕（对应功能设计文档 §6.4 要求）。
+    失败不阻断主流程。
+    """
+    import logging
+    logger = logging.getLogger("operator_agent.audit")
+
+    if action not in _AUDIT_OPS:
+        return
+
+    try:
+        from app.config.database import async_session_factory
+
+        # 提取客户ID
+        customer_id = arguments.get("customer_id") or arguments.get("customer_name", "")
+        if isinstance(customer_id, str):
+            cid = await resolve_customer_id(customer_id)
+            if not cid:
+                return
+            customer_id = cid
+
+        # 构造审计内容
+        if action == "purchase_product":
+            detail = (f"申购：产品 {arguments.get('product_name', '')}，"
+                      f"金额 {arguments.get('amount', 0)} 元")
+        elif action == "redeem_product":
+            detail = (f"赎回：产品 {arguments.get('product_name', '')}，"
+                      f"份额 {arguments.get('shares', 0)}")
+        elif action == "transfer_funds":
+            detail = (f"转账：{arguments.get('from_customer_name', '')} → "
+                      f"{arguments.get('to_customer_name', '')}，"
+                      f"金额 {arguments.get('amount', 0)} 元")
+        else:
+            detail = f"操作 {action}"
+
+        txn_no = (data or {}).get("transaction_no", "")
+        if txn_no:
+            detail += f"，流水号 {txn_no}"
+
+        note = arguments.get("operator_note", "")
+        if note:
+            detail += f"，操作员备注：{note}"
+
+        wo_no = f"AUD{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
+        biz_json = json.dumps({
+            "action": action,
+            "detail": detail,
+            "arguments": {k: v for k, v in arguments.items() if k != "operator_note"},
+            "result": {"transaction_no": txn_no},
+            "auto_created": True,
+        }, ensure_ascii=False)
+
+        async with async_session_factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO biz_work_order
+                    (work_order_no, order_type, customer_id, submitter_id,
+                     status, current_node, remark, biz_content, create_time)
+                    VALUES (:n, '操作审计', :c, :s, '已完成', '系统自动',
+                            :r, :b, NOW())
+                """),
+                {"n": wo_no, "c": customer_id, "s": operator_id,
+                 "r": detail[:255], "b": biz_json},
+            )
+            await db.commit()
+        logger.info("审计工单已创建: %s | action=%s | customer=%s | op=%s",
+                     wo_no, action, customer_id, operator_id)
+    except Exception as e:
+        logger.warning("审计工单创建失败（不影响主流程）: %s", e)
+
+
+# ==================== 模块级常量（避免每次调用重复编译/构建） ====================
+
+# 确认消息正则：支持 "确认" / "确认 备注：xxx" / "确认，备注：xxx" 等格式
+_CONFIRM_RE = re.compile(
+    r"^(?:确认|确定|是的|好的|y|yes)"
+    r"(?:\s*(?:[,，:：]?\s*)备注\s*[:：]\s*(?P<note>.+))?$",
+    re.IGNORECASE,
+)
+
+# 审计日志查询 transaction_type 白名单（与 fin_transaction 实际存储值一致）
+_TRANSACTION_TYPE_WHITELIST = {"purchase", "redeem", "transfer_out", "transfer_in"}
+
+
 async def operator_chat(
     message: str,
     session_id: str = "",
@@ -1083,27 +2036,57 @@ async def operator_chat(
     await memory.add_message("user", message)
 
     # 0. 检查是否有待确认的操作（用户回复"确认"或"取消"）
+    # 修复：支持"确认 备注：xxx"格式，大额操作(≥50万)强制要求备注
     msg_stripped = message.strip()
-    if msg_stripped in ("确认", "确定", "是的", "好的", "y", "yes"):
+
+    # 解析确认消息：提取 "确认" + 可选 "备注：xxx"
+    # 支持格式：确认 / 确认 备注：xxx / 确认，备注：xxx / 确认：备注：xxx
+    # 注：_CONFIRM_RE 已在模块顶层定义，避免每次调用重复编译
+    _is_confirm = bool(_CONFIRM_RE.match(msg_stripped))
+    _note_match = _CONFIRM_RE.match(msg_stripped)
+    _parsed_note = _note_match.group("note").strip() if _note_match and _note_match.group("note") else ""
+
+    if _is_confirm:
         pending = await _load_pending_confirm(session_id)
         if pending:
+            # 大额备注强制校验：≥50万操作必须附带备注原因
+            note_required = pending.get("note_required", False)
+            if note_required and not _parsed_note:
+                reply = (
+                    "⚠️ 该操作金额超过 50 万元，请回复备注原因。\n"
+                    "格式：确认 备注：<原因>\n"
+                    "例如：确认 备注：客户主动要求购买"
+                )
+                await memory.add_message("assistant", reply)
+                return {"reply": reply, "action": pending["action"],
+                        "params": pending["arguments"], "status": "note_required",
+                        "session_id": session_id}
+
             await _delete_pending_confirm(session_id)
             action = pending["action"]
             arguments = pending["arguments"]
+            # 将备注写入 arguments，供下游审计使用
+            if _parsed_note:
+                arguments["operator_note"] = _parsed_note
             summary = pending.get("summary", _build_confirmation_summary(action, arguments))
             result = await execute_tool(action, arguments, operator_id=pending["user_id"])
             if result.get("success"):
                 reply = f"✅ 已确认执行：{summary}\n\n" + _format_success_reply(action, arguments, result.get("data"))
                 status = "ok"
+                # 确认操作也创建审计工单
+                await _create_audit_work_order(
+                    action, arguments, result.get("data", {}), pending["user_id"])
             else:
                 reply = f"❌ 确认操作执行失败：{summary}\n原因：{result.get('message', f'{action} 操作失败')}"
                 status = "error"
             await memory.add_message("assistant", reply)
+            await _archive_memory(memory, user_id)
             return {"reply": reply, "action": action, "params": arguments,
                     "status": status, "session_id": session_id}
         else:
             reply = "没有待确认的操作，请问您需要办理什么业务？"
             await memory.add_message("assistant", reply)
+            await _archive_memory(memory, user_id)
             return {"reply": reply,
                     "action": None, "params": {}, "status": "ok", "session_id": session_id}
 
@@ -1113,6 +2096,7 @@ async def operator_chat(
             await _delete_pending_confirm(session_id)
             reply = f"已取消 {pending['action']} 操作。"
             await memory.add_message("assistant", reply)
+            await _archive_memory(memory, user_id)
             return {"reply": reply,
                     "action": None, "params": {}, "status": "cancelled", "session_id": session_id}
 
@@ -1121,14 +2105,22 @@ async def operator_chat(
     if not allowed_actions:
         reply = f"抱歉，角色（{user_role}）没有任何业务操作权限，请联系管理员。"
         await memory.add_message("assistant", reply)
+        await _archive_memory(memory, user_id)
         return {"reply": reply, "action": None, "params": {},
                 "status": "permission_denied", "session_id": session_id}
     available_tools = [t for t in TOOLS if t["function"]["name"] in allowed_actions]
 
     # 2. 调用 LLM（Function Calling），附带历史上下文 + 仅可用工具
     history = await memory.get_messages(max_tokens=2048)
+
+    # 2.5 跨 session 记忆召回：回忆该员工近期操作历史
+    cross_session_context = await _recall_recent_operations(user_id)
+    system_content = SYSTEM_PROMPT
+    if cross_session_context:
+        system_content += f"\n\n# 你的近期操作记录\n{cross_session_context}"
+
     # 历史中已包含刚加入的 user message，直接拼接系统提示词
-    llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    llm_messages = [{"role": "system", "content": system_content}] + history
 
     try:
         response = await llm_client.chat.completions.create(
@@ -1141,6 +2133,7 @@ async def operator_chat(
     except Exception as e:
         reply = f"抱歉，系统暂时无法处理您的请求: {e}"
         await memory.add_message("assistant", reply)
+        await _archive_memory(memory, user_id)
         return {
             "reply": reply,
             "action": None,
@@ -1155,6 +2148,7 @@ async def operator_chat(
     if not msg.tool_calls:
         reply = mask_text(msg.content or "请问您需要办理什么业务？")
         await memory.add_message("assistant", reply)
+        await _archive_memory(memory, user_id)
         return {
             "reply": reply,
             "action": None,
@@ -1182,14 +2176,42 @@ async def operator_chat(
             continue
 
         # 6. 二次确认检查（存入 Redis，等待用户确认）
-        amount, amount_err = _safe_float(arguments.get("amount", 0), "金额")
-        if amount_err and needs_confirmation(action, 0):
-            # amount 非法但操作需要确认阈值，无法判断是否超阈值，拒绝
-            replies.append(f"⚠️ {amount_err}，无法执行 {action}")
-            actions_taken.append({"action": action, "status": "param_error"})
-            continue
-        if needs_confirmation(action, amount):
-            saved = await _save_pending_confirm(session_id, action, arguments, user_id, user_role)
+        # 赎回操作按估算金额判断阈值（非份额），与申购/转账统一
+        if action == "redeem_product":
+            shares_val, amount_err = _safe_float(arguments.get("shares", 0), "赎回份额")
+            if amount_err:
+                replies.append(f"⚠️ {amount_err}，无法执行 {action}")
+                actions_taken.append({"action": action, "status": "param_error"})
+                continue
+            # 估算赎回金额：需查 DB（持仓净值）
+            _cid = await resolve_customer_id(arguments.get("customer_name", ""))
+            _pid = await resolve_product_id(arguments.get("product_name", ""))
+            confirm_value = 0.0
+            if _cid and _pid:
+                from app.config.database import async_session_factory
+                async with async_session_factory() as _db:
+                    _hrow = await _db.execute(
+                        text("SELECT shares, current_value, cost_amount FROM fin_holdings "
+                             "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中'"),
+                        {"cid": _cid, "pid": _pid},
+                    )
+                    _h = _hrow.mappings().first()
+                    if _h and _h["shares"] and _h["shares"] > 0:
+                        _raw_val = _h["current_value"]
+                        if _raw_val is None or float(_raw_val) <= 0:
+                            _raw_val = _h.get("cost_amount") or 0
+                        _est_price = float(_raw_val) / float(_h["shares"])
+                        confirm_value = shares_val * _est_price
+        else:
+            confirm_value, amount_err = _safe_float(arguments.get("amount", 0), "金额")
+            if amount_err and needs_confirmation(action, 0):
+                replies.append(f"⚠️ {amount_err}，无法执行 {action}")
+                actions_taken.append({"action": action, "status": "param_error"})
+                continue
+        if needs_confirmation(action, confirm_value):
+            # 大额备注强制：金额 ≥ 50万 需操作员填写备注原因
+            note_required = confirm_value >= _LARGE_AMOUNT_NOTE_THRESHOLD
+            saved = await _save_pending_confirm(session_id, action, arguments, user_id, user_role, note_required=note_required)
             if not saved:
                 # Redis 不可用，无法保存确认状态，拒绝进入确认流程
                 reply = f"系统暂忙，无法处理大额 {action} 操作，请稍后再试"
@@ -1206,6 +2228,7 @@ async def operator_chat(
             if pending_count > 0:
                 reply += f"\n\n（另有 {pending_count} 个操作待处理，确认后将一并执行）"
             await memory.add_message("assistant", reply)
+            await _archive_memory(memory, user_id)
             return {
                 "reply": reply,
                 "action": action,
@@ -1221,6 +2244,8 @@ async def operator_chat(
         # 8. 构造单条回复
         if result.get("success"):
             replies.append(_format_success_reply(action, arguments, result.get("data")))
+            # 审计工单自动创建（先留痕，再触发下游事件；功能设计文档 §6.4）
+            await _create_audit_work_order(action, arguments, result.get("data", {}), user_id)
             # 事件广播（成功操作后发布到 Redis Pub/Sub）
             await publish_operation_event(
                 action=action,
@@ -1235,6 +2260,7 @@ async def operator_chat(
     final_status = "ok" if any(a.get("status") != "permission_denied" for a in actions_taken) else "permission_denied"
 
     await memory.add_message("assistant", combined_reply)
+    await _archive_memory(memory, user_id)
 
     return {
         "reply": combined_reply,

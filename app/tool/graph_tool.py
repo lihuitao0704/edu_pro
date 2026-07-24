@@ -46,12 +46,19 @@ class GraphTool:
             return await result.data()
 
     async def get_suitable_products(self, risk_level: str) -> List[dict]:
-        """查询适当性匹配产品"""
+        """查询适当性匹配产品（通过 CustomerRiskLevel/ProductRiskLevel 关系）"""
         driver = get_neo4j_driver()
+        # 如果传入的是产品风险等级(R1-R5)，转换为对应的客户风险等级(C1-C5)
+        crl_level = risk_level if risk_level.startswith("C") else f"C{risk_level[1:]}"
         async with driver.session(database=settings.neo4j.database) as session:
             result = await session.run(
-                "MATCH (r:RiskLevel {level: $level})-[:HAS_PRODUCT]->(p:Product) RETURN p",
-                level=risk_level,
+                """
+                MATCH (prl:ProductRiskLevel)-[:SUITABLE_FOR]->(crl:CustomerRiskLevel {level_code: $level})
+                MATCH (p:Product)-[:HAS_PRODUCT_RISK]->(prl)
+                WHERE p.status = '在售'
+                RETURN p
+                """,
+                level=crl_level,
             )
             records = await result.data()
             return [r.get("p", {}) for r in records]

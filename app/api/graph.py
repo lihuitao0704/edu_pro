@@ -75,22 +75,46 @@ async def graph_visualization(customer_id: int):
     # 3. 获取行业分布及产品归属关系
     product_industry = await neo4j.run_query(
         """
-        MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
-        RETURN p.id AS pid, i.industry_id AS iid, i.name AS industry_name
+        MATCH (c:Customer {id: $cid})-[h:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
+        WITH c, i, COUNT(p) AS product_count, SUM(h.current_value) AS industry_value
+        WITH c, SUM(industry_value) AS total_value,
+             COLLECT({iid: i.industry_id, name: i.name, count: product_count, value: industry_value}) AS industries
+        UNWIND industries AS ind
+        RETURN ind.iid AS iid, ind.name AS industry_name,
+               ind.count AS product_count, ind.value AS industry_value,
+               ROUND(ind.value / total_value * 100, 2) AS percentage
         """,
         {"cid": customer_id},
     )
     # 构建产品→行业边（仅实际存在的归属关系）
     seen_edges = set()
+    industry_nodes = {}
     for row in product_industry:
         iid = f"i_{row['iid']}"
+        industry_nodes[iid] = {
+            "id": iid,
+            "label": row["industry_name"],
+            "type": "industry",
+            "product_count": row["product_count"],
+            "industry_value": float(row["industry_value"]) if row.get("industry_value") else 0,
+            "percentage": float(row["percentage"]) if row.get("percentage") else 0,
+        }
+    # 添加行业节点（去重）
+    for iid, node in industry_nodes.items():
         if iid not in node_ids:
-            nodes.append({
-                "id": iid,
-                "label": row["industry_name"],
-                "type": "industry",
-            })
+            nodes.append(node)
             node_ids.add(iid)
+
+    # 查询产品→行业归属关系（用于边）
+    product_to_industry = await neo4j.run_query(
+        """
+        MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
+        RETURN p.id AS pid, i.industry_id AS iid
+        """,
+        {"cid": customer_id},
+    )
+    for row in product_to_industry:
+        iid = f"i_{row['iid']}"
         edge_key = (f"p_{row['pid']}", iid)
         if edge_key not in seen_edges:
             edges.append({
@@ -100,19 +124,19 @@ async def graph_visualization(customer_id: int):
             })
             seen_edges.add(edge_key)
 
-    # 4. 获取风险等级节点
+    # 4. 获取客户风险等级节点
     risk_data = await neo4j.run_single(
-        "MATCH (c:Customer {id: $cid})-[:HAS_RISK_LEVEL]->(r:RiskLevel) "
-        "RETURN r.level AS level, r.description AS desc",
+        "MATCH (c:Customer {id: $cid})-[:HAS_RISK_LEVEL]->(crl:CustomerRiskLevel) "
+        "RETURN crl.level_code AS level, crl.description AS desc",
         {"cid": customer_id},
     )
     if risk_data:
-        rid = f"r_{risk_data['level']}"
+        rid = f"cr_{risk_data['level']}"
         if rid not in node_ids:
             nodes.append({
                 "id": rid,
                 "label": risk_data["desc"],
-                "type": "risk_level",
+                "type": "customer_risk_level",
             })
             node_ids.add(rid)
         edges.append({
@@ -134,6 +158,8 @@ async def graph_query(body: dict):
     通用图谱查询接口（供其他 Agent 调用）
     body: {query_type, params}
     query_type: customer_products / suitable_products / product_industry / industry_distribution
+                / product_centrality / customer_community / industry_concentration
+                / tx_frequency_anomaly / shortest_path
     """
     query_type = body.get("query_type", "")
     params = body.get("params", {})
@@ -149,6 +175,31 @@ async def graph_query(body: dict):
         result = await graph_query_tool.get_product_industry(params.get("product_name", ""))
     elif query_type == "industry_distribution":
         result = await graph_query_tool.get_industry_distribution(params.get("customer_name", ""))
+    # ── 图算法查询 ──
+    elif query_type == "product_centrality":
+        result = await graph_query_tool.get_product_centrality(
+            limit=params.get("limit", 20)
+        )
+    elif query_type == "customer_community":
+        result = await graph_query_tool.get_customer_community(
+            threshold=params.get("threshold", 0.3)
+        )
+    elif query_type == "shortest_path":
+        result = await graph_query_tool.get_shortest_path(
+            customer_1=params.get("customer_1", ""),
+            customer_2=params.get("customer_2", ""),
+        )
+        if not result:
+            return {"code": 404, "message": "未找到两个客户之间的关联路径", "data": None}
+    elif query_type == "industry_concentration":
+        result = await graph_query_tool.get_industry_concentration(
+            limit=params.get("limit", 50)
+        )
+    elif query_type == "tx_frequency_anomaly":
+        result = await graph_query_tool.get_tx_frequency_anomaly(
+            days=params.get("days", 7),
+            threshold=params.get("threshold", 5),
+        )
     else:
         return {"code": 400, "message": f"不支持的查询类型: {query_type}"}
 

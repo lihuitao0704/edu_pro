@@ -146,27 +146,32 @@ async def get_customer_products(customer_name: str):
 
 async def get_suitable_products(risk_level: str, limit: int = 10) -> List[dict]:
     """
-    适当性匹配产品查询（通过图谱 SUITABLE_FOR 关系）
-    入参: 风险等级（R1-R5），返回不超过该等级的在售产品
+    适当性匹配产品查询（通过图谱 CustomerRiskLevel/ProductRiskLevel 关系）
+    入参: 客户风险等级（C1-C5），返回不超过该等级的在售产品
     返回: [{product_name, product_code, product_type, risk_level, expected_return}]
     """
-    # 映射等级数值
-    level_order = {"R1": 1, "R2": 2, "R3": 3, "R4": 4, "R5": 5}
+    # 映射等级数值（客户用 C1-C5，产品用 R1-R5，对应关系：C1↔R1, C2↔R2, ...）
+    level_order = {"C1": 1, "C2": 2, "C3": 3, "C4": 4, "C5": 5,
+                   "R1": 1, "R2": 2, "R3": 3, "R4": 4, "R5": 5}
     max_level = level_order.get(risk_level, 3)
+    # 适当性匹配：产品风险等级 <= 客户风险承受能力
     suitable_levels = [f"R{i}" for i in range(1, max_level + 1)]
 
-    # 使用图谱 SUITABLE_FOR 关系查询（RiskLevel → Product）
+    # 使用图谱关系查询：ProductRiskLevel → CustomerRiskLevel (SUITABLE_FOR)
+    # 反向查找：给定客户风险等级 C3，找所有 R1/R2/R3 产品
     results = await neo4j.run_query(
         """
-        MATCH (r:RiskLevel)-[:SUITABLE_FOR]->(p:Product)
-        WHERE r.level IN $levels AND p.status = '在售'
+        MATCH (prl:ProductRiskLevel)-[:SUITABLE_FOR]->(crl:CustomerRiskLevel {level_code: $risk_level})
+        MATCH (p:Product)-[:HAS_PRODUCT_RISK]->(prl)
+        WHERE p.status = '在售'
         RETURN p.name AS product_name, p.code AS product_code,
                p.type AS product_type, p.risk_level AS risk_level,
                p.expected_return AS expected_return, p.min_amount AS min_amount
         ORDER BY p.expected_return DESC
         LIMIT $limit
         """,
-        {"levels": suitable_levels, "limit": limit},
+        {"risk_level": risk_level if risk_level.startswith("C") else f"C{risk_level[1:]}",
+         "limit": limit},
     )
     for r in results:
         if r.get("expected_return"):
@@ -200,7 +205,7 @@ async def get_industry_distribution(customer_name: str) -> List[dict]:
     """
     客户持仓行业分布
     入参: 客户姓名
-    返回: [{industry, product_count, total_value}]
+    返回: [{industry, product_count, total_value, percentage}]
     """
     customer_id = await resolve_customer_id(customer_name)
     if not customer_id:
@@ -209,9 +214,15 @@ async def get_industry_distribution(customer_name: str) -> List[dict]:
     results = await neo4j.run_query(
         """
         MATCH (c:Customer {id: $cid})-[h:INVESTS_IN]->(p:Product)-[:BELONGS_TO]->(i:Industry)
-        RETURN i.name AS industry, count(p) AS product_count,
-               sum(h.current_value) AS total_value
-        ORDER BY total_value DESC
+        WITH c, i, COUNT(p) AS product_count, SUM(h.current_value) AS total_value
+        WITH c, SUM(total_value) AS grand_total,
+             COLLECT({industry: i.name, count: product_count, value: total_value}) AS industries
+        UNWIND industries AS ind
+        RETURN ind.industry AS industry,
+               ind.count AS product_count,
+               ind.value AS total_value,
+               ROUND(ind.value / grand_total * 100, 2) AS percentage
+        ORDER BY percentage DESC
         """,
         {"cid": customer_id},
     )
@@ -219,3 +230,73 @@ async def get_industry_distribution(customer_name: str) -> List[dict]:
         if r.get("total_value"):
             r["total_value"] = round(float(r["total_value"]), 2)
     return results
+
+
+# ═══════════════════════════════════════════════════════════
+# 图算法查询函数（P4-⑩）
+# ═══════════════════════════════════════════════════════════
+
+from app.tool.cypher_templates import (
+    PRODUCT_CENTRALITY,
+    CUSTOMER_COMMUNITY,
+    SHORTEST_PATH,
+    INDUSTRY_CONCENTRATION,
+    TX_FREQUENCY_ANOMALY,
+)
+
+
+async def get_product_centrality(limit: int = 20) -> List[dict]:
+    """
+    产品持有中心性分析（Degree Centrality）
+    返回被最多客户持有的产品排名
+    """
+    return await neo4j.run_query(
+        PRODUCT_CENTRALITY.replace("LIMIT 20", f"LIMIT {limit}")
+    )
+
+
+async def get_customer_community(threshold: float = 0.3) -> List[dict]:
+    """
+    客户社区发现（基于 Jaccard 相似度）
+    返回持仓相似度 >= threshold 的客户对
+    """
+    return await neo4j.run_query(
+        CUSTOMER_COMMUNITY,
+        {"threshold": threshold},
+        limit=0,
+    )
+
+
+async def get_shortest_path(customer_1: str, customer_2: str) -> Optional[dict]:
+    """
+    查询两个客户之间的最短关联路径
+    返回路径节点和关系类型
+    """
+    result = await neo4j.run_query(
+        SHORTEST_PATH,
+        {"customer_1": customer_1, "customer_2": customer_2},
+        limit=1,
+    )
+    return result[0] if result else None
+
+
+async def get_industry_concentration(limit: int = 50) -> List[dict]:
+    """
+    客户持仓集中度分析（Herfindahl-Hirschman Index）
+    HHI >= 0.5: 高度集中, >= 0.3: 中度集中, < 0.3: 分散
+    """
+    return await neo4j.run_query(
+        INDUSTRY_CONCENTRATION.replace("LIMIT 50", f"LIMIT {limit}")
+    )
+
+
+async def get_tx_frequency_anomaly(days: int = 7, threshold: int = 5) -> List[dict]:
+    """
+    交易频率异常检测
+    返回近 N 天交易次数超过阈值的客户
+    """
+    return await neo4j.run_query(
+        TX_FREQUENCY_ANOMALY,
+        {"days": days, "threshold": threshold},
+        limit=0,
+    )
