@@ -9,7 +9,11 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # 合法节点标签白名单，防止 Cypher 注入
-VALID_LABELS = frozenset({"Customer", "Product", "RiskLevel", "Industry", "FundManager", "Market"})
+VALID_LABELS = frozenset({
+    "Customer", "Product", "CustomerRiskLevel", "ProductRiskLevel",
+    "Industry", "FundManager", "Market", "Transaction", "Employee",
+    "Knowledge"
+})
 
 # 单次查询最大返回条数（防止 OOM）
 MAX_RESULT_ROWS = 1000
