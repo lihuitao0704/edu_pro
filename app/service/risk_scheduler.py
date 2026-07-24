@@ -59,10 +59,63 @@ async def _run_calibration():
                     expired += 1
                 else:
                     # 更新 transaction_ids 里的置信度
+                    tx_ids = alert.transaction_ids or {}
+                    tx_ids["confidence"] = round(new_conf, 3)
+                    tx_ids["last_calibration"] = now.isoformat()
+                    alert.transaction_ids = tx_ids
+                    alert.update_time = now
                     updated += 1
 
+        # === SLA 超时自动升级 ===
+        sla_rules = [
+            ("low", 7, "medium", "超过7天未处理，自动升级为黄色预警"),
+            ("medium", 3, "high", "超过3天未处理，自动升级为红色预警"),
+        ]
+        sla_upgraded = 0
+        for alert in alerts:
+            if alert.create_time and alert.status in ("pending",):
+                days_pending = (now - alert.create_time).days
+                for level, days_limit, new_level, reason in sla_rules:
+                    if alert.alert_level == level and days_pending > days_limit:
+                        alert.alert_level = new_level
+                        old_summary = alert.trigger_detail or ""
+                        alert.trigger_detail = f"{old_summary} | SLA超时: {reason}"
+                        alert.update_time = now
+                        sla_upgraded += 1
+                        break
+
+        # === 累计风险自动升级：30天内同一客户≥3次medium → 自动high ===
+        from sqlalchemy import func
+        from datetime import timedelta
+        cutoff = now - timedelta(days=30)
+        result = await db.execute(
+            select(FinRiskAlert.customer_id, func.count(FinRiskAlert.id).label("cnt"))
+            .where(FinRiskAlert.alert_level == "medium",
+                   FinRiskAlert.create_time >= cutoff,
+                   FinRiskAlert.status == "pending")
+            .group_by(FinRiskAlert.customer_id)
+            .having(func.count(FinRiskAlert.id) >= 3)
+        )
+        cumulative_upgraded = 0
+        for row in result.fetchall():
+            # 为这些客户自动创建一条 high 预警
+            entity = FinRiskAlert(
+                customer_id=row.customer_id,
+                alert_type="cumulative_risk",
+                alert_level="high",
+                trigger_detail=f"近30天累计触发{row.cnt}次中风险预警，自动升级为高风险",
+                transaction_ids={"cumulative_count": row.cnt, "upgrade_reason": "30天≥3次medium"},
+                status="pending",
+                create_time=now,
+            )
+            db.add(entity)
+            cumulative_upgraded += 1
+
         await db.flush()
-        logger.info(f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, 更新{updated}条")
+        logger.info(
+            f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, "
+            f"SLA升级{sla_upgraded}条, 累计升级{cumulative_upgraded}条, 更新{updated}条"
+        )
 
 
 def start_scheduler():

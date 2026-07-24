@@ -124,6 +124,185 @@ async def recalculate_confidence(customer_id: int = None, db: AsyncSession = Dep
     return success(data={"processed": len(units)}, message="置信度重算完成")
 
 
+@router.post("/monitor/batch", summary="批量交易风控扫描")
+async def monitor_batch(
+    transactions: list[TransactionEvent],
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_roles("风控专员", "管理员")),
+):
+    """批量接收交易事件 → 逐笔规则匹配 → 返回汇总报告（最多100笔）"""
+    logger.info(f"批量风控扫描: 共{len(transactions)}笔")
+    total = len(transactions)
+    normal = 0
+    alert_list = []
+    high_count = medium_count = low_count = 0
+
+    for tx in transactions[:100]:  # 上限100笔
+        result = await _transaction_flow.monitor(db, tx.model_dump())
+        if result["alert"] is None:
+            normal += 1
+        else:
+            alert_list.append(result["alert"])
+            level = result["alert"]["alert_level"]
+            if level == "high": high_count += 1
+            elif level == "medium": medium_count += 1
+            else: low_count += 1
+
+    return success(data={
+        "total": total,
+        "normal": normal,
+        "alerts": len(alert_list),
+        "high": high_count,
+        "medium": medium_count,
+        "low": low_count,
+        "details": alert_list,
+    })
+
+
+@router.get("/report", summary="风控日报")
+async def daily_report(date: str = None, db: AsyncSession = Depends(get_db),
+                       _: dict = Depends(require_roles("风控专员", "管理员"))):
+    """聚合当日风控数据：新增预警、已处理、待处理、高风险TOP5客户、触发最多规则TOP3"""
+    from datetime import date as date_type
+    from sqlalchemy import func, text as sa_text
+
+    if date is None:
+        target_date = date_type.today().isoformat()
+    else:
+        target_date = date
+
+    # 今日新增预警
+    result = await db.execute(
+        sa_text(
+            "SELECT alert_level, COUNT(*) as cnt FROM fin_risk_alert "
+            "WHERE DATE(create_time) = :d GROUP BY alert_level"
+        ),
+        {"d": target_date},
+    )
+    level_counts = {row[0]: row[1] for row in result.fetchall()}
+    total_new = sum(level_counts.values())
+
+    # 今日已处理
+    result = await db.execute(
+        sa_text(
+            "SELECT COUNT(*) FROM fin_risk_alert "
+            "WHERE DATE(update_time) = :d AND status IN ('resolved','false_positive')"
+        ),
+        {"d": target_date},
+    )
+    resolved_today = result.fetchone()[0]
+
+    # 当前待处理总数
+    result = await db.execute(
+        sa_text("SELECT COUNT(*) FROM fin_risk_alert WHERE status = 'pending'")
+    )
+    pending_total = result.fetchone()[0]
+
+    # 高风险TOP5客户
+    result = await db.execute(
+        sa_text(
+            "SELECT customer_id, COUNT(*) as cnt FROM fin_risk_alert "
+            "WHERE alert_level = 'high' AND DATE(create_time) = :d "
+            "GROUP BY customer_id ORDER BY cnt DESC LIMIT 5"
+        ),
+        {"d": target_date},
+    )
+    top_customers = [{"customer_id": row[0], "count": row[1]} for row in result.fetchall()]
+
+    # 触发最多规则TOP3
+    result = await db.execute(
+        sa_text(
+            "SELECT alert_type, COUNT(*) as cnt FROM fin_risk_alert "
+            "WHERE DATE(create_time) = :d "
+            "GROUP BY alert_type ORDER BY cnt DESC LIMIT 3"
+        ),
+        {"d": target_date},
+    )
+    top_rules = [{"rule_id": row[0], "count": row[1]} for row in result.fetchall()]
+
+    return success(data={
+        "date": target_date,
+        "summary": {
+            "total_alerts": total_new,
+            "high_new": level_counts.get("high", 0),
+            "medium_new": level_counts.get("medium", 0),
+            "low_new": level_counts.get("low", 0),
+            "resolved_today": resolved_today,
+            "pending_total": pending_total,
+        },
+        "top_high_risk_customers": top_customers,
+        "top_rules": top_rules,
+    })
+
+
+@router.get("/statistics", summary="预警趋势统计")
+async def alert_statistics(days: int = 7, db: AsyncSession = Depends(get_db),
+                           _: dict = Depends(require_roles("风控专员", "管理员"))):
+    """返回近N天预警趋势和级别分布（前端图表用）"""
+    from sqlalchemy import text as sa_text
+
+    # 按日期统计预警数
+    result = await db.execute(
+        sa_text(
+            "SELECT DATE(create_time) as d, COUNT(*) as cnt FROM fin_risk_alert "
+            "WHERE create_time >= DATE_SUB(CURDATE(), INTERVAL :days DAY) "
+            "GROUP BY DATE(create_time) ORDER BY d"
+        ),
+        {"days": days},
+    )
+    trend = [{"date": str(row[0]), "count": row[1]} for row in result.fetchall()]
+
+    # 按级别分布
+    result = await db.execute(
+        sa_text("SELECT alert_level, COUNT(*) FROM fin_risk_alert GROUP BY alert_level")
+    )
+    level_dist = {row[0]: row[1] for row in result.fetchall()}
+
+    return success(data={
+        "trend": trend,
+        "level_distribution": level_dist,
+        "total": sum(level_dist.values()),
+    })
+
+
+@router.get("/alerts/export", summary="导出预警CSV")
+async def export_alerts(from_date: str = None, to_date: str = None,
+                        db: AsyncSession = Depends(get_db),
+                        _: dict = Depends(require_roles("风控专员", "管理员"))):
+    """导出预警记录为CSV文件（监管报送用）"""
+    import csv, io
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import text as sa_text
+
+    conditions = []
+    params = {}
+    if from_date:
+        conditions.append("create_time >= :from_date")
+        params["from_date"] = from_date
+    if to_date:
+        conditions.append("create_time <= :to_date")
+        params["to_date"] = to_date + " 23:59:59"
+    where = " AND ".join(conditions) if conditions else "1=1"
+
+    result = await db.execute(
+        sa_text(f"SELECT id, customer_id, alert_type, alert_level, trigger_detail, status, create_time, update_time FROM fin_risk_alert WHERE {where} ORDER BY create_time DESC"),
+        params,
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["预警编号", "客户ID", "触发规则", "预警级别", "触发详情", "状态", "创建时间", "更新时间"])
+    for row in result.fetchall():
+        writer.writerow(list(row))
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=risk_alerts_{from_date or 'all'}.csv"},
+    )
+
+
 @router.get("/profile/{customer_id}", summary="查客户风险画像")
 async def get_risk_profile(customer_id: int, db: AsyncSession = Depends(get_db)):
     """查询客户风险画像（风控统计）"""
