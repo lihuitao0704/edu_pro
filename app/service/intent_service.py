@@ -311,19 +311,49 @@ class IntentService:
     def _extract_router_params(text: str) -> dict:
         """从LLM返回的JSON文本中提取参数"""
         import json
+        import re
+
         default_params = {"customer_name": None, "customer_id": None,
                           "product_name": None, "amount": None,
                           "transaction_type": None}
         try:
+            # 先剥离推理/思考文本
+            cleaned = IntentService._strip_reasoning(text)
             # 尝试直接解析JSON
-            data = json.loads(text)
+            data = json.loads(cleaned)
             params = data.get("params", {})
             result = {}
             for k in default_params:
                 result[k] = params.get(k)
             return result
         except (json.JSONDecodeError, TypeError):
-            return default_params
+            pass
+
+        # 兜底：从文本中提取 JSON 对象再解析
+        try:
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                data = json.loads(json_match.group())
+                params = data.get("params", {})
+                result = {}
+                for k in default_params:
+                    result[k] = params.get(k)
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return default_params
+
+    @staticmethod
+    def _strip_reasoning(text: str) -> str:
+        """剥离 LLM 输出中的推理/思考文本，保留 JSON 部分"""
+        import re
+        text = text.strip()
+        # 移除常见推理前缀（如 "思考过程：..."、"让我分析..."、"分析：" 等）
+        text = re.sub(r'^(?:思考过程|分析过程|推理过程|思考|分析|推理|让我分析|我来分析|让我思考)[^\{}\n]*[:：]?\s*', '', text)
+        # 移除 "我们被要求..." 等元描述前缀
+        text = re.sub(r'^(?:我们被要求|我需要|根据要求)[^\{}\n]*\n+', '', text)
+        return text.strip()
 
     @staticmethod
     def _extract_router_intent(text: str) -> str:
@@ -331,6 +361,8 @@ class IntentService:
         import re
         import json
 
+        # 先剥离推理/思考文本
+        text = IntentService._strip_reasoning(text)
         text_clean = text.strip()
 
         # 1. 尝试JSON解析
@@ -375,7 +407,7 @@ class IntentService:
         # 3. 调用LLM
         try:
             prompt_text = prompt.format(user_message=message)
-            result = await self.llm.classify(prompt_text, temperature=0.1)
+            result = await self.llm.classify(prompt_text, temperature=0.1, max_tokens=256)
             result = result.strip()
 
             # 4. 提取意图
