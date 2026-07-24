@@ -410,8 +410,7 @@ class ProfileService:
             return []
         return []
 
-    @staticmethod
-    def _calc_loss_tolerance(risk_assessment) -> str:
+    async def _calc_loss_tolerance(self, risk_assessment) -> str:
         """从风评问卷答案中提取亏损承受能力"""
         if not risk_assessment or not risk_assessment.answers:
             return "10%-20%"  # 默认基准
@@ -748,6 +747,8 @@ class ProfileService:
             }
 
         await self.db.flush()
+
+    async def _update_profile_after_assess(
         self, customer_id: int, risk_level: str, risk_score: int, dimension_scores: dict
     ):
         """研判后更新画像表（含完整画像 JSON）"""

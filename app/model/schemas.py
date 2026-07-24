@@ -4,7 +4,7 @@ Pydantic 数据模型（请求/响应 Schema）
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -94,7 +94,7 @@ class QuestionnaireItem(BaseModel):
     """问卷题目"""
     q: int = Field(..., description="题号")
     question: str
-    options: List[Dict[str, str]] = Field(..., description="[{A: 描述, score: 分值}]")
+    options: List[Dict[str, Union[str, int]]] = Field(..., description="[{A: 描述, score: 分值}]")
 
 
 class AssessmentAnswer(BaseModel):

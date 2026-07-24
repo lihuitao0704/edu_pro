@@ -97,9 +97,11 @@ class RiskService:
         # 保存评估记录
         assessment = RiskAssessment(
             customer_id=customer_id,
+            assessment_date=date.today(),
             total_score=total,
             risk_level=risk_level,
             answers={"details": answer_detail},
+            assessor_type="AI评估",
             valid_until=valid_until,
         )
         self.db.add(assessment)

@@ -64,6 +64,9 @@ async def get_calibration_history(
         "history": history,
         "total_records": len(history),
     })
+
+
+@router.get("/{customer_id}")
 async def get_profile(
     customer_id: int,
     db: AsyncSession = Depends(get_db),

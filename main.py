@@ -36,6 +36,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         print(f"  Redis: 未连接，缓存功能暂不可用")
 
+    # Embedding / RAG 依赖检测（Ollama）
+    try:
+        from app.tool.embedding_tool import get_embedding_tool
+        _emb = get_embedding_tool()
+        _vec = await _emb.encode("连通性检测")
+        print(f"  Embedding: {settings.llm.ollama_embed_url} [OK, dim={len(_vec)}]")
+    except Exception as e:
+        print(f"  Embedding: 连接失败 ({settings.llm.ollama_embed_url}) —— 智能客服/RAG 检索将返回 500，请检查 Ollama 是否运行: {str(e)[:80]}")
+
     # 启动风控周期校准
     try:
         from app.service.risk_scheduler import start_scheduler
