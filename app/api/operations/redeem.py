@@ -115,13 +115,23 @@ async def redeem_product(
         },
     )
     await db.commit()
+    sync_type = "remove_holding" if remaining <= 0 else "holding"
+    sync_payload = {"customer_id": customer_id, "product_id": product_id}
+    if remaining > 0:
+        sync_payload["shares"] = float(remaining)
+        sync_payload["current_value"] = float(remaining * nav)
     try:
         if remaining <= 0:
             await remove_holding(customer_id, product_id)
         else:
             await sync_holding(customer_id, product_id, float(remaining), float(remaining * nav))
     except Exception as exc:
-        _logger.warning("Neo4j holding sync failed after redeem customer=%s product=%s: %s", customer_id, product_id, exc)
+        _logger.warning("Neo4j %s sync failed after redeem customer=%s product=%s: %s", sync_type, customer_id, product_id, exc)
+        try:
+            from app.service.graph_sync_retry_service import record_sync_failure
+            await record_sync_failure(sync_type, sync_payload, str(exc))
+        except Exception as retry_exc:
+            _logger.error("记录图谱同步重试失败: %s", retry_exc)
     return ApiResponse(
         code=200,
         message="赎回成功",

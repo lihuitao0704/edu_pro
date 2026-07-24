@@ -1,11 +1,17 @@
 <template>
   <section class="chat-window">
     <header class="chat-window-header">
-      <div>
-        <span class="section-kicker"><i /> AI 财富助手</span>
-        <h2>智慧财富决策空间</h2>
+      <div class="header-left">
+        <span class="header-dot" />
+        <span class="header-title">AI 财富助手</span>
       </div>
-      <div class="conversation-status"><span>{{ customerName ? `正在为 ${customerName} 服务` : `${messages.length} 条对话` }}</span><b>受监管模式</b></div>
+      <div class="header-right">
+        <span class="header-status">{{ customerName ? `${customerName}` : `${messages.length} 条对话` }}</span>
+        <button class="new-chat-btn" @click="newChat" title="开始新对话">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          新聊天
+        </button>
+      </div>
     </header>
 
     <div ref="scrollArea" class="chat-scroll-area">
@@ -97,7 +103,225 @@ async function scrollToBottom() {
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'smooth' })
 }
 
+function newChat() {
+  // 清空可见消息，但保留 session 和 conversationId（后端上下文记忆）
+  session.value.messages = []
+  input.value = ''
+  error.value = ''
+}
+
 onMounted(() => {
   void hydrateHistory()
 })
 </script>
+
+<style scoped>
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Header — 极简一行 */
+.chat-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  min-height: 48px;
+  flex-shrink: 0;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--finance-green, #34d399);
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.1);
+}
+.header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--finance-text, #e7eef9);
+  letter-spacing: 0.02em;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.header-status {
+  color: var(--finance-muted, #8d9bb1);
+  font-size: 12px;
+}
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--finance-line, #263247);
+  border-radius: 8px;
+  color: #a9b8ca;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.new-chat-btn:hover {
+  color: #e1f3ff;
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.08);
+}
+
+/* Scroll area */
+.chat-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px clamp(16px, 4vw, 64px);
+}
+
+/* Empty state */
+.chat-empty-state {
+  max-width: 560px;
+  margin: 10vh auto 0;
+  text-align: center;
+}
+.empty-orb {
+  width: 56px;
+  height: 56px;
+  margin: auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #3174a5;
+  border-radius: 16px;
+  color: #bae6fd;
+  background: linear-gradient(135deg, #102b4a, #192155);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+}
+.chat-empty-state h3 {
+  margin: 20px 0 8px;
+  color: #eef6ff;
+  font-size: 22px;
+  font-weight: 600;
+}
+.chat-empty-state p {
+  margin: 0;
+  color: var(--finance-muted, #8d9bb1);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.quick-prompts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 24px;
+}
+.quick-prompts button {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--finance-line, #263247);
+  border-radius: 10px;
+  color: #b7c6d9;
+  background: #121c2c;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.quick-prompts button:hover {
+  border-color: #397ca9;
+  color: #e1f3ff;
+  background: #16263c;
+}
+
+/* Composer */
+.chat-composer {
+  padding: 12px 24px;
+  flex-shrink: 0;
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.composer-row textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 80px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  color: #e5edf9;
+  background: #0f172a;
+  padding: 10px 14px;
+  resize: none;
+  outline: none;
+  font-size: 13px;
+}
+.composer-row textarea:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.12);
+}
+.composer-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 10px 20px;
+}
+.composer-hint {
+  display: block;
+  margin-top: 6px;
+  color: #71819a;
+  font-size: 10px;
+}
+
+/* Loading */
+.assistant-loading {
+  max-width: 820px;
+  margin: 0 auto;
+  color: #91a8c0;
+  font-size: 12px;
+}
+.assistant-loading i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--finance-blue, #38bdf8);
+  animation: glow 1s infinite alternate;
+}
+@keyframes glow {
+  to { box-shadow: 0 0 13px var(--finance-blue, #38bdf8); }
+}
+
+/* Error */
+.chat-error {
+  margin: 0;
+  padding: 8px 24px;
+  color: #fdba74;
+  background: rgba(180, 83, 9, 0.12);
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .quick-prompts {
+    grid-template-columns: 1fr;
+  }
+  .chat-scroll-area {
+    padding: 16px 12px;
+  }
+  .chat-window-header {
+    padding: 10px 14px;
+  }
+  .chat-composer {
+    padding: 10px 14px;
+  }
+}
+</style>

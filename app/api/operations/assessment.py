@@ -1,5 +1,6 @@
 """业务操作 API — 风评重做"""
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
@@ -8,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
 from app.security.authorization import require_roles
+from app.tool.neo4j_sync import sync_risk_level
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 
 # 简化评分映射
 def calc_risk_level(score: int) -> str:
@@ -26,7 +29,7 @@ async def redo_assessment(
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(require_roles("理财顾问", "管理员")),
 ) -> ApiResponse:
-    """风评重做：根据答题计算风险等级，写入记录"""
+    """风评重做：根据答题计算风险等级，写入记录，同步到Neo4j"""
     customer_id = body.get("customer_id")
     answers = body.get("answers", [])
     operator_id = body.get("operator_id")
@@ -62,4 +65,19 @@ async def redo_assessment(
         {"c": customer_id, "s": total_score, "r": risk_level, "a": json.dumps(answers), "v": valid_until},
     )
     await db.commit()
+
+    # Neo4j 图谱同步
+    try:
+        await sync_risk_level(customer_id, risk_level)
+    except Exception as exc:
+        _logger.warning("Neo4j risk_level sync failed after assessment customer=%s: %s", customer_id, exc)
+        try:
+            from app.service.graph_sync_retry_service import record_sync_failure
+            await record_sync_failure("risk_level", {
+                "customer_id": customer_id,
+                "risk_level": risk_level,
+            }, str(exc))
+        except Exception as retry_exc:
+            _logger.error("记录图谱同步重试失败: %s", retry_exc)
+
     return ApiResponse(code=200, message="风评完成", data={"customer_id": customer_id, "risk_level": risk_level, "score": total_score, "valid_until": valid_until}, trace_id=uuid.uuid4().hex[:8])

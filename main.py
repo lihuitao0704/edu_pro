@@ -53,6 +53,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"  Scheduler: 启动失败 ({e})")
 
+    # 启动图谱同步重试补偿
+    try:
+        from app.service.graph_sync_retry_service import start_graph_sync_retry_scheduler
+        start_graph_sync_retry_scheduler()
+        print("  Scheduler: Neo4j 图谱同步重试补偿已启动（每60秒）")
+    except Exception as e:
+        print(f"  Scheduler: 图谱同步重试启动失败 ({e})")
+
     # 启动事件总线订阅消费者（多 Agent 协作闭环）
     # 统一订阅者：同时处理 risk_alert → risk_flag(MySQL+Redis) + cache clear + profile_update + work_order_change
     event_subscriber_task = None
@@ -73,6 +81,11 @@ async def lifespan(app: FastAPI):
     try:
         from app.service.risk_scheduler import stop_scheduler
         stop_scheduler()
+    except Exception:
+        pass
+    try:
+        from app.service.graph_sync_retry_service import stop_graph_sync_retry_scheduler
+        stop_graph_sync_retry_scheduler()
     except Exception:
         pass
     try:
@@ -198,6 +211,13 @@ try:
     app.include_router(pq_router, prefix="/api/operation", tags=["业务操作"])
 except Exception as e:
     print(f"  [WARN] 产品查询路由加载失败: {e}")
+
+try:
+    from app.api.nlp import router as nlp_router
+    app.include_router(nlp_router, prefix="/api/nlp", tags=["NLP 智能解读"])
+    print("  API: /api/nlp (NLP 产品智能解读) [OK]")
+except Exception as e:
+    print(f"  [WARN] NLP路由加载失败: {e}")
 
 for _name, _prefix in [
     ("redeem", "/redeem"),

@@ -1,15 +1,5 @@
 <template>
-  <div class="finance-chat-page">
-    <section class="finance-page-intro">
-      <div>
-        <h1>AI 财富助手</h1>
-        <p>面向产品咨询、投资建议、风险评估与账户业务的一体化智能服务。</p>
-      </div>
-      <div class="chat-capabilities">
-        <span>产品咨询</span><span>投资建议</span><span>风险评估</span><span>账户服务</span>
-        <button v-if="auth.user?.role === '客户'" class="assessment-entry-btn" @click="showAssessment = true">📋 风评问卷</button>
-      </div>
-    </section>
+  <div class="chat-fullscreen">
     <ChatWindow
       :user-id="auth.user?.user_id || 0"
       :user-role="auth.user?.role || '客户'"
@@ -41,40 +31,39 @@ function onAssessmentSubmitted(result: any) {
 </script>
 
 <style scoped>
-.finance-chat-page {
-  height: calc(100dvh - 130px);
+.chat-fullscreen {
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.finance-page-intro {
-  flex: 0 0 auto;
-  margin-bottom: 14px;
+:deep(.chat-window) {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
-.finance-page-intro p {
-  margin: 0;
+:deep(.chat-window-header) {
+  border-bottom: 1px solid var(--finance-line, #263247);
+  background: rgba(11, 17, 32, 0.6);
+  backdrop-filter: blur(12px);
 }
-:deep(.chat-window) { flex: 1; min-height: 0; }
-:deep(.chat-window-header) { min-height: 48px; padding: 10px 24px; justify-content: flex-end; }
-:deep(.chat-window-header > div:first-child) { display: none; }
-:deep(.chat-scroll-area) { min-height: 0; max-height: none; }
-:deep(.chat-empty-state) { margin-top: 4vh; }
-.assessment-entry-btn {
-  padding: 7px 12px;
-  border: 1px solid #0b7f78;
-  border-radius: 99px;
-  color: #0b7f78;
-  background: rgba(11,127,120,.08);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background .2s;
+:deep(.chat-scroll-area) {
+  max-height: none;
+  background: transparent;
 }
-.assessment-entry-btn:hover {
-  background: rgba(11,127,120,.16);
+:deep(.chat-empty-state) {
+  margin: 12vh auto 0;
+}
+:deep(.chat-composer) {
+  border-top: 1px solid var(--finance-line, #263247);
+  background: rgba(11, 17, 32, 0.6);
+  backdrop-filter: blur(12px);
 }
 @media (max-width: 760px) {
-  .finance-chat-page { height: auto; }
-  :deep(.chat-window) { min-height: 620px; }
+  .chat-fullscreen { height: auto; }
+  :deep(.chat-window) { min-height: 70vh; }
 }
 </style>

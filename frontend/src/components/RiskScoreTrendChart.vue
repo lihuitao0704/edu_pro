@@ -21,6 +21,19 @@ export interface RiskScoreHistoryRecord {
   trigger_type: 'manual' | 'auto' | 'event'
 }
 
+// 风险等级映射：c1/c2/c3/c4/c5 → C1保守型/C2稳健型/C3平衡型/C4进取型/C5激进型
+const RISK_LEVEL_DISPLAY: Record<string, string> = {
+  c1: 'C1保守型', C1: 'C1保守型',
+  c2: 'C2稳健型', C2: 'C2稳健型',
+  c3: 'C3平衡型', C3: 'C3平衡型',
+  c4: 'C4进取型', C4: 'C4进取型',
+  c5: 'C5激进型', C5: 'C5激进型',
+}
+function formatRiskLevel(level: unknown): string {
+  if (!level) return ''
+  return RISK_LEVEL_DISPLAY[String(level)] || String(level)
+}
+
 const props = defineProps<{ records: RiskScoreHistoryRecord[] }>()
 const chartElement = ref<HTMLElement>()
 let chart: echarts.ECharts | undefined
@@ -32,7 +45,7 @@ function renderChart() {
   const turningPoints = props.records
     .map((item, index) => ({ item, index }))
     .filter(({ item, index }) => index === 0 || item.risk_level !== props.records[index - 1].risk_level)
-    .map(({ item, index }) => ({ coord: [labels[index], item.total_score], value: item.risk_level }))
+    .map(({ item, index }) => ({ coord: [labels[index], item.total_score], value: formatRiskLevel(item.risk_level) }))
   const triggerSeries = (type: RiskScoreHistoryRecord['trigger_type'], symbol: string, hollow = false) => ({
     name: type === 'manual' ? '人工评估' : type === 'auto' ? '自动研判' : '事件触发',
     type: 'scatter' as const,

@@ -220,6 +220,16 @@ async def purchase_product(
                 await sync_holding(customer_id, product_id, synced_shares, synced_value)
             except Exception as exc:
                 _logger.warning("Neo4j holding sync failed after purchase customer=%s product=%s: %s", customer_id, product_id, exc)
+                try:
+                    from app.service.graph_sync_retry_service import record_sync_failure
+                    await record_sync_failure("holding", {
+                        "customer_id": customer_id,
+                        "product_id": product_id,
+                        "shares": synced_shares,
+                        "current_value": synced_value,
+                    }, str(exc))
+                except Exception as retry_exc:
+                    _logger.error("记录图谱同步重试失败: %s", retry_exc)
             break  # 成功，退出重试循环
 
         except sa_exc.DeadlockDetected as e:

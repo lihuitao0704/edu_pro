@@ -153,6 +153,14 @@ class RiskService:
             # Graph synchronization is eventual; questionnaire persistence remains authoritative.
             import logging
             logging.getLogger(__name__).warning("Neo4j risk-level sync failed for customer %s: %s", customer_id, exc)
+            try:
+                from app.service.graph_sync_retry_service import record_sync_failure
+                await record_sync_failure("risk_level", {
+                    "customer_id": customer_id,
+                    "risk_level": risk_level,
+                }, str(exc))
+            except Exception as retry_exc:
+                logging.getLogger(__name__).error("记录图谱同步重试失败: %s", retry_exc)
 
         return AssessmentResult(
             customer_id=customer_id,

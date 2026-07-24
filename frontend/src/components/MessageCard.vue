@@ -3,7 +3,6 @@
     <div class="message-avatar">{{ message.role === 'user' ? '您' : 'AI' }}</div>
     <div class="message-content">
       <div class="message-meta">
-        <strong>{{ message.role === 'user' ? '您的提问' : 'AI 财富助手' }}</strong>
         <span v-if="message.response">{{ agentName }} · 置信度 {{ confidence }}%</span>
       </div>
       <p v-if="message.role === 'user'">{{ message.content }}</p>
@@ -60,10 +59,10 @@ const hasAssessmentPrompt = computed(() => {
 .assistant-markdown :deep(h1),
 .assistant-markdown :deep(h2),
 .assistant-markdown :deep(h3) { margin: 16px 0 8px; color: #eef6ff; line-height: 1.35; }
-.assistant-markdown :deep(h1) { font-size: 18px; }
-.assistant-markdown :deep(h2) { font-size: 16px; }
-.assistant-markdown :deep(h3) { font-size: 14px; }
-.assistant-markdown :deep(p) { margin: 0 0 10px; color: #c9d5e5; font-size: 14px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+.assistant-markdown :deep(h1) { font-size: 16px; }
+.assistant-markdown :deep(h2) { font-size: 15px; }
+.assistant-markdown :deep(h3) { font-size: 13px; }
+.assistant-markdown :deep(p) { margin: 0 0 8px; color: #c9d5e5; font-size: 13px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
 .assistant-markdown :deep(ul),
 .assistant-markdown :deep(ol) { margin: 8px 0 12px; padding-left: 22px; color: #c9d5e5; line-height: 1.8; }
 .assistant-markdown :deep(blockquote) { margin: 10px 0; padding-left: 12px; border-left: 3px solid #397ca9; color: #aebfd2; line-height: 1.75; }

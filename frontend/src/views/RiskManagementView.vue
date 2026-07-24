@@ -4,13 +4,13 @@
     <section class="page-intro">
       <div><h2>异常交易与工单联动</h2><p>预警、证据规则、客户风险标记和调查工单保持同步。</p></div>
       <div class="toolbar-row">
-        <select v-model="filterLevel" @change="loadAll" class="filter-select">
+        <select v-model="filterLevel" @change="page=1; loadAlerts()" class="filter-select">
           <option value="">全部等级</option>
           <option value="high">高</option>
           <option value="medium">中</option>
           <option value="low">低</option>
         </select>
-        <select v-model="filterStatus" @change="loadAll" class="filter-select">
+        <select v-model="filterStatus" @change="page=1; loadAlerts()" class="filter-select">
           <option value="">全部状态</option>
           <option value="pending">待处理</option>
           <option value="resolved">已处理</option>
@@ -94,7 +94,7 @@
                 <td>
                   {{ alert.trigger_rules?.map(r => r.rule_name || r.rule_id).join('、') || alert.summary }}
                   <!-- SLA超时标记 -->
-                  <span v-if="slaTimeout(alert)" class="sla-badge" :title="slaTimeout(alert)">⏰超时</span>
+                  <span v-if="slaTimeout(alert)" class="sla-badge" :title="slaTimeout(alert) || undefined">⏰超时</span>
                 </td>
                 <td>{{ alert.status }}</td>
                 <td>{{ alert.created_at?.slice(0, 16).replace('T', ' ') }}</td>
@@ -105,6 +105,12 @@
             </tbody>
           </table>
           <EmptyState v-if="!alerts.length" title="当前没有风险预警" description="交易监测保持运行。" />
+        </div>
+        <!-- 分页 -->
+        <div v-if="totalPages > 1" class="pagination">
+          <button :disabled="page <= 1" @click="page--; loadAlerts()">‹ 上一页</button>
+          <span>第 {{ page }} / {{ totalPages }} 页 · 共 {{ totalAlerts }} 条</span>
+          <button :disabled="page >= totalPages" @click="page++; loadAlerts()">下一页 ›</button>
         </div>
       </div>
       <aside class="surface-card alert-detail">
@@ -208,6 +214,12 @@ const error = ref('')
 const filterLevel = ref('')
 const filterStatus = ref('')
 
+// 分页
+const page = ref(1)
+const pageSize = 10
+const totalAlerts = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalAlerts.value / pageSize)))
+
 // 图表
 const trendChartEl = ref<HTMLElement>()
 const pieChartEl = ref<HTMLElement>()
@@ -220,8 +232,8 @@ const batchUploading = ref(false)
 const batchResult = ref<{ total: number; normal: number; hit: number; high: number; medium: number; low: number } | null>(null)
 
 // ---- 计算属性 ----
-const pendingCount = computed(() => alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
-const highCount = computed(() => alerts.value.filter((item) => item.alert_level === 'high').length)
+const pendingCount = computed(() => dailyReport.value?.summary?.pending_total ?? alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
+const highCount = computed(() => dailyReport.value?.summary?.high_new ?? alerts.value.filter((item) => item.alert_level === 'high').length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
 const levelLabel = (level: string) => ({ low: '低', medium: '中', high: '高' }[level] || level)
 
@@ -244,29 +256,40 @@ function confidenceClass(val: number): string {
 }
 
 // ---- 数据加载 ----
-async function loadAll() {
-  loading.value = true
+async function loadAlerts() {
   error.value = ''
   try {
-    const alertParams = new URLSearchParams({ page_size: '100' })
+    const alertParams = new URLSearchParams({ page: String(page.value), page_size: String(pageSize) })
     if (filterLevel.value) alertParams.set('alert_level', filterLevel.value)
     if (filterStatus.value) alertParams.set('status', filterStatus.value)
 
-    const [alertData, orderData, reportData, statsData] = await Promise.all([
-      get<{ alerts: RiskAlert[] }>(`/risk/alerts?${alertParams.toString()}`),
-      get<{ items: any[] }>('/operation/workorders?page_size=100'),
-      get<RiskDailyReport>('/risk/report').catch(() => null),
-      get<RiskStatistics>('/risk/statistics?days=7').catch(() => null),
-    ])
+    const alertData = await get<{ alerts: RiskAlert[]; total?: number }>(`/risk/alerts?${alertParams.toString()}`)
     alerts.value = alertData.alerts
-    workorders.value = orderData.items
-    dailyReport.value = reportData
-    statistics.value = statsData
+    totalAlerts.value = alertData.total ?? alertData.alerts.length
 
     if (selected.value) {
       selected.value = alerts.value.find((item) => item.alert_id === selected.value?.alert_id) || null
     }
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '预警数据加载失败'
+  }
+}
 
+async function loadAll() {
+  loading.value = true
+  error.value = ''
+  page.value = 1
+  try {
+    const [orderData, reportData, statsData] = await Promise.all([
+      get<{ items: any[] }>('/operation/workorders?page_size=100'),
+      get<RiskDailyReport>('/risk/report').catch(() => null),
+      get<RiskStatistics>('/risk/statistics?days=7').catch(() => null),
+    ])
+    workorders.value = orderData.items
+    dailyReport.value = reportData
+    statistics.value = statsData
+
+    await loadAlerts()
     await nextTick()
     renderCharts()
   } catch (reason) {
