@@ -118,6 +118,7 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 | 工具 | 返回状态 | 处理方式 |
 |------|---------|----------|
 | `profile_tool` | `status=not_found` | 直接回复理财顾问："该客户暂无风险画像，建议先引导客户完成风险测评问卷。" 不要尝试编造画像数据。 |
+| `smart_recommend` | `status=profile_not_found` | **重要！** 此时推荐列表中已包含R1级（最低风险）产品作为兜底推荐。你的回复必须：1) 先告知"当前您的风险评估已失效或不存在，建议您及时评测，维持有效的风评状态更方便购买财富产品"；2) 紧接着展示R1兜底推荐产品；3) 在回复末尾附加风评问卷入口：【📋 开始风评测评】(让用户点击即可进入问卷)。 |
 | `profile_tool` | `status=error` | 如实告知查询失败及具体错误原因，不要猜测或编造客户信息。 |
 | 任何工具 | 返回空或异常 | 诚实说明该工具暂时不可用，建议稍后重试或联系技术支持。 |
 
@@ -368,6 +369,9 @@ class AdvisorAgent(BaseAgent):
 
             此工具内部并行查询画像和推荐，比分开调用快一倍。
 
+            重要：如果客户画像不存在（status=not_found），会回退推荐R1最低风险产品，
+            并提示用户完成风评问卷。不要因此返回空结果或拒绝推荐。
+
             Args:
                 customer_id: 客户ID
                 top_n: 返回 Top N 个推荐产品，默认 3
@@ -392,19 +396,42 @@ class AdvisorAgent(BaseAgent):
                 profile_data = {"risk_level": "C2", "status": "parse_error"}
 
             risk_level = None
+            profile_not_found = False
             if isinstance(profile_data, dict):
-                assessment = profile_data.get("assessment", {})
-                risk_level = assessment.get("risk_level")
+                # 检查画像是否不存在
+                if profile_data.get("status") == "not_found":
+                    profile_not_found = True
+                    risk_level = "C1"  # 无画像时回退到最低风险等级
+                else:
+                    assessment = profile_data.get("assessment", {})
+                    risk_level = assessment.get("risk_level")
 
             # 用画像的风险等级做推荐
-            rec_result = await rec_tool.recommend(customer_id, top_n)
+            rec_result = await rec_tool.recommend(customer_id, top_n, fallback_risk=risk_level)
 
-            return json.dumps({
-                "customer_profile": profile_data,
-                "recommendations": rec_result.get("recommendations", []),
-                "allocation": alloc_result,
-                "reasoning": rec_result.get("reasoning", ""),
-            }, ensure_ascii=False, default=str)
+            # 无画像时，确保返回最低风险产品和明确提示
+            if profile_not_found:
+                result = {
+                    "customer_profile": profile_data,
+                    "recommendations": rec_result.get("recommendations", []),
+                    "allocation": alloc_result,
+                    "reasoning": rec_result.get("reasoning", ""),
+                    "status": "profile_not_found",
+                    "notice": (
+                        "⚠️ 该客户当前风险测评已失效或不存在，系统已回退推荐R1级（最低风险）产品。"
+                        "建议客户及时完成【风评问卷】，维持有效的风评状态以便购买更多财富产品。"
+                        "风评问卷入口：点击「开始风评测评」按钮或访问 /api/risk/questionnaire"
+                    ),
+                }
+            else:
+                result = {
+                    "customer_profile": profile_data,
+                    "recommendations": rec_result.get("recommendations", []),
+                    "allocation": alloc_result,
+                    "reasoning": rec_result.get("reasoning", ""),
+                }
+
+            return json.dumps(result, ensure_ascii=False, default=str)
 
         return smart_recommend
 

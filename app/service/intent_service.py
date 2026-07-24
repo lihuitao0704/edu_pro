@@ -36,6 +36,38 @@ ADVISOR_INTENT_PRIORITY = {
     "comparison": 1,
 }
 
+# ── Router 统一意图（6类）──
+ROUTER_INTENTS = {
+    "product_faq",
+    "investment_recommendation",
+    "risk_control",
+    "data_analysis",
+    "business_operation",
+    "chitchat",
+}
+
+# 关键词快速通道：命中关键词直接判定意图，无需调用LLM
+ROUTER_KEYWORD_MAP = [
+    # (关键词列表, 意图)
+    (["申购", "赎回", "转账给", "开户", "更新手机", "更新邮箱", "风评重做",
+      "创建工单", "上报可疑"], "business_operation"),
+    (["推荐", "筛选", "找产品", "有什么好", "配置建议", "仓位", "持仓分析",
+      "集中度", "行业分布", "对比", "比较", "资产配置"], "investment_recommendation"),
+    (["异常", "可疑交易", "风险检测", "风控标记", "风险监测"], "risk_control"),
+    (["统计", "排名", "趋势", "多少客户", "占比", "分析数据", "查询数据",
+      "本月", "上月", "本季度"], "data_analysis"),
+]
+
+# Router 意图 → 分发目标 Agent
+ROUTER_INTENT_TO_AGENT = {
+    "product_faq": "customer_service",
+    "chitchat": "customer_service",
+    "investment_recommendation": "advisor",
+    "risk_control": "risk_monitor",
+    "data_analysis": "nl2sql",
+    "business_operation": "operator",
+}
+
 ADVISOR_INTENT_TO_AGENT_ACTION = {
     "product_recommend": "recommend_products",
     "portfolio_analysis": "analysis_holdings",
@@ -254,6 +286,140 @@ class IntentService:
     def is_advisor_intent(self, intent: str) -> bool:
         """判断是否为投顾意图"""
         return intent in ADVISOR_INTENT_PRIORITY
+
+    # ═══════════════════════════════════════════════════════════════
+    # Router 统一意图分类（6类）
+    # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _keyword_quick_route(message: str) -> Optional[tuple]:
+        """关键词快速通道：命中明显关键词时跳过LLM分类，节省延迟。
+
+        Returns:
+            (intent, confidence, params) 或 None（未命中）
+        """
+        for keywords, intent in ROUTER_KEYWORD_MAP:
+            for kw in keywords:
+                if kw in message:
+                    logger.info(f"Router关键词快速命中: {kw} → {intent}")
+                    return (intent, 0.95, {"customer_name": None, "customer_id": None,
+                                           "product_name": None, "amount": None,
+                                           "transaction_type": None})
+        return None
+
+    @staticmethod
+    def _extract_router_params(text: str) -> dict:
+        """从LLM返回的JSON文本中提取参数"""
+        import json
+        default_params = {"customer_name": None, "customer_id": None,
+                          "product_name": None, "amount": None,
+                          "transaction_type": None}
+        try:
+            # 尝试直接解析JSON
+            data = json.loads(text)
+            params = data.get("params", {})
+            result = {}
+            for k in default_params:
+                result[k] = params.get(k)
+            return result
+        except (json.JSONDecodeError, TypeError):
+            return default_params
+
+    @staticmethod
+    def _extract_router_intent(text: str) -> str:
+        """从LLM返回文本中提取意图标签"""
+        import re
+        import json
+
+        text_clean = text.strip()
+
+        # 1. 尝试JSON解析
+        try:
+            data = json.loads(text_clean)
+            intent = data.get("intent", "")
+            if intent in ROUTER_INTENTS:
+                return intent
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # 2. 尝试匹配 "intent": "xxx" 模式
+        match = re.search(r'"intent"\s*:\s*"([^"]+)"', text_clean)
+        if match:
+            intent = match.group(1)
+            if intent in ROUTER_INTENTS:
+                return intent
+
+        # 3. 从文本中提取有效意图标识符
+        for intent in ROUTER_INTENTS:
+            if intent in text_clean.lower():
+                return intent
+
+        return "product_faq"  # 最终兜底
+
+    async def classify_router(self, message: str) -> Tuple[str, float, dict]:
+        """Router Agent 统一意图分类（6类）
+
+        流程：关键词快速通道 → LLM分类 → 意图提取 + 参数提取
+
+        Returns:
+            (intent, confidence, params_dict)
+        """
+        # 1. 关键词快速通道
+        quick = self._keyword_quick_route(message)
+        if quick:
+            return quick
+
+        # 2. 加载Router分类 Prompt
+        prompt = self._load_prompt("router_intent.txt", self._default_router_prompt)
+
+        # 3. 调用LLM
+        try:
+            prompt_text = prompt.format(user_message=message)
+            result = await self.llm.classify(prompt_text, temperature=0.1)
+            result = result.strip()
+
+            # 4. 提取意图
+            intent = self._extract_router_intent(result)
+
+            # 5. 提取参数
+            params = self._extract_router_params(result)
+
+            # 6. 置信度
+            confidence = 0.90 if intent != "chitchat" else 0.75
+
+            logger.info(f"Router分类完成 | message={message[:40]}... | intent={intent} | confidence={confidence}")
+            return intent, confidence, params
+
+        except Exception as e:
+            logger.error(f"Router分类失败: {e}，兜底为 product_faq")
+            return "product_faq", 0.5, {"customer_name": None, "customer_id": None,
+                                         "product_name": None, "amount": None,
+                                         "transaction_type": None}
+
+    @staticmethod
+    def _default_router_prompt() -> str:
+        """Router 分类默认 Prompt（文件缺失时的兜底）"""
+        return """你是金融智能服务平台的路由分类器。请将用户消息分类到以下6种意图之一，并提取关键参数。
+
+6种意图：
+- product_faq：产品咨询、FAQ、规则说明、问候
+- investment_recommendation：推荐产品、资产配置、持仓分析、客户对比
+- risk_control：异常交易、风险识别、合规检查、可疑上报
+- data_analysis：数据统计、收益分析、用户分析
+- business_operation：申购、赎回、转账、开户、信息更新
+- chitchat：纯闲聊（与金融业务完全无关）
+
+输出格式（仅输出 JSON，无其他内容）：
+{"intent": "意图标识符", "confidence": 0.90, "params": {"customer_name": null, "customer_id": null, "product_name": null, "amount": null, "transaction_type": null}}
+
+用户输入："{user_message}"
+
+JSON："""
+
+    @staticmethod
+    def get_router_agent(intent: str) -> str:
+        """获取Router意图对应的目标Agent名称"""
+        return ROUTER_INTENT_TO_AGENT.get(intent, "customer_service")
 
 
 # 全局单例

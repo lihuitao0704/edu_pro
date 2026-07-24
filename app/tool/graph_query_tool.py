@@ -14,23 +14,78 @@ from app.config.database import async_session_factory
 neo4j = Neo4jClient()
 
 
+import re
+
+
 async def resolve_customer_id(customer_name: str) -> Optional[int]:
-    """根据客户姓名查找 customer_id（MySQL）
-    仅做精确匹配，杜绝模糊匹配导致对错误客户执行操作（1.6 修复）"""
+    """根据客户姓名或ID描述查找 customer_id（MySQL）
+
+    解析策略（按优先级）：
+    1. 精确匹配 real_name（保持向后兼容）
+    2. "客户ID N" / "客户ID：N" / "客户编号N" 模式 → 直接按ID查询
+    3. 名字含数字后缀（如"演示客户05"）→ 提取数字作为候选ID查询
+    4. 模糊匹配（最后兜底）
+    """
     if not customer_name or not customer_name.strip():
         return None
+    name = customer_name.strip()
+
     async with async_session_factory() as session:
+        # 策略1: 精确匹配 real_name
         result = await session.execute(
             text("SELECT id FROM sys_user WHERE real_name = :name AND user_type = 'CUSTOMER'"),
-            {"name": customer_name.strip()},
+            {"name": name},
         )
         rows = result.fetchall()
-        if len(rows) == 0:
-            return None
+        if len(rows) == 1:
+            return rows[0][0]
         if len(rows) > 1:
-            # 存在重名：拒绝猜测，返回 None 由调用方提示用户补充信息
+            # 存在重名：拒绝猜测
             return None
-        return rows[0][0]
+
+        # 策略2: "客户ID N" / "客户编号N" 模式
+        id_patterns = [
+            r'客户\s*ID\s*[：:]\s*(\d+)',
+            r'客户\s*ID\s*(\d+)',
+            r'客户编号\s*[：:]*\s*(\d+)',
+            r'customer\s*id\s*[：:=]*\s*(\d+)',
+        ]
+        for pattern in id_patterns:
+            m = re.search(pattern, name, re.IGNORECASE)
+            if m:
+                cid = int(m.group(1))
+                # 验证该ID确实存在且是客户
+                verify = await session.execute(
+                    text("SELECT id FROM sys_user WHERE id = :cid AND user_type = 'CUSTOMER'"),
+                    {"cid": cid},
+                )
+                if verify.first():
+                    return cid
+
+        # 策略3: 名字含数字后缀（如"演示客户05" → 05 → 5）
+        # 提取名字末尾的数字（支持零填充）
+        num_match = re.search(r'(\d+)$', name)
+        if num_match:
+            num_str = num_match.group(1)
+            candidate_id = int(num_str)  # "05" → 5, "15" → 15
+            # 验证该ID存在且是客户
+            verify = await session.execute(
+                text("SELECT id FROM sys_user WHERE id = :cid AND user_type = 'CUSTOMER'"),
+                {"cid": candidate_id},
+            )
+            if verify.first():
+                return candidate_id
+
+        # 策略4: 模糊 LIKE 匹配（最后兜底）
+        result = await session.execute(
+            text("SELECT id FROM sys_user WHERE real_name LIKE :pat AND user_type = 'CUSTOMER' LIMIT 2"),
+            {"pat": f"%{name}%"},
+        )
+        rows = result.fetchall()
+        if len(rows) == 1:
+            return rows[0][0]
+
+        return None
 
 
 async def resolve_product_id(product_name: str) -> Optional[int]:

@@ -212,11 +212,23 @@ async function query() {
   result.value = null
   page.value = 1
   try {
-    result.value = await post('/chat/analyst', {
+    const resp = await post<Record<string, any>>('/chat', {
       session_id: `analyst-${Date.now().toString(36)}`,
       message: question.value,
       user_id: auth.user?.user_id,
+      user_role: auth.user?.role || '理财顾问',
     })
+    // 统一响应: {intent, agent, confidence, session_id, reply, data: {sql, query_result, ...}}
+    // 提取内层 data，兼容 AnalyticsView 模板中的直接字段访问
+    const respData = resp?.data || resp || {}
+    const inner = respData.data || {}
+    result.value = {
+      ...respData,
+      ...inner,
+      reply: respData.reply || inner.reply || '',
+      sql: inner.sql || respData.sql || '',
+      query_result: inner.query_result || respData.query_result || [],
+    }
     editableSql.value = result.value?.sql || ''
     await nextTick()
     renderChart()
@@ -238,11 +250,21 @@ async function reExecute() {
   result.value = null
   page.value = 1
   try {
-    result.value = await post('/chat/analyst/execute', {
+    const resp = await post<Record<string, any>>('/chat', {
       session_id: `analyst-${Date.now().toString(36)}`,
-      message: editableSql.value,
+      message: `执行SQL查询：${editableSql.value}`,
       user_id: auth.user?.user_id,
+      user_role: auth.user?.role || '理财顾问',
     })
+    const respData = resp?.data || resp || {}
+    const inner = respData.data || {}
+    result.value = {
+      ...respData,
+      ...inner,
+      reply: respData.reply || inner.reply || '',
+      sql: inner.sql || respData.sql || editableSql.value,
+      query_result: inner.query_result || respData.query_result || [],
+    }
   } catch (reason: any) {
     failedSql.value = editableSql.value
     errorMsg.value = reason instanceof Error ? reason.message : '执行失败'

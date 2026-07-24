@@ -152,35 +152,20 @@ try:
 except Exception as e:
     print(f"  [WARN] 风评路由加载失败: {e}")
 
+# 统一对话入口（Router Agent → 6意图分类 → Agent分发）
+# 替代原来的 /api/chat/customer, /api/chat/advisor, /api/chat/operator, /api/chat/analyst
 try:
-    from app.api.advisor import router as advisor_router
-    app.include_router(advisor_router, prefix="/api/chat", tags=["投顾对话"])
+    from app.api.unified_chat import router as unified_chat_router
+    app.include_router(unified_chat_router, prefix="/api", tags=["统一对话入口"])
+    print("  API: /api/chat (Router Agent 统一入口) [OK]")
 except Exception as e:
-    print(f"  [WARN] 投顾路由加载失败: {e}")
-
-try:
-    from app.api.chat import customer_router
-    app.include_router(customer_router, prefix="/api/chat", tags=["智能客服"])
-except Exception as e:
-    print(f"  [WARN] 智能客服路由加载失败: {e}")
+    print(f"  [WARN] 统一入口路由加载失败: {e}")
 
 try:
     from app.api.knowledge import router as knowledge_router
     app.include_router(knowledge_router, prefix="/api/knowledge", tags=["知识库管理"])
 except Exception as e:
     print(f"  [WARN] 知识库路由加载失败: {e}")
-
-try:
-    from app.api.chat import operator_router
-    app.include_router(operator_router, prefix="/api/chat", tags=["业务操作"])
-except Exception as e:
-    print(f"  [WARN] 业务操作路由加载失败: {e}")
-
-try:
-    from app.api.chat import analyst_router
-    app.include_router(analyst_router, prefix="/api/chat", tags=["数据分析"])
-except Exception as e:
-    print(f"  [WARN] 数据分析路由加载失败: {e}")
 
 try:
     from app.api.graph import router as graph_router
@@ -296,7 +281,42 @@ async def frontend_fallback(frontend_path: str):
     return FileResponse(os.path.join(frontend_dir, "index.html"))
 
 
+def _kill_port(port: int) -> None:
+    """Kill any process occupying the target port before starting."""
+    import subprocess, platform
+
+    try:
+        if platform.system() == "Windows":
+            # Find PID by port
+            result = subprocess.run(
+                ["cmd", "/c", f'netstat -ano | findstr :{port} | findstr LISTENING'],
+                capture_output=True, text=True, shell=True,
+            )
+            for line in result.stdout.strip().split("\n"):
+                parts = line.strip().split()
+                if len(parts) >= 5:
+                    pid = parts[-1]
+                    subprocess.run(["taskkill", "/F", "/PID", pid],
+                                   capture_output=True, shell=True)
+                    print(f"  [端口释放] PID {pid} (端口 {port}) 已终止")
+        else:
+            # Linux/macOS
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            for pid in result.stdout.strip().split("\n"):
+                if pid:
+                    subprocess.run(["kill", "-9", pid], capture_output=True)
+                    print(f"  [端口释放] PID {pid} (端口 {port}) 已终止")
+    except Exception as e:
+        print(f"  [端口释放] 检查失败（可能无旧进程）: {e}")
+
+
 if __name__ == "__main__":
+    import os as _os
+    _kill_port(8000)
+    # 设置环境变量允许热重载时的子进程正确处理
+    _os.environ.setdefault("SERVER_PORT", "8000")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

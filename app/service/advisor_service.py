@@ -45,18 +45,31 @@ class AdvisorService:
         self._llm = get_llm_tool()
 
     async def recommend_products(
-        self, customer_id: int, top_n: int = 3, risk_level: Optional[str] = None
+        self, customer_id: int, top_n: int = 3, risk_level: Optional[str] = None,
+        fallback_risk: Optional[str] = None,
     ) -> dict:
-        """产品推荐"""
+        """产品推荐。
+
+        Args:
+            fallback_risk: 画像不存在时的回退风险等级。传入 "C1" 则回退推荐R1产品。
+        """
         # 获取画像
         profile = await self.profile_service.get_profile(customer_id)
+        profile_not_found = False
         if not profile:
-            return {"recommendations": [], "customer_profile": None, "reasoning": "客户画像不存在，请先创建画像"}
+            if fallback_risk:
+                # 画像不存在但有回退等级 → 推荐最低风险产品 + 提示
+                profile_not_found = True
+                customer_risk = fallback_risk
+            else:
+                return {"recommendations": [], "customer_profile": None,
+                        "reasoning": "客户画像不存在，请先创建画像"}
 
-        customer_risk = risk_level or (
-            profile.get("risk_level") if isinstance(profile, dict)
-            else getattr(profile, "risk_level", None)
-        ) or "C2"
+        if not profile_not_found:
+            customer_risk = risk_level or (
+                profile.get("risk_level") if isinstance(profile, dict)
+                else getattr(profile, "risk_level", None)
+            ) or "C2"
         allowed_levels = SUITABILITY_MATRIX.get(customer_risk, ["R1", "R2"])
 
         # 筛选

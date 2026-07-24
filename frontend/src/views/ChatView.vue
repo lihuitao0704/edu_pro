@@ -135,11 +135,16 @@ async function send() {
   await nextTick()
   messagePane.value?.scrollTo({ top: messagePane.value.scrollHeight, behavior: 'smooth' })
   try {
-    const path = currentAgent.value === 'customer' ? '/chat/customer/stream' : '/chat/advisor/stream'
-    const body =
-      currentAgent.value === 'customer'
-        ? { session_id: sessionId, user_id: auth.user?.user_id, message: content }
-        : { session_id: sessionId, customer_id: customerId.value, user_id: auth.user?.user_id, message: content }
+    // 统一入口: POST /api/chat/stream
+    const path = '/chat/stream'
+    const body = {
+      session_id: sessionId,
+      user_id: auth.user?.user_id,
+      user_role: auth.user?.role || '客户',
+      message: currentAgent.value === 'advisor'
+        ? `${content}（客户ID: ${customerId.value}）`
+        : content,
+    }
     await streamChat(path, body, (event) => {
       if (event.event === 'delta') response.content += event.data.content || ''
       if (event.event === 'sources') response.sources = event.data.sources || []

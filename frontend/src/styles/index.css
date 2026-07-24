@@ -103,6 +103,8 @@ code { font-family: Consolas, monospace; }
 .metric-grid.compact article { min-height: 105px; }
 .inline-search { width: 300px; display: flex; gap: 8px; }
 .inline-search input { width: 120px; }
+.toolbar-row { display: flex; align-items: center; gap: 10px; }
+.filter-select { width: auto !important; min-width: 120px; padding: 9px 12px !important; font-size: 13px; }
 .state-panel { min-height: 170px; display: grid; place-items: center; align-content: center; gap: 8px; color: var(--muted); text-align: center; }
 .state-panel p { margin: 0; font-size: 13px; }
 .state-symbol { font-family: Georgia, serif; font-size: 35px; color: #aebbc1; }

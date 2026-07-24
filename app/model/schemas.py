@@ -206,6 +206,26 @@ class ApiResponse(BaseModel):
     trace_id: str
 
 
+# ==================== Router Agent 统一入口 ====================
+
+class UnifiedChatRequest(BaseModel):
+    """Router Agent 统一对话请求"""
+    message: str = Field(..., description="用户自然语言消息")
+    session_id: str = Field(default="", description="会话ID")
+    user_id: int = Field(default=0, description="用户ID")
+    user_role: str = Field(default="客户", description="用户角色")
+
+
+class UnifiedChatResponse(BaseModel):
+    """Router Agent 统一对话响应（信封）"""
+    intent: str = Field(..., description="分类后的意图")
+    agent: str = Field(..., description="处理的Agent名称")
+    confidence: float = Field(default=0.0, description="意图置信度")
+    session_id: str = Field(default="", description="会话ID")
+    reply: str = Field(default="", description="人类可读回复文本")
+    data: Optional[dict] = Field(default=None, description="Agent专属响应数据")
+
+
 # ==================== 智能客服Agent ====================
 
 class CustomerChatRequest(BaseModel):

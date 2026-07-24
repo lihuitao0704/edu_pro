@@ -27,6 +27,7 @@
           <div class="banner-actions">
             <button class="secondary-button" :disabled="actionLoading" @click="runAllocation">资产配置</button>
             <button class="primary-button" :disabled="actionLoading" @click="runRecommend">生成推荐方案</button>
+            <button class="secondary-button assessment-btn" @click="showAssessment = true">📋 风评问卷</button>
           </div>
         </section>
         <section class="metric-grid compact">
@@ -58,6 +59,14 @@
         </section>
       </template>
     </section>
+    <!-- 风评问卷弹窗 -->
+    <RiskAssessmentModal
+      v-if="selected"
+      :visible="showAssessment"
+      :customer-id="selected.customer_id"
+      @update:visible="showAssessment = $event"
+      @submitted="onAssessmentSubmitted"
+    />
   </div>
 </template>
 
@@ -69,6 +78,7 @@ import type { Customer, Holding } from '../api/types'
 import EmptyState from '../components/EmptyState.vue'
 import ErrorAlert from '../components/ErrorAlert.vue'
 import LoadingPanel from '../components/LoadingPanel.vue'
+import RiskAssessmentModal from '../components/RiskAssessmentModal.vue'
 
 const keyword = ref('')
 const customers = ref<Customer[]>([])
@@ -79,7 +89,9 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const advice = ref('')
+const showAssessment = ref(false)
 const money = (value: unknown) => value === undefined || value === null ? '—' : `¥${(Number(value) / 10_000).toFixed(1)}万`
+const hasAssessmentPrompt = () => advice.value.includes('风评') || advice.value.includes('测评') || advice.value.includes('风险评估')
 
 async function search() {
   loading.value = true
@@ -115,8 +127,15 @@ async function runRecommend() {
   if (!selected.value) return
   actionLoading.value = true
   try {
-    const result = await post<Record<string, any>>('/chat/recommend', { customer_id: selected.value.customer_id, top_n: 3 })
-    advice.value = result.reply || result.reasoning || JSON.stringify(result.recommendations || result, null, 2)
+    const result = await post<Record<string, any>>('/chat', {
+      message: `为客户${selected.value.customer_id}推荐3款适合的产品`,
+      session_id: '',
+      user_id: selected.value.customer_id,
+      user_role: '理财顾问',
+    })
+    // 统一响应格式: {intent, agent, confidence, session_id, reply, data: {...}}
+    const data = result.data || result
+    advice.value = data.reply || data.data?.reasoning || JSON.stringify(data.data?.recommendations || data, null, 2)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '推荐生成失败'
   } finally {
@@ -128,8 +147,14 @@ async function runAllocation() {
   if (!selected.value) return
   actionLoading.value = true
   try {
-    const result = await post<Record<string, any>>('/chat/allocation', { customer_id: selected.value.customer_id })
-    advice.value = result.reply || result.explanation || JSON.stringify(result.allocation || result, null, 2)
+    const result = await post<Record<string, any>>('/chat', {
+      message: `为客户${selected.value.customer_id}提供资产配置建议`,
+      session_id: '',
+      user_id: selected.value.customer_id,
+      user_role: '理财顾问',
+    })
+    const data = result.data || result
+    advice.value = data.reply || data.data?.reasoning || JSON.stringify(data.data || data, null, 2)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '资产配置生成失败'
   } finally {
@@ -137,5 +162,69 @@ async function runAllocation() {
   }
 }
 
+async function onAssessmentSubmitted(result: any) {
+  const data = result?.data || result
+  const level = data?.risk_level || data?.data?.risk_level || '已完成'
+  advice.value = `✅ 风评问卷已提交！\n\n您的最新风险等级为：**${level}**。\n\n系统已更新您的风险画像，现在可以基于最新评测结果为您推荐产品了。\n\n请点击「生成推荐方案」获取个性化推荐。`
+  // 刷新客户信息
+  if (selected.value) {
+    await selectCustomer(selected.value)
+  }
+}
+
 onMounted(search)
 </script>
+
+<style scoped>
+.assessment-btn {
+  color: #0b7f78;
+  border-color: #0b7f78;
+}
+.assessment-btn:hover {
+  background: #dff3ef;
+}
+
+/* 滑动窗口：限制持仓和投顾输出高度，防止拉长页面 */
+.holding-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.holding-list::-webkit-scrollbar,
+.advice-content::-webkit-scrollbar {
+  width: 4px;
+}
+.holding-list::-webkit-scrollbar-thumb,
+.advice-content::-webkit-scrollbar-thumb {
+  background: #dce4e7;
+  border-radius: 2px;
+}
+
+.advice-content {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.advice-content p {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 确保两列等高且独立滚动 */
+.two-column > .surface-card {
+  max-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.two-column > .surface-card .card-heading {
+  flex-shrink: 0;
+}
+.two-column > .surface-card > :not(.card-heading):last-child {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+</style>

@@ -2,7 +2,21 @@
   <div class="page-stack">
     <section class="page-intro">
       <div><span class="eyebrow">RISK COMMAND CENTER</span><h2>异常交易与工单联动</h2><p>预警、证据规则、客户风险标记和调查工单保持同步。</p></div>
-      <button class="secondary-button" @click="loadAll">刷新数据</button>
+      <div class="toolbar-row">
+        <select v-model="filterLevel" @change="loadAll" class="filter-select">
+          <option value="">全部等级</option>
+          <option value="high">高</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
+        </select>
+        <select v-model="filterStatus" @change="loadAll" class="filter-select">
+          <option value="">全部状态</option>
+          <option value="pending">待处理</option>
+          <option value="resolved">已处理</option>
+          <option value="false_positive">误报</option>
+        </select>
+        <button class="secondary-button" @click="loadAll">刷新数据</button>
+      </div>
     </section>
     <section class="risk-summary">
       <article><span>待处理预警</span><strong>{{ pendingCount }}</strong><i class="red" /></article>
@@ -75,6 +89,8 @@ const selected = ref<RiskAlert | null>(null)
 const handleNote = ref('')
 const loading = ref(false)
 const error = ref('')
+const filterLevel = ref('')
+const filterStatus = ref('')
 const pendingCount = computed(() => alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
 const highCount = computed(() => alerts.value.filter((item) => item.alert_level === 'high').length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
@@ -84,8 +100,11 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
+    const alertParams = new URLSearchParams({ page_size: '100' })
+    if (filterLevel.value) alertParams.set('alert_level', filterLevel.value)
+    if (filterStatus.value) alertParams.set('status', filterStatus.value)
     const [alertData, orderData] = await Promise.all([
-      get<{ alerts: RiskAlert[] }>('/risk/alerts?page_size=100'),
+      get<{ alerts: RiskAlert[] }>(`/risk/alerts?${alertParams.toString()}`),
       get<{ items: any[] }>('/operation/workorders?page_size=100'),
     ])
     alerts.value = alertData.alerts

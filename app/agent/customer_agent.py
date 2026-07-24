@@ -4,6 +4,7 @@ Agent Service — 客服Agent核心编排逻辑
 """
 
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +48,29 @@ def _load_customer_prompt() -> str:
 
 
 class CustomerServiceAgent:
-    """智能客服Agent核心类"""
+    """智能客服Agent核心类（含 C4 风控联动）"""
+
+    # C4 风控联动：敏感操作关键词 → 风险提示模板
+    SENSITIVE_KEYWORDS = {
+        "大额转账": ["大额转账", "转账", "汇款", "大额"],
+        "赎回": ["赎回", "取出", "提现"],
+        "大额申购": ["大额申购", "大额买入", "大笔买入"],
+    }
+
+    RISK_AWARE_TEMPLATES = {
+        "high": (
+            "⚠️ **风控提示（C4联动）**：您的账户当前处于高风险关注状态。"
+            "大额交易可能触发风控审核，建议联系您的理财顾问或拨打客服热线确认交易细节。"
+            "为确保您的资金安全，部分大额操作可能需要额外验证。"
+        ),
+        "medium": (
+            "ℹ️ **温馨提示（C4联动）**：您的账户近期有交易活动触发风控关注。"
+            "如涉及大额交易，系统可能会要求二次确认。如有疑问请联系客服。"
+        ),
+        "low": (
+            "✅ 您的账户风险状态正常，可正常办理业务。"
+        ),
+    }
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -93,13 +116,33 @@ class CustomerServiceAgent:
         # 2. 意图识别
         intent, intent_confidence = await self.intent_service.classify(message, history)
 
+        # 2b. C4 风控联动：检测敏感操作 + 查询风险上下文
+        risk_context = {}
+        is_sensitive = self._is_sensitive_query(message)
+        if is_sensitive:
+            risk_context = await self._query_risk_context(user_id)
+            logger.info(
+                "C4联动触发 | user=%s | msg=%s | risk_level=%s | alerts=%s",
+                user_id, message[:30], risk_context.get("risk_level"), risk_context.get("alert_count"),
+            )
+
         # 3. 根据意图执行对应逻辑
         if intent == "transfer_human":
             reply = "正在为您转接人工客服，请稍候..."
+            # C4 风控联动：转人工时也附加风险提示
+            if is_sensitive and risk_context.get("risk_level"):
+                risk_reply = self._get_risk_aware_reply(risk_context)
+                if risk_reply:
+                    reply = risk_reply + "\n\n" + reply
             sources = []
 
         elif intent == "chitchat":
             reply = await self._handle_chitchat(message, history)
+            # C4 风控联动：即使是闲聊，也检测敏感词并附加风险提示
+            if is_sensitive and risk_context.get("risk_level"):
+                risk_reply = self._get_risk_aware_reply(risk_context)
+                if risk_reply:
+                    reply = risk_reply + "\n\n---\n\n" + reply
             sources = []
 
         else:
@@ -120,10 +163,14 @@ class CustomerServiceAgent:
                 fallback_reply = self._keyword_fallback(message, intent)
                 if fallback_reply:
                     reply = fallback_reply
-                    sources = []
                 else:
                     reply = check["message"]
-                    sources = []
+                # C4 风控联动：即使兜底回复也附加风险提示
+                if is_sensitive and risk_context.get("risk_level"):
+                    risk_reply = self._get_risk_aware_reply(risk_context)
+                    if risk_reply:
+                        reply = risk_reply + "\n\n---\n\n" + reply
+                sources = []
             else:
                 # 增强生成（注入跨 session 记忆）
                 llm_response = await self._generate_with_context(
@@ -154,10 +201,28 @@ class CustomerServiceAgent:
                     reply = llm_response
                     sources = self._build_sources(rag_results)
 
+                # ── C4 风控联动：敏感操作附加风险提示 ──
+                if is_sensitive and risk_context.get("risk_level"):
+                    risk_reply = self._get_risk_aware_reply(risk_context)
+                    if risk_reply:
+                        reply = risk_reply + "\n\n---\n\n" + reply
+                        logger.info(
+                            "C4联动: 客户%s 敏感操作(%s) 附加风险提示 | level=%s",
+                            user_id, intent, risk_context.get("risk_level"),
+                        )
+
                 # 安全审核
                 safety_result = await self.safety.check_content(llm_response)
                 if not safety_result.passed:
-                    reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                    # C4 风控联动：安全审核不通过时，附加风险提示
+                    if is_sensitive and risk_context.get("risk_level"):
+                        risk_reply = self._get_risk_aware_reply(risk_context)
+                        if risk_reply:
+                            reply = risk_reply + "\n\n⚠️ 该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                        else:
+                            reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                    else:
+                        reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
 
                 # ── 强制风险提示（金融合规要求：涉及产品/收益时必须附加风险声明）──
                 if intent in ("product_inquiry", "faq"):
@@ -189,6 +254,104 @@ class CustomerServiceAgent:
             intent=intent,
             confidence=intent_confidence,
         )
+
+    async def _query_risk_context(self, user_id: int) -> dict:
+        """
+        C4 风控联动：查询客户风险上下文
+
+        数据来源（按优先级）：
+        1. Redis cs_risk_ctx:{user_id} — C4事件频道实时写入的上下文
+        2. MySQL fin_customer_profile.risk_flag — 画像风险标记
+        3. MySQL fin_risk_alert — 近期预警统计
+
+        Returns:
+            {risk_level: "high"|"medium"|"low"|None, alert_count: int, has_recent_alert: bool}
+        """
+        result = {"risk_level": None, "alert_count": 0, "has_recent_alert": False}
+
+        # 1. 查询 Redis C4 上下文
+        try:
+            from app.config.database import get_redis
+            import json
+            r = await get_redis()
+            ctx = await r.get(f"cs_risk_ctx:{user_id}")
+            if ctx:
+                ctx_data = json.loads(ctx)
+                if ctx_data.get("has_alert"):
+                    result["has_recent_alert"] = True
+                    logger.info(f"C4联动: 客户{user_id} Redis风险上下文命中")
+        except Exception as e:
+            logger.debug(f"C4联动 Redis查询失败(非阻断): {e}")
+
+        # 2. 查询画像风险标记
+        try:
+            from sqlalchemy import text
+            row = await self.db.execute(
+                text("SELECT risk_flag FROM fin_customer_profile WHERE customer_id = :cid"),
+                {"cid": user_id},
+            )
+            profile_row = row.first()
+            if profile_row:
+                flag = profile_row[0]
+                if flag == "high":
+                    result["risk_level"] = "high"
+                elif flag == "warning":
+                    result["risk_level"] = "medium"
+                elif flag == "normal":
+                    result["risk_level"] = "low"
+        except Exception as e:
+            logger.debug(f"C4联动 画像查询失败(非阻断): {e}")
+
+        # 3. 查询近期预警数量
+        try:
+            from sqlalchemy import text
+            from datetime import timedelta
+            thirty_days_ago = datetime.now() - timedelta(days=30)
+            row = await self.db.execute(
+                text(
+                    "SELECT COUNT(*) FROM fin_risk_alert "
+                    "WHERE customer_id = :cid AND created_at >= :since"
+                ),
+                {"cid": user_id, "since": thirty_days_ago},
+            )
+            count = row.scalar() or 0
+            result["alert_count"] = count
+            if count > 0:
+                result["has_recent_alert"] = True
+                # 根据预警数量调整等级
+                if count >= 3 and result["risk_level"] != "high":
+                    result["risk_level"] = "high"
+                elif count >= 1 and result["risk_level"] is None:
+                    result["risk_level"] = "medium"
+        except Exception as e:
+            logger.debug(f"C4联动 预警统计失败(非阻断): {e}")
+
+        return result
+
+    @staticmethod
+    def _is_sensitive_query(message: str) -> bool:
+        """C4 联动：检测用户消息是否涉及敏感金融操作"""
+        import re
+        sensitive_patterns = [
+            r'大额.*(?:转账|转出|汇款)',
+            r'(?:转账|转出|汇款).*大额',
+            r'(?:大额|大量).*(?:赎回|取出|提现)',
+            r'(?:赎回|取出|提现).*(?:大额|大量)',
+            r'(?:大额|大量).*(?:申购|买入|购买)',
+            r'想.*(?:转账|转出|汇款)',
+            r'怎么.*(?:转账|汇款|大额)',
+        ]
+        for pattern in sensitive_patterns:
+            if re.search(pattern, message):
+                return True
+        return False
+
+    def _get_risk_aware_reply(self, risk_context: dict) -> str:
+        """C4 联动：根据风险等级生成风控提示"""
+        risk_level = risk_context.get("risk_level")
+        if risk_level and risk_level in self.RISK_AWARE_TEMPLATES:
+            return self.RISK_AWARE_TEMPLATES[risk_level]
+        return ""
 
     async def _handle_chitchat(self, message: str, history: list[dict]) -> str:
         """处理闲聊"""

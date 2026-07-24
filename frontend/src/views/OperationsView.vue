@@ -49,12 +49,16 @@ async function send() {
   loading.value = true
   error.value = ''
   try {
-    const result = await post<Record<string, any>>('/chat/operator', {
+    const result = await post<Record<string, any>>('/chat', {
       message: text,
       session_id: sessionId,
       user_id: auth.user?.user_id,
+      user_role: auth.user?.role || '理财顾问',
     })
-    history.value.push({ role: 'assistant', text: result.reply || '操作完成', meta: result.action ? { action: result.action, params: result.params, status: result.status } : undefined })
+    // 统一响应格式: {intent, agent, confidence, session_id, reply, data: {...}}
+    const reply = result.data?.reply || result.reply || '操作完成'
+    const meta = result.data?.data || result.data
+    history.value.push({ role: 'assistant', text: reply, meta: meta?.action ? { action: meta.action, params: meta.params, status: meta.status } : undefined })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '业务操作失败'
   } finally {
