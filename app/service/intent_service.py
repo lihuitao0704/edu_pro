@@ -356,6 +356,17 @@ class IntentService:
         return text.strip()
 
     @staticmethod
+    def _regex_extract_intent(text: str) -> str:
+        """从文本中用正则提取意图（兜底方案）"""
+        import re
+        text_lower = text.lower()
+        # 直接搜索意图关键词
+        for intent in ROUTER_INTENTS:
+            if intent in text_lower:
+                return intent
+        return "product_faq"
+
+    @staticmethod
     def _extract_router_intent(text: str) -> str:
         """从LLM返回文本中提取意图标签"""
         import re
@@ -410,11 +421,25 @@ class IntentService:
             result = await self.llm.classify(prompt_text, temperature=0.1, max_tokens=256)
             result = result.strip()
 
-            # 4. 提取意图
-            intent = self._extract_router_intent(result)
+            # 调试日志：打印 LLM 原始输出（替换换行符避免日志格式混乱）
+            result_display = result.replace('\n', '\\n')[:200]
+            logger.info(f"Router LLM 原始输出 | len={len(result)} | text={result_display}...")
 
-            # 5. 提取参数
-            params = self._extract_router_params(result)
+            # 4. 提取意图（容错：单步异常不中断）
+            try:
+                intent = self._extract_router_intent(result)
+            except Exception as e:
+                logger.warning(f"Router 意图提取异常: {type(e).__name__}: {e}，尝试正则兜底")
+                intent = self._regex_extract_intent(result)
+
+            # 5. 提取参数（容错）
+            try:
+                params = self._extract_router_params(result)
+            except Exception as e:
+                logger.warning(f"Router 参数提取异常: {type(e).__name__}: {e}，使用默认参数")
+                params = {"customer_name": None, "customer_id": None,
+                          "product_name": None, "amount": None,
+                          "transaction_type": None}
 
             # 6. 置信度
             confidence = 0.90 if intent != "chitchat" else 0.75
@@ -423,7 +448,7 @@ class IntentService:
             return intent, confidence, params
 
         except Exception as e:
-            logger.error(f"Router分类失败: {e}，兜底为 product_faq")
+            logger.error(f"Router分类失败: {type(e).__name__}: {str(e)[:100]}，兜底为 product_faq")
             return "product_faq", 0.5, {"customer_name": None, "customer_id": None,
                                          "product_name": None, "amount": None,
                                          "transaction_type": None}
@@ -442,7 +467,7 @@ class IntentService:
 - chitchat：纯闲聊（与金融业务完全无关）
 
 输出格式（仅输出 JSON，无其他内容）：
-{"intent": "意图标识符", "confidence": 0.90, "params": {"customer_name": null, "customer_id": null, "product_name": null, "amount": null, "transaction_type": null}}
+{{"intent": "意图标识符", "confidence": 0.90, "params": {{"customer_name": null, "customer_id": null, "product_name": null, "amount": null, "transaction_type": null}}}}
 
 用户输入："{user_message}"
 
