@@ -18,3 +18,21 @@ import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
 </script>
+
+<style scoped>
+.finance-chat-page {
+  height: calc(100dvh - 149px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.finance-page-intro { flex: 0 0 auto; }
+:deep(.chat-window) { flex: 1; min-height: 0; }
+:deep(.chat-window-header) { min-height: 54px; padding: 12px 24px; justify-content: flex-end; }
+:deep(.chat-window-header > div:first-child) { display: none; }
+:deep(.chat-scroll-area) { min-height: 0; max-height: none; }
+@media (max-width: 760px) {
+  .finance-chat-page { height: auto; }
+  :deep(.chat-window) { min-height: 620px; }
+}
+</style>

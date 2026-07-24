@@ -232,19 +232,12 @@ class CustomerServiceAgent:
         await self.memory.save_message(session_id, "assistant", reply)
 
         # 5. 异步归档
-        self.memory.archive_conversation_bg(
+        await self.memory.archive_turn(
             session_id=session_id,
             user_id=user_id,
             agent_type="customer_service",
-            role="user",
-            content=message,
-        )
-        self.memory.archive_conversation_bg(
-            session_id=session_id,
-            user_id=user_id,
-            agent_type="customer_service",
-            role="assistant",
-            content=reply,
+            user_content=message,
+            assistant_content=reply,
         )
 
         return CustomerChatResponse(

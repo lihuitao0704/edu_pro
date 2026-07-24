@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { get, post } from '../api/http'
 import type { Customer, Holding } from '../api/types'
@@ -79,6 +79,7 @@ import EmptyState from '../components/EmptyState.vue'
 import ErrorAlert from '../components/ErrorAlert.vue'
 import LoadingPanel from '../components/LoadingPanel.vue'
 import RiskAssessmentModal from '../components/RiskAssessmentModal.vue'
+import { onProfileUpdated } from '../utils/profile-events'
 
 const keyword = ref('')
 const customers = ref<Customer[]>([])
@@ -172,7 +173,14 @@ async function onAssessmentSubmitted(result: any) {
   }
 }
 
-onMounted(search)
+let stopProfileUpdates = () => {}
+onMounted(() => {
+  void search()
+  stopProfileUpdates = onProfileUpdated((updatedCustomerId) => {
+    if (selected.value?.customer_id === updatedCustomerId) void selectCustomer(selected.value)
+  })
+})
+onBeforeUnmount(() => stopProfileUpdates())
 </script>
 
 <style scoped>

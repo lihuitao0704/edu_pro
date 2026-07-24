@@ -82,6 +82,11 @@ class RouterAgent:
             except Exception:
                 pass
 
+        # 客户本人咨询投资时，使用已认证身份作为可信客户上下文。
+        # 员工角色必须显式选择或解析客户，不能误用自己的员工账号。
+        if agent_name == "advisor" and not customer_id and user_role == "客户":
+            customer_id = user_id
+
         # ── Step 3: 分发给业务 Agent ──
         try:
             if agent_name == "customer_service":

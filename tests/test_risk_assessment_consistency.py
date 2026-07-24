@@ -8,7 +8,12 @@ class QuestionnaireConsistencyTests(unittest.IsolatedAsyncioTestCase):
         from app.model.schemas import AssessmentAnswer
         from app.service.risk_service import RiskService
 
-        profile = SimpleNamespace(risk_level=None, risk_score=None, update_time=None)
+        profile = SimpleNamespace(
+            risk_level=None,
+            risk_score=None,
+            update_time=None,
+            profile_json={},
+        )
         db = SimpleNamespace(
             execute=AsyncMock(side_effect=[
                 SimpleNamespace(scalar_one_or_none=lambda: profile),
@@ -29,6 +34,8 @@ class QuestionnaireConsistencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(result.total_score, 100)
         self.assertEqual(result.total_score, profile.risk_score)
         self.assertIsNotNone(profile.update_time)
+        self.assertEqual(result.risk_level, profile.profile_json["risk_level"])
+        self.assertEqual(result.total_score, profile.profile_json["risk_score"])
         archive.assert_awaited_once()
         db.commit.assert_awaited_once()
         sync.assert_awaited_once_with(7, result.risk_level)

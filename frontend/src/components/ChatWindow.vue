@@ -33,9 +33,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { createMockChatResponse, sendChat } from '../api/chat'
+import { createMockChatResponse, getChatHistory, sendChat } from '../api/chat'
 import MessageCard from './MessageCard.vue'
 import { useConversationStore } from '../stores/conversation'
 
@@ -50,6 +50,16 @@ const input = ref('')
 const loading = ref(false)
 const error = ref('')
 const scrollArea = ref<HTMLElement>()
+
+async function hydrateHistory() {
+  try {
+    const history = await getChatHistory()
+    conversations.hydrateUserSession(userKey.value, history)
+    await scrollToBottom()
+  } catch {
+    // 历史读取失败不阻塞当前会话；发送下一条消息会建立新会话。
+  }
+}
 
 function ask(prompt: string) {
   input.value = prompt
@@ -85,4 +95,8 @@ async function scrollToBottom() {
   await nextTick()
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'smooth' })
 }
+
+onMounted(() => {
+  void hydrateHistory()
+})
 </script>

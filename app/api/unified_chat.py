@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.config.database import get_db
+from app.model.entities import ConversationArchive
 from app.model.schemas import UnifiedChatRequest, UnifiedChatResponse
 from app.agent.router_agent import RouterAgent
 from app.utils.response import success, error
@@ -22,10 +23,46 @@ from app.security.authorization import (
     require_roles,
 )
 from app.config.settings import get_settings
+from sqlalchemy import select
 
 logger = get_logger(__name__)
 router = APIRouter()
 _settings = get_settings()
+
+
+@router.get("/chat/history", response_model=dict)
+async def get_chat_history(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(
+        require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
+    ),
+):
+    """Return the most recent persisted conversation for the authenticated user."""
+    actor_id = authenticated_actor_id(user)
+    records = (
+        await db.execute(
+            select(ConversationArchive)
+            .where(ConversationArchive.user_id == actor_id)
+            .order_by(ConversationArchive.create_time.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    if not records:
+        return success(data={"session_id": "", "messages": []})
+
+    session_id = records[0].session_id
+    messages = [record for record in reversed(records) if record.session_id == session_id]
+    return success(data={
+        "session_id": session_id,
+        "messages": [
+            {
+                "role": record.role,
+                "content": record.content,
+                "created_at": record.create_time.isoformat() if record.create_time else None,
+            }
+            for record in messages
+        ],
+    })
 
 
 @router.post("/chat", response_model=dict)

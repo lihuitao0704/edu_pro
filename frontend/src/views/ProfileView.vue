@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { get } from '../api/http'
 import EmptyState from '../components/EmptyState.vue'
@@ -57,6 +57,7 @@ import ErrorAlert from '../components/ErrorAlert.vue'
 import LoadingPanel from '../components/LoadingPanel.vue'
 import RiskScoreTrendChart, { type RiskScoreHistoryRecord } from '../components/RiskScoreTrendChart.vue'
 import { useAuthStore } from '../stores/auth'
+import { onProfileUpdated } from '../utils/profile-events'
 
 const auth = useAuthStore()
 const customerId = ref(auth.user?.role === '客户' ? auth.user.user_id : 3)
@@ -107,5 +108,12 @@ async function load() {
   }
 }
 
-onMounted(load)
+let stopProfileUpdates = () => {}
+onMounted(() => {
+  void load()
+  stopProfileUpdates = onProfileUpdated((updatedCustomerId) => {
+    if (updatedCustomerId === customerId.value) void load()
+  })
+})
+onBeforeUnmount(() => stopProfileUpdates())
 </script>

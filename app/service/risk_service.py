@@ -125,6 +125,15 @@ class RiskService:
             )
             self.db.add(profile)
 
+        snapshot = dict(profile.profile_json or {})
+        snapshot.update({
+            "customer_id": customer_id,
+            "risk_level": risk_level,
+            "risk_score": normalized,
+            "updated_at": datetime.now().isoformat(),
+        })
+        profile.profile_json = snapshot
+
         await self.db.flush()
         await self._upsert_questionnaire_risk_tag(customer_id, risk_level_name, valid_until)
         await self.long_term.archive_rating_record(

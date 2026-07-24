@@ -5,7 +5,7 @@
       <span class="security-chip">JWT 角色已绑定</span>
     </section>
     <section class="operation-console">
-      <div class="operation-examples">
+      <div class="operation-examples quick-prompts">
         <span class="eyebrow">快捷示例</span>
         <button v-for="hint in hints" :key="hint" @click="message = hint">{{ hint }}</button>
       </div>

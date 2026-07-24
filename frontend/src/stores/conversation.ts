@@ -15,6 +15,11 @@ interface ConversationSession {
   messages: ChatMessage[]
 }
 
+export interface ConversationHistory {
+  sessionId: string
+  messages: ChatMessage[]
+}
+
 export const useConversationStore = defineStore('conversation', () => {
   const sessions = ref<Record<string, ConversationSession>>({})
 
@@ -36,6 +41,14 @@ export const useConversationStore = defineStore('conversation', () => {
     sessionFor(userKey).conversationId = conversationId
   }
 
+  function hydrateUserSession(userKey: string, history: ConversationHistory) {
+    const session = sessionFor(userKey)
+    if (!session.messages.length && history.messages.length) {
+      session.conversationId = history.sessionId || session.conversationId
+      session.messages = history.messages
+    }
+  }
+
   function clearUserSession(userKey: string) {
     delete sessions.value[userKey]
   }
@@ -44,5 +57,5 @@ export const useConversationStore = defineStore('conversation', () => {
     sessions.value = {}
   }
 
-  return { sessionFor, appendMessage, setSessionId, clearUserSession, clearAll }
+  return { sessionFor, appendMessage, setSessionId, hydrateUserSession, clearUserSession, clearAll }
 })

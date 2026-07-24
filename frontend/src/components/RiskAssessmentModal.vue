@@ -60,6 +60,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { get, post } from '../api/http'
 import LoadingPanel from '../components/LoadingPanel.vue'
+import { publishProfileUpdated } from '../utils/profile-events'
 
 interface Question {
   q: number
@@ -109,6 +110,7 @@ async function submit() {
       customer_id: props.customerId,
       answers: payload,
     })
+    publishProfileUpdated(props.customerId)
     emit('submitted', result)
     close()
   } catch {
