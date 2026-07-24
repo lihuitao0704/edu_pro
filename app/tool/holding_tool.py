@@ -34,7 +34,7 @@ class HoldingTool:
                 """
                 SELECT h.product_id, h.current_value, h.profit_loss, h.profit_ratio
                 FROM fin_holdings h
-                WHERE h.customer_id = :cid AND h.status = '持仓中'
+                WHERE h.customer_id = :cid AND h.status = '持有中'
                 """
             ),
             {"cid": customer_id},

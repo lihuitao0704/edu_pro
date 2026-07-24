@@ -92,7 +92,7 @@ class ComparisonService:
         holdings_result = await self.db.execute(
             text(
                 "SELECT COUNT(*) AS count, COALESCE(SUM(current_value), 0) AS total "
-                "FROM fin_holdings WHERE customer_id = :cid AND status = '持仓中'"
+                "FROM fin_holdings WHERE customer_id = :cid AND status = '持有中'"
             ),
             {"cid": customer_id},
         )
@@ -155,14 +155,17 @@ class ComparisonService:
                 "note": "资产规模不同，配置策略需差异化",
             })
 
-        # 投资经验
-        ea = profile_a.get("investment_experience") or 0
-        eb = profile_b.get("investment_experience") or 0
+        # 投资经验（数据库存字符串，需映射为数值后再比较）
+        exp_map = {"1年以下": 0.5, "1-3年": 2, "3-5年": 4, "5-10年": 7, "10年以上": 10}
+        ea_str = profile_a.get("investment_experience") or "1年以下"
+        eb_str = profile_b.get("investment_experience") or "1年以下"
+        ea = exp_map.get(ea_str, 0)
+        eb = exp_map.get(eb_str, 0)
         if abs(ea - eb) >= 3:
             diffs.append({
                 "dimension": "投资经验",
-                "customer_a": f"{ea}年",
-                "customer_b": f"{eb}年",
+                "customer_a": ea_str,
+                "customer_b": eb_str,
                 "note": "经验差异明显，产品推荐需区别对待",
             })
 

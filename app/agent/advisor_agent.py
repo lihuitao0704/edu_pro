@@ -46,29 +46,33 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 # 核心能力 & 可用工具
 
-你有**六个**工具可以调用，根据用户意图**自行决定**调用哪些、按什么顺序调用：
+你有**七个**工具可以调用，根据用户意图**自行决定**调用哪些、按什么顺序调用：
 
 | 工具名 | 用途 | 何时调用 |
 |--------|------|----------|
 | `profile_tool` | 查询客户风险画像（四维度得分、C1-C5等级、熔断规则） | 用户提到客户、画像、风险等级、研判、评估 |
+| `smart_recommend` | **一键智能推荐**：自动查画像 + 产品推荐 + 资产配置建议，一步到位 | 用户问"推荐产品""适合什么产品""买什么好""有什么推荐" |
 | `compare_customers` | 对比两个客户的画像、持仓、行业偏好差异 | 用户要求对比两个客户、看有什么不同 |
 | `analysis_holdings` | 分析客户持仓分布、行业集中度、盈亏状态 | 用户要求分析持仓、看集中度、行业分布 |
-| `recommend_products` | 根据客户ID推荐匹配的产品列表 | 用户要求推荐产品、筛选基金、找合适的产品 |
-| `asset_allocation` | 给出该客户的资产配置比例建议 | 用户要求资产配置、仓位建议、比例分配 |
+| `recommend_products` | 根据客户ID推荐匹配的产品列表 | 用户只需要推荐产品、已明确不需要画像和配置 |
+| `asset_allocation` | 给出该客户的资产配置比例建议 | 用户只要求资产配置、仓位建议、比例分配 |
 | `graphrag_search` | 检索知识图谱和文档库（行业/产品/客户关联关系） | 用户问行业分布、产品关联、知识性问题 |
 
 # 工具调用策略
 
-1. **先查后推**：如果用户既要看画像又要推荐产品，**先调 profile_tool 再调 recommend_products**，
-   因为推荐需要知道客户的风险等级。
-2. **多工具组合**：用户可能一次提出复合需求，如"帮我看看张三的画像，推荐几款产品，
-   再查查新能源行业有什么热门基金"——你需要依次调用 profile_tool → recommend_products → graphrag_search。
-3. **独立调用**：如果用户只想要资产配置，直接调 asset_allocation，不需要先查画像。
-4. **持仓分析**：如果用户要求看持仓、行业集中度、盈亏状态，调 analysis_holdings。
+1. **一键推荐优先**：如果用户问"这个客户适合什么产品""有什么推荐""推荐几款产品"，
+   **直接调 smart_recommend**，该工具内部已完成画像查询+产品推荐+资产配置，
+   不需要先调 profile_tool 再调 recommend_products，一次调用就够了。
+2. **先查后推（仅当不适用 smart_recommend 时）**：如果用户既要看画像细节又要推荐产品，
+   且 smart_recommend 返回的画像摘要不够详细时，可调 profile_tool 补充。
+3. **多工具组合**：用户可能一次提出复合需求，如"帮我看看张三的画像，推荐几款产品，
+   再查查新能源行业有什么热门基金"——使用 smart_recommend + graphrag_search 即可。
+4. **独立调用**：如果用户只想要资产配置，直接调 asset_allocation，不需要先查画像。
+5. **持仓分析**：如果用户要求看持仓、行业集中度、盈亏状态，调 analysis_holdings。
    该工具会综合 MySQL 持仓明细和 Neo4j 行业关系图谱，返回完整持仓分析结果。
-5. **客户对比**：如果用户要求对比两个客户（如"比较张三和李四"），调 compare_customers。
+6. **客户对比**：如果用户要求对比两个客户（如"比较张三和李四"），调 compare_customers。
    该工具接收两个客户ID，返回画像差异、共同持仓、行业偏好对比等结构化报告。
-6. **知识类问题**：如果用户问的是知识性问题（如"什么是R3风险等级"、"新能源行业前景如何"），
+7. **知识类问题**：如果用户问的是知识性问题（如"什么是R3风险等级"、"新能源行业前景如何"），
    只调 graphrag_search，不要调其他工具。
 
 # 输出规范
@@ -77,19 +81,19 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 ```
 ## 📊 客户风险画像
-（如果调了 profile_tool，展示基本信息 + 四维度得分 + 风险等级 + 熔断告警）
+（如果调了 profile_tool 或 smart_recommend，展示基本信息 + 四维度得分 + 风险等级 + 熔断告警）
+
+## 🎯 产品推荐
+（如果调了 smart_recommend 或 recommend_products，列出推荐产品，含风险等级、预期收益、匹配度、推荐理由）
+
+## 📐 资产配置建议
+（如果调了 smart_recommend 或 asset_allocation，展示各资产类型配比和说明）
 
 ## 🔄 客户对比分析
 （如果调了 compare_customers，展示两客户画像差异 + 共同持仓 + 行业重叠度 + 对比摘要）
 
 ## 💼 持仓分析
 （如果调了 analysis_holdings，展示持仓明细 + 行业分布 + 集中度 + 盈亏状态）
-
-## 🎯 产品推荐
-（如果调了 recommend_products，列出推荐产品，含风险等级、预期收益、匹配度、推荐理由）
-
-## 📐 资产配置建议
-（如果调了 asset_allocation，展示各资产类型配比和说明）
 
 ## 🔍 知识检索结果
 （如果调了 graphrag_search，展示检索到的行业/产品/文档信息）
@@ -158,11 +162,13 @@ class AdvisorAgent(BaseAgent):
         self._recommend_tool = self._make_recommend_tool(db)
         self._allocation_tool = self._make_allocation_tool(db)
         self._holding_func_tool = self._make_holding_tool(db)
+        self._smart_recommend_tool = self._make_smart_recommend_tool(db)
 
         # ── 创建 LangChain Agent ──
         self._agent = create_agent(
             model=self._llm,
             tools=[
+                self._smart_recommend_tool,  # 一键推荐放在最前面，LLM 优先看到
                 self._profile_tool,
                 self._comparison_tool,
                 self._holding_func_tool,
@@ -223,10 +229,10 @@ class AdvisorAgent(BaseAgent):
                     {"messages": all_messages},
                     config={"recursion_limit": 6},
                 ),
-                timeout=90,
+                timeout=180,
             )
         except asyncio.TimeoutError:
-            logger.warning("AdvisorAgent 执行超时(90s)，返回降级提示")
+            logger.warning("AdvisorAgent 执行超时(180s)，返回降级提示")
             return {
                 "reply": "投顾分析超时，请尝试简化问题或稍后重试。",
                 "recommendations": [],
@@ -247,8 +253,15 @@ class AdvisorAgent(BaseAgent):
             }
 
         reply = self._extract_reply(result)
-        recommendations = self._extract_tool_result(result, "recommend_products")
-        customer_profile = self._extract_tool_result(result, "profile_tool")
+        # 优先从 smart_recommend 提取（新的一键推荐工具），
+        # 其次回退到单独工具提取（兼容旧路径）
+        smart_rec = self._extract_tool_result(result, "smart_recommend")
+        if smart_rec:
+            recommendations = smart_rec.get("recommendations", [])
+            customer_profile = smart_rec.get("customer_profile")
+        else:
+            recommendations = self._extract_tool_result(result, "recommend_products")
+            customer_profile = self._extract_tool_result(result, "profile_tool")
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
 
@@ -276,6 +289,67 @@ class AdvisorAgent(BaseAgent):
     # ═══════════════════════════════════════════════════════════════
     # 工具工厂方法
     # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _make_smart_recommend_tool(db: AsyncSession):
+        """创建一键智能推荐工具（画像+推荐+配置，一次工具调用完成）"""
+        from app.tool.profile_tool import ProfileTool
+        from app.tool.recommendation_tool import RecommendationTool
+        from app.tool.allocation_tool import AllocationTool
+
+        profile_tool = ProfileTool(db=db)
+        rec_tool = RecommendationTool(db)
+        alloc_tool = AllocationTool(db)
+
+        @tool
+        async def smart_recommend(customer_id: int, top_n: int = 3) -> str:
+            """
+            一键智能推荐工具：自动完成客户画像查询 + 产品推荐 + 资产配置建议。
+
+            当用户要求"推荐产品""适合什么产品""买什么好""有什么推荐"时，
+            优先调用此工具，不需要先调 profile_tool 再调 recommend_products。
+
+            此工具内部并行查询画像和推荐，比分开调用快一倍。
+
+            Args:
+                customer_id: 客户ID
+                top_n: 返回 Top N 个推荐产品，默认 3
+
+            Returns:
+                JSON 格式的一站式结果，包含客户画像摘要、产品推荐列表、资产配置建议
+            """
+            import json
+            import asyncio
+
+            # 并行执行画像查询和产品推荐（互不依赖的数据并行获取）
+            profile_coro = profile_tool._arun(customer_id)
+            alloc_coro = alloc_tool.get_allocation(customer_id)
+
+            # 先等画像结果回来（推荐需要知道风险等级）
+            profile_json, alloc_result = await asyncio.gather(profile_coro, alloc_coro)
+
+            # 解析画像获取风险等级，传给推荐
+            try:
+                profile_data = json.loads(profile_json)
+            except (json.JSONDecodeError, TypeError):
+                profile_data = {"risk_level": "C2", "status": "parse_error"}
+
+            risk_level = None
+            if isinstance(profile_data, dict):
+                assessment = profile_data.get("assessment", {})
+                risk_level = assessment.get("risk_level")
+
+            # 用画像的风险等级做推荐
+            rec_result = await rec_tool.recommend(customer_id, top_n)
+
+            return json.dumps({
+                "customer_profile": profile_data,
+                "recommendations": rec_result.get("recommendations", []),
+                "allocation": alloc_result,
+                "reasoning": rec_result.get("reasoning", ""),
+            }, ensure_ascii=False, default=str)
+
+        return smart_recommend
 
     @staticmethod
     def _make_recommend_tool(db: AsyncSession):
