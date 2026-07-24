@@ -38,9 +38,12 @@ async def resolve_customer_id(customer_name: str) -> Optional[int]:
         )
         rows = result.fetchall()
         if len(rows) == 1:
-            return rows[0][0]
+            cid = rows[0][0]
+            print(f"[resolve_customer_id] 策略1命中 | name={name} | id={cid}")
+            return cid
         if len(rows) > 1:
             # 存在重名：拒绝猜测
+            print(f"[resolve_customer_id] 策略1失败: 重名 | name={name} | count={len(rows)}")
             return None
 
         # 策略2: "客户ID N" / "客户编号N" 模式
@@ -60,7 +63,10 @@ async def resolve_customer_id(customer_name: str) -> Optional[int]:
                     {"cid": cid},
                 )
                 if verify.first():
+                    print(f"[resolve_customer_id] 策略2命中 | name={name} | id={cid}")
                     return cid
+                else:
+                    print(f"[resolve_customer_id] 策略2失败: ID {cid} 不是客户")
 
         # 策略3: 名字含数字后缀（如"演示客户05" → 05 → 5）
         # 提取名字末尾的数字（支持零填充）
@@ -74,7 +80,10 @@ async def resolve_customer_id(customer_name: str) -> Optional[int]:
                 {"cid": candidate_id},
             )
             if verify.first():
+                print(f"[resolve_customer_id] 策略3命中 | name={name} | id={candidate_id}")
                 return candidate_id
+            else:
+                print(f"[resolve_customer_id] 策略3失败: ID {candidate_id} 不是客户")
 
         # 策略4: 模糊 LIKE 匹配（最后兜底）
         result = await session.execute(
@@ -83,8 +92,11 @@ async def resolve_customer_id(customer_name: str) -> Optional[int]:
         )
         rows = result.fetchall()
         if len(rows) == 1:
-            return rows[0][0]
+            cid = rows[0][0]
+            print(f"[resolve_customer_id] 策略4命中 | name={name} | id={cid}")
+            return cid
 
+        print(f"[resolve_customer_id] 所有策略失败 | name={name}")
         return None
 
 

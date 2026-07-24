@@ -180,27 +180,7 @@ def apply_dataset() -> None:
     password_hash = hash_password("Demo@123")
     try:
         with connection.cursor() as cursor:
-            for account in build_test_accounts():
-                cursor.execute(
-                    """
-                    INSERT INTO sys_user
-                    (username,password_hash,user_type,employee_role,customer_level,
-                     real_name,status,balance,create_time,update_time)
-                    VALUES (%s,%s,%s,%s,%s,%s,'正常',1000000,NOW(),NOW())
-                    ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash),
-                      user_type=VALUES(user_type), employee_role=VALUES(employee_role),
-                      real_name=VALUES(real_name), status='正常', update_time=NOW()
-                    """,
-                    (
-                        account["username"],
-                        password_hash,
-                        account["user_type"],
-                        None if account["role"] == "客户" else account["role"],
-                        "普通" if account["role"] == "客户" else None,
-                        account["real_name"],
-                    ),
-                )
-
+            # ── 先插入20个演示客户（ID 1-20），确保"演示客户NN"的ID就是NN ──
             for customer in build_customers():
                 cursor.execute(
                     """
@@ -261,6 +241,31 @@ def apply_dataset() -> None:
                         customer["risk_score"],
                         customer["assessment_level"],
                         json.dumps({"details": [{"q": 4, "a": "C"}]}, ensure_ascii=False),
+                    ),
+                )
+
+            # ── 再插入角色账号（ID 21+），避免占用演示客户的ID空间 ──
+            for account in build_test_accounts():
+                # demo_customer_01 已在上面插入，跳过重复
+                if account["username"] == "demo_customer_01":
+                    continue
+                cursor.execute(
+                    """
+                    INSERT INTO sys_user
+                    (username,password_hash,user_type,employee_role,customer_level,
+                     real_name,status,balance,create_time,update_time)
+                    VALUES (%s,%s,%s,%s,%s,%s,'正常',1000000,NOW(),NOW())
+                    ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash),
+                      user_type=VALUES(user_type), employee_role=VALUES(employee_role),
+                      real_name=VALUES(real_name), status='正常', update_time=NOW()
+                    """,
+                    (
+                        account["username"],
+                        password_hash,
+                        account["user_type"],
+                        None if account["role"] == "客户" else account["role"],
+                        "普通" if account["role"] == "客户" else None,
+                        account["real_name"],
                     ),
                 )
 

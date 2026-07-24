@@ -32,6 +32,8 @@ export interface Customer {
   total_assets?: number
   confidence_score?: number
   risk_flag?: string
+  aml_risk_level?: 'high' | 'medium' | 'low'
+  alert_count_30d?: number
 }
 
 export interface Holding {

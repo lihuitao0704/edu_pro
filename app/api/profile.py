@@ -73,6 +73,7 @@ async def get_profile(
 
     先 Redis 缓存 → 后 MySQL → 回填缓存（Cache-Aside）。
     返回前端所需的全部画像字段：risk_level / risk_score / 四维度分 / total_assets 等。
+    新增：aml_risk_level（AML风险等级，基于近30天预警记录计算）
     """
     # 客户只能查看自己的画像
     if user.get("role") == "客户" and int(user.get("user_id") or 0) != customer_id:
@@ -84,7 +85,14 @@ async def get_profile(
         if not profile:
             raise HTTPException(status_code=404, detail=f"客户 {customer_id} 的画像不存在")
 
-        return success(data=service._profile_to_dict(profile))
+        # 获取基础画像数据
+        profile_data = service._profile_to_dict(profile)
+
+        # 追加 AML 风险等级（实时计算，不缓存）
+        aml_info = await service.get_aml_risk_level(customer_id)
+        profile_data.update(aml_info)
+
+        return success(data=profile_data)
     except HTTPException:
         raise
     except Exception as e:
