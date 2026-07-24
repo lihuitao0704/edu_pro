@@ -116,7 +116,7 @@ async def transfer_funds(
         {"t": txn_no_in, "c": to_id, "a": amount, "o": operator_id, "r": f"收到客户{from_id}转账"},
     )
 
-    risk_monitor = await _transaction_flow.monitor(
+    risk_monitor_out = await _transaction_flow.monitor(
         db,
         {
             "customer_id": from_id,
@@ -128,6 +128,18 @@ async def transfer_funds(
             "investor_account": str(from_id),
         },
     )
+    risk_monitor_in = await _transaction_flow.monitor(
+        db,
+        {
+            "customer_id": to_id,
+            "transaction_id": txn_no_in,
+            "amount": float(amount),
+            "transaction_type": "transfer_in",
+            "timestamp": datetime.now().isoformat(),
+            "counterparty": {"account": str(from_id)},
+            "investor_account": str(to_id),
+        },
+    )
     await db.commit()
     return ApiResponse(
         code=200,
@@ -136,7 +148,7 @@ async def transfer_funds(
             "transaction_no": txn_no,
             "amount": float(amount),
             "to_customer_id": to_id,
-            "risk_monitor": risk_monitor,
+            "risk_monitor": {"out": risk_monitor_out, "in": risk_monitor_in},
         },
         trace_id=uuid.uuid4().hex[:8],
     )

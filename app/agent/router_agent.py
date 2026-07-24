@@ -89,8 +89,17 @@ class RouterAgent:
                 data=result.get("data"),
             )
 
-        # ── Step 1: 意图分类 ──
-        intent, confidence, params = await self.intent_service.classify_router(message)
+        # ── Step 0.5: 确认回复直接路由到业务操作 ──
+        import re
+        if re.match(r'^(确认|确定|好的|行|可以|同意|取消|放弃)\s*$', message.strip()):
+            intent, confidence, params = "business_operation", 1.0, {}
+        else:
+            intent, confidence, params = await self.intent_service.classify_router(message)
+        # ── 从消息中直接提取客户ID ──
+        _id = re.search(r'客户(?:ID|编号)\s*(\d+)', message)
+        if _id:
+            params["customer_id"] = int(_id.group(1))
+
         agent_name = INTENT_TO_AGENT.get(intent, "customer_service")
 
         logger.info(
