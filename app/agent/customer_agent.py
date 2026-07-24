@@ -231,15 +231,7 @@ class CustomerServiceAgent:
         await self.memory.save_message(session_id, "user", message)
         await self.memory.save_message(session_id, "assistant", reply)
 
-        # 5. 异步归档
-        await self.memory.archive_turn(
-            session_id=session_id,
-            user_id=user_id,
-            agent_type="customer_service",
-            user_content=message,
-            assistant_content=reply,
-        )
-
+        # 5. 长期归档由统一聊天入口在回复成功后统一处理
         return CustomerChatResponse(
             reply=reply,
             sources=sources,

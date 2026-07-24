@@ -24,10 +24,33 @@ from app.security.authorization import (
 )
 from app.config.settings import get_settings
 from sqlalchemy import select
+from app.service.memory_service import MemoryService
 
 logger = get_logger(__name__)
 router = APIRouter()
 _settings = get_settings()
+
+
+async def resolve_owned_session_id(db: AsyncSession, session_id: str, actor_id: int) -> str:
+    """Reuse only a persisted session owned by the JWT actor.
+
+    A client-provided, unknown id is discarded so it cannot select an old
+    short-term-memory key. The router creates a new opaque id for fresh chats.
+    """
+    if not session_id:
+        return ""
+    owner = (
+        await db.execute(
+            select(ConversationArchive.user_id)
+            .where(ConversationArchive.session_id == session_id)
+            .order_by(ConversationArchive.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if owner is not None and int(owner) == actor_id:
+        return session_id
+    logger.warning("rejected unknown or foreign chat session | actor=%s | session=%s", actor_id, session_id)
+    return ""
 
 
 @router.get("/chat/history", response_model=dict)
@@ -43,7 +66,7 @@ async def get_chat_history(
         await db.execute(
             select(ConversationArchive)
             .where(ConversationArchive.user_id == actor_id)
-            .order_by(ConversationArchive.create_time.desc())
+            .order_by(ConversationArchive.create_time.desc(), ConversationArchive.id.desc())
             .limit(50)
         )
     ).scalars().all()
@@ -87,12 +110,17 @@ async def unified_chat(
     - chitchat             → 客服 Agent
     """
     try:
+        actor_id = authenticated_actor_id(user)
+        session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
         agent = RouterAgent(db)
         result = await agent.route(
             message=req.message,
-            session_id=req.session_id,
-            user_id=authenticated_actor_id(user),
+            session_id=session_id,
+            user_id=actor_id,
             user_role=get_request_role_from_user(user),
+        )
+        await MemoryService(db).archive_turn(
+            result.session_id, actor_id, result.agent, req.message, result.reply
         )
         logger.info(
             f"统一入口响应 | intent={result.intent} | agent={result.agent} "
@@ -123,12 +151,17 @@ async def unified_chat_stream(
     对于非自然流式 Agent（如 business_operation），完整回复作为单个 delta 输出。
     """
     try:
+        actor_id = authenticated_actor_id(user)
+        session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
         agent = RouterAgent(db)
         result = await agent.route(
             message=req.message,
-            session_id=req.session_id,
-            user_id=authenticated_actor_id(user),
+            session_id=session_id,
+            user_id=actor_id,
             user_role=get_request_role_from_user(user),
+        )
+        await MemoryService(db).archive_turn(
+            result.session_id, actor_id, result.agent, req.message, result.reply
         )
         payload = result.model_dump()
         # 补充 agent_type 供 SSE meta 事件使用

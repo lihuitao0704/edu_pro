@@ -111,6 +111,7 @@ class MemoryService:
         except Exception as e:
             logger.error(f"conversation turn archive failed: {e}")
             await self.db.rollback()
+            raise RuntimeError("conversation turn archive failed") from e
 
     def archive_conversation_bg(
         self,

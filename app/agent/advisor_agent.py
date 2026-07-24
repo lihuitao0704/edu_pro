@@ -309,21 +309,6 @@ class AdvisorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"投顾Agent记忆写入失败: {e}")
 
-            # 异步归档到长期记忆（后台任务，不阻塞主流程）
-            try:
-                from app.service.memory_service import MemoryService
-                memory_svc = MemoryService(self.db)
-                await memory_svc.archive_turn(
-                    session_id=self.session_id,
-                    user_id=customer_id or 0,
-                    agent_type="advisor",
-                    user_content=message,
-                    assistant_content=reply,
-                )
-                logger.info(f"投顾Agent归档已触发 | session={self.session_id}")
-            except Exception as e:
-                logger.warning(f"投顾Agent归档触发失败: {e}")
-
         return {
             "reply": reply,
             "recommendations": recommendations,
