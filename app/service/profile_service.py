@@ -992,6 +992,12 @@ class ProfileService:
         await self.cache.invalidate(customer_id)
 
     def _profile_to_dict(self, profile: FinCustomerProfile) -> dict:
+        """
+        将画像对象转为字典（用于缓存和API返回）
+
+        注意：此方法为同步方法，无法执行异步数据库查询。
+        aml_risk_level 需要在调用方（如 get_profile API）中异步计算后追加。
+        """
         return {
             "_schema_version": PROFILE_CACHE_SCHEMA_VERSION,
             "id": getattr(profile, "id", None),
@@ -1020,6 +1026,43 @@ class ProfileService:
             "profile_json": getattr(profile, "profile_json", None),
             "create_time": getattr(profile, "create_time", None),
             "update_time": getattr(profile, "update_time", None),
+        }
+
+    async def get_aml_risk_level(self, customer_id: int) -> dict:
+        """
+        计算客户的AML风险等级
+
+        基于近30天的预警记录数量：
+        - count >= 3 → high（高风险）
+        - count >= 1 → medium（中风险）
+        - count == 0 → low（低风险）
+
+        Returns:
+            {"aml_risk_level": "high"|"medium"|"low", "alert_count_30d": int}
+        """
+        from datetime import timedelta
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+
+        # 查询近30天预警数量
+        result = await self.db.execute(
+            select(func.count(FinRiskAlert.id)).where(
+                FinRiskAlert.customer_id == customer_id,
+                FinRiskAlert.create_time >= thirty_days_ago,
+            )
+        )
+        count = result.scalar() or 0
+
+        # 根据预警数量计算AML风险等级
+        if count >= 3:
+            aml_level = "high"
+        elif count >= 1:
+            aml_level = "medium"
+        else:
+            aml_level = "low"
+
+        return {
+            "aml_risk_level": aml_level,
+            "alert_count_30d": count,
         }
 
     @staticmethod

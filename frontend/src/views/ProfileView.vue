@@ -21,6 +21,11 @@
         <article><span>画像置信度</span><strong>{{ percent(profile.confidence_score) }}</strong><small>证据融合</small></article>
         <article><span>资产规模</span><strong>{{ money(profile.total_assets) }}</strong><small>总资产估值</small></article>
         <article><span>适配等级</span><strong>{{ riskProductLevel }}</strong><small>产品风险上限</small></article>
+        <article class="aml-risk-card" :data-aml-level="profile.aml_risk_level">
+          <span>AML风险等级</span>
+          <strong>{{ amlRiskLabel }}</strong>
+          <small>近30天预警: {{ profile.alert_count_30d ?? 0 }}条</small>
+        </article>
       </section>
       <section class="two-column">
         <div class="surface-card">
@@ -75,6 +80,10 @@ const dimensions = computed(() => [
 const riskFlagLabel = computed(() => {
   const labels: Record<string, string> = { high: '高关注', warning: '需关注', normal: '正常' }
   return labels[String(profile.value?.risk_flag || '')] || '正常'
+})
+const amlRiskLabel = computed(() => {
+  const labels: Record<string, string> = { high: '高', medium: '中', low: '低' }
+  return labels[String(profile.value?.aml_risk_level || '')] || '低'
 })
 const riskProductLevel = computed(() => {
   const levels: Record<string, string> = { 保守型: 'R1', 稳健型: 'R2', 平衡型: 'R3', 进取型: 'R4', 激进型: 'R5' }

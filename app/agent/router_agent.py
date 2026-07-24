@@ -51,6 +51,7 @@ class RouterAgent:
         统一路由入口
 
         流程：
+        0. 风控预检（C4联动）— 有预警客户的敏感操作强制走客服Agent
         1. 意图分类（关键词快速通道 + LLM）
         2. 参数提取
         3. 分发给对应业务 Agent
@@ -68,6 +69,25 @@ class RouterAgent:
 
         if not session_id:
             session_id = uuid.uuid4().hex
+
+        # ── Step 0: 风控预检（C4联动）──
+        # 对于有预警的客户，敏感操作强制走客服Agent路径，确保风控提示能触达
+        risk_intercept = await self._risk_precheck(message, user_id)
+        if risk_intercept:
+            logger.info(
+                f"风控预检拦截 | user={user_id} | msg={message[:50]}... | "
+                f"risk_flag={risk_intercept.get('risk_flag')}"
+            )
+            # 强制走客服Agent，由客服Agent的C4联动逻辑处理风控提示
+            result = await self._dispatch_customer_service(message, session_id, user_id)
+            return UnifiedChatResponse(
+                intent="risk_intercepted",
+                agent="customer_service",
+                confidence=1.0,
+                session_id=session_id,
+                reply=result.get("reply", ""),
+                data=result.get("data"),
+            )
 
         # ── Step 1: 意图分类 ──
         intent, confidence, params = await self.intent_service.classify_router(message)
@@ -265,3 +285,53 @@ class RouterAgent:
                 "status": result.get("status", "ok"),
             },
         }
+
+    # ═══════════════════════════════════════════════════════════════
+    # C4 风控预检
+    # ═══════════════════════════════════════════════════════════════
+
+    # 敏感操作关键词（与客服Agent的 SENSITIVE_KEYWORDS 保持一致）
+    _SENSITIVE_PATTERNS = [
+        "大额转账", "转账", "汇款", "大额",
+        "赎回", "取出", "提现",
+        "大额申购", "大额买入", "大笔买入",
+    ]
+
+    async def _risk_precheck(self, message: str, user_id: int) -> Optional[dict]:
+        """
+        C4 风控预检：在路由前检查是否需要拦截
+
+        拦截条件（同时满足）：
+        1. 用户角色为客户（员工不拦截）
+        2. 消息包含敏感操作关键词
+        3. 客户的 risk_flag 不为 normal（即 warning 或 high）
+
+        Returns:
+            命中时返回 {"risk_flag": "high"|"warning"}，未命中返回 None
+        """
+        # 1. 检查消息是否包含敏感关键词
+        has_sensitive = any(kw in message for kw in self._SENSITIVE_PATTERNS)
+        if not has_sensitive:
+            return None
+
+        # 2. 查询客户 risk_flag
+        try:
+            from sqlalchemy import text
+            row = await self.db.execute(
+                text(
+                    "SELECT risk_flag FROM fin_customer_profile "
+                    "WHERE customer_id = :cid"
+                ),
+                {"cid": user_id},
+            )
+            profile_row = row.first()
+            if not profile_row:
+                return None
+            risk_flag = profile_row[0]
+            # 只有 warning / high 才拦截
+            if risk_flag in ("warning", "high"):
+                return {"risk_flag": risk_flag}
+        except Exception as e:
+            logger.debug(f"风控预检查询失败(非阻断): {e}")
+
+        return None
