@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import { post } from '../api/http'
 import type { AuthUser, RegisterPayload } from '../api/types'
+import { useConversationStore } from './conversation'
 
 interface LoginResult {
   access_token: string
@@ -29,6 +30,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    useConversationStore().clearAll()
     token.value = ''
     user.value = null
     localStorage.removeItem('wealth-token')

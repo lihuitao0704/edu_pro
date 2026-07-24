@@ -12,6 +12,7 @@ from app.agent.profile_agent import ProfileAgent
 from app.agent.explanation_agent import ExplanationAgent
 from app.config.database import get_db
 from app.security.authorization import enforce_customer_scope, require_roles
+from app.memory.long_term import LongTermMemory
 from app.service.profile_service import ProfileService
 from app.utils.response import success, error
 from app.utils.logger import get_logger
@@ -30,6 +31,35 @@ class ExplainRequest(BaseModel):
     """解释请求"""
     message: str = "请解释推荐原因"
     customer_id: int
+
+
+@router.get("/{customer_id}/score-history")
+async def get_score_history(
+    customer_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "客户经理", "风控专员", "管理员", "客户")),
+):
+    """Return the customer's archived score history in chronological order."""
+    enforce_customer_scope(user, customer_id)
+    records = await LongTermMemory(db).get_rating_history(customer_id, limit=1000)
+    records.sort(key=lambda record: record.create_time or record.rating_date)
+
+    def decimal_to_float(value):
+        return float(value) if value is not None else None
+
+    return success(data=[
+        {
+            "rating_date": (record.rating_date or record.create_time).date().isoformat(),
+            "total_score": decimal_to_float(record.total_score),
+            "risk_level": record.risk_level,
+            "basic_score": decimal_to_float(record.basic_score),
+            "experience_score": decimal_to_float(record.experience_score),
+            "risk_pref_score": decimal_to_float(record.risk_pref_score),
+            "behavior_score": decimal_to_float(record.behavior_score),
+            "trigger_type": record.trigger_type,
+        }
+        for record in records
+    ])
 
 
 @router.get("/{customer_id}")

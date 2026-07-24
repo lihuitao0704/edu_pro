@@ -1,5 +1,6 @@
 """业务操作 API — 产品赎回"""
 import uuid
+import logging
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from fastapi import APIRouter, Depends
@@ -9,9 +10,11 @@ from app.config.database import get_db
 from app.model.schemas import ApiResponse
 from app.service.transaction_flow_service import TransactionFlowService
 from app.security.authorization import authenticated_actor_id, require_roles
+from app.tool.neo4j_sync import remove_holding, sync_holding
 
 router = APIRouter()
 _transaction_flow = TransactionFlowService()
+_logger = logging.getLogger(__name__)
 
 
 @router.post("/redeem")
@@ -112,6 +115,13 @@ async def redeem_product(
         },
     )
     await db.commit()
+    try:
+        if remaining <= 0:
+            await remove_holding(customer_id, product_id)
+        else:
+            await sync_holding(customer_id, product_id, float(remaining), float(remaining * nav))
+    except Exception as exc:
+        _logger.warning("Neo4j holding sync failed after redeem customer=%s product=%s: %s", customer_id, product_id, exc)
     return ApiResponse(
         code=200,
         message="赎回成功",

@@ -183,18 +183,19 @@ class LLMTool:
             logger.error(f"LLM 流式调用失败: {e}")
             raise
 
-    async def classify(self, prompt: str, temperature: float = 0.1) -> str:
+    async def classify(self, prompt: str, temperature: float = 0.1, max_tokens: int = 64) -> str:
         """
         分类任务专用（低温度，短输出）
 
         Args:
             prompt: 完整的分类 Prompt
             temperature: 温度（默认 0.1，要求确定性输出）
+            max_tokens: 最大输出 token 数（默认 64，JSON 分类建议 256+）
         Returns:
             分类结果文本
         """
         messages = [{"role": "user", "content": prompt}]
-        return await self.chat(messages=messages, temperature=temperature, max_tokens=64)
+        return await self.chat(messages=messages, temperature=temperature, max_tokens=max_tokens)
 
     async def chat_with_fallback(
         self,

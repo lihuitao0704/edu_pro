@@ -147,5 +147,58 @@ class OperatorEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unified_chat_uses_authenticated_identity_over_claimed_body_identity(self):
+        from app.api.unified_chat import unified_chat
+        from app.model.schemas import UnifiedChatRequest
+
+        request = UnifiedChatRequest(
+            message="查询我的账户信息",
+            session_id="scope-test",
+            user_id=999,
+            user_role="管理员",
+        )
+        routed = SimpleNamespace(
+            intent="business_operation",
+            agent="operator",
+            confidence=0.99,
+            session_id="scope-test",
+            reply="已识别账户服务请求",
+            data=None,
+            model_dump=lambda: {
+                "intent": "business_operation",
+                "agent": "operator",
+                "confidence": 0.99,
+                "session_id": "scope-test",
+                "reply": "已识别账户服务请求",
+                "data": None,
+            },
+        )
+        router_agent = SimpleNamespace(route=AsyncMock(return_value=routed))
+
+        memory_service = SimpleNamespace(archive_turn=AsyncMock())
+        persistence = SimpleNamespace(persist_turn=AsyncMock())
+        with patch("app.api.unified_chat.RouterAgent", return_value=router_agent), \
+             patch("app.api.unified_chat.resolve_owned_session_id", new=AsyncMock(return_value="scope-test")), \
+             patch("app.api.unified_chat.MemoryService", return_value=memory_service), \
+             patch("app.api.unified_chat.PlatformPersistenceService", return_value=persistence):
+            await unified_chat(
+                request,
+                AsyncMock(),
+                {"user_id": 7, "role": "客户"},
+            )
+
+        router_agent.route.assert_awaited_once_with(
+            message="查询我的账户信息",
+            session_id="scope-test",
+            user_id=7,
+            user_role="客户",
+            context={"entities": {}},
+        )
+        memory_service.archive_turn.assert_awaited_once_with(
+            "scope-test", 7, "operator", request.message, routed.reply
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -82,6 +82,37 @@ class MemoryService:
             logger.error(f"会话归档失败: {e}")
             await self.db.rollback()
 
+    async def archive_turn(
+        self,
+        session_id: str,
+        user_id: int,
+        agent_type: str,
+        user_content: str,
+        assistant_content: str,
+    ) -> None:
+        """Persist a complete turn before the caller returns its response."""
+        try:
+            self.db.add(ConversationArchive(
+                session_id=session_id,
+                user_id=user_id,
+                agent_type=agent_type,
+                role="user",
+                content=user_content,
+            ))
+            self.db.add(ConversationArchive(
+                session_id=session_id,
+                user_id=user_id,
+                agent_type=agent_type,
+                role="assistant",
+                content=assistant_content,
+            ))
+            await self.db.commit()
+            logger.info(f"conversation turn archived | session={session_id}")
+        except Exception as e:
+            logger.error(f"conversation turn archive failed: {e}")
+            await self.db.rollback()
+            raise RuntimeError("conversation turn archive failed") from e
+
     def archive_conversation_bg(
         self,
         session_id: str,

@@ -994,32 +994,32 @@ class ProfileService:
     def _profile_to_dict(self, profile: FinCustomerProfile) -> dict:
         return {
             "_schema_version": PROFILE_CACHE_SCHEMA_VERSION,
-            "id": profile.id,
-            "customer_id": profile.customer_id,
-            "risk_level": profile.risk_level,
-            "risk_score": profile.risk_score,
-            "investment_experience": profile.investment_experience,
-            "annual_income_range": profile.annual_income_range,
-            "total_assets": str(profile.total_assets) if profile.total_assets else None,
-            "asset_allocation": profile.asset_allocation,
-            "product_preference": profile.product_preference,
+            "id": getattr(profile, "id", None),
+            "customer_id": getattr(profile, "customer_id", None),
+            "risk_level": getattr(profile, "risk_level", None),
+            "risk_score": getattr(profile, "risk_score", None),
+            "investment_experience": getattr(profile, "investment_experience", None),
+            "annual_income_range": getattr(profile, "annual_income_range", None),
+            "total_assets": str(profile.total_assets) if getattr(profile, "total_assets", None) else None,
+            "asset_allocation": getattr(profile, "asset_allocation", None),
+            "product_preference": getattr(profile, "product_preference", None),
             "confidence_score": (
-                str(profile.confidence_score) if profile.confidence_score else None
+                str(profile.confidence_score) if getattr(profile, "confidence_score", None) else None
             ),
-            "basic_score": str(profile.basic_score) if profile.basic_score else None,
+            "basic_score": str(profile.basic_score) if getattr(profile, "basic_score", None) else None,
             "experience_score": (
-                str(profile.experience_score) if profile.experience_score else None
+                str(profile.experience_score) if getattr(profile, "experience_score", None) else None
             ),
             "risk_pref_score": (
-                str(profile.risk_pref_score) if profile.risk_pref_score else None
+                str(profile.risk_pref_score) if getattr(profile, "risk_pref_score", None) else None
             ),
             "behavior_score": (
-                str(profile.behavior_score) if profile.behavior_score else None
+                str(profile.behavior_score) if getattr(profile, "behavior_score", None) else None
             ),
-            "risk_flag": profile.risk_flag,
-            "profile_json": profile.profile_json,
-            "create_time": profile.create_time,
-            "update_time": profile.update_time,
+            "risk_flag": getattr(profile, "risk_flag", None),
+            "profile_json": getattr(profile, "profile_json", None),
+            "create_time": getattr(profile, "create_time", None),
+            "update_time": getattr(profile, "update_time", None),
         }
 
     @staticmethod

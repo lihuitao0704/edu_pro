@@ -59,19 +59,19 @@
 
 ## 输出格式
 
-你必须且只能输出一个 JSON 对象，不要输出任何其他内容。
+你必须且只能输出一个 JSON 对象，不要输出任何其他内容（不要前言、不要解释、不要思考过程）。
 
-{
+{{
   "intent": "意图标识符",
   "confidence": 0.90,
-  "params": {
+  "params": {{
     "customer_name": null,
     "customer_id": null,
     "product_name": null,
     "amount": null,
     "transaction_type": null
-  }
-}
+  }}
+}}
 
 提取参数规则：
 - customer_name: 提取消息中的客户姓名（如"张三"、"演示客户05"），没有则为 null

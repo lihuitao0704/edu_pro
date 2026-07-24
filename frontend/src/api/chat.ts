@@ -1,4 +1,4 @@
-import { post } from './http'
+import { get, post } from './http'
 
 export interface ChatRequest {
   user_id: string | number
@@ -28,6 +28,11 @@ export interface ChatResponse {
   }
 }
 
+export interface ChatHistory {
+  sessionId: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+}
+
 interface UnifiedChatPayload {
   reply: string
   agent: string
@@ -53,6 +58,17 @@ export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {
     user_role: payload.user_role || '客户',
   })
   return normalizeUnifiedChatResponse(response)
+}
+
+export async function getChatHistory(): Promise<ChatHistory> {
+  const response = await get<{
+    session_id?: string
+    messages?: Array<{ role: 'user' | 'assistant'; content: string }>
+  }>('/chat/history')
+  return {
+    sessionId: response.session_id || '',
+    messages: response.messages || [],
+  }
 }
 
 function normalizeUnifiedChatResponse(response: UnifiedChatPayload): ChatResponse {

@@ -18,6 +18,7 @@ from app.config.database import get_db
 from app.model.schemas import ApiResponse
 from app.service.transaction_flow_service import TransactionFlowService
 from app.security.authorization import authenticated_actor_id, require_roles
+from app.tool.neo4j_sync import sync_holding
 
 router = APIRouter()
 _transaction_flow = TransactionFlowService()
@@ -188,6 +189,8 @@ async def purchase_product(
                          "current_value = :v, update_time = NOW() WHERE id = :id"),
                     {"s": float(new_shares), "c": float(new_cost), "v": float(new_cost), "id": existing["id"]},
                 )
+                synced_shares = float(new_shares)
+                synced_value = float(new_cost)
             else:
                 await db.execute(
                     text("""
@@ -198,6 +201,8 @@ async def purchase_product(
                     {"cid": customer_id, "pid": product_id, "s": float(shares),
                      "c": float(amount), "v": float(amount)},
                 )
+                synced_shares = float(shares)
+                synced_value = float(amount)
 
             risk_monitor = await _transaction_flow.monitor(
                 db,
@@ -211,6 +216,10 @@ async def purchase_product(
                 },
             )
             await db.commit()
+            try:
+                await sync_holding(customer_id, product_id, synced_shares, synced_value)
+            except Exception as exc:
+                _logger.warning("Neo4j holding sync failed after purchase customer=%s product=%s: %s", customer_id, product_id, exc)
             break  # 成功，退出重试循环
 
         except sa_exc.DeadlockDetected as e:

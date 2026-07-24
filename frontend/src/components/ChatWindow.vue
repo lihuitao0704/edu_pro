@@ -5,7 +5,7 @@
         <span class="section-kicker"><i /> AI 财富助手</span>
         <h2>智慧财富决策空间</h2>
       </div>
-      <div class="conversation-status"><span>{{ messages.length }} 条对话</span><b>受监管模式</b></div>
+      <div class="conversation-status"><span>{{ customerName ? `正在为 ${customerName} 服务` : `${messages.length} 条对话` }}</span><b>受监管模式</b></div>
     </header>
 
     <div ref="scrollArea" class="chat-scroll-area">
@@ -21,7 +21,7 @@
       <div v-if="loading" class="assistant-loading"><i /> 正在协调金融智能服务…</div>
     </div>
 
-    <p v-if="error" class="chat-error">{{ error }}，已提供演示建议供您继续体验。</p>
+    <p v-if="error" class="chat-error">{{ error }}</p>
     <form class="chat-composer" @submit.prevent="send">
       <textarea v-model="input" rows="2" placeholder="例如：我有 50 万闲置资金，希望稳健增值" @keydown.enter.exact.prevent="send" />
       <div>
@@ -33,20 +33,33 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { createMockChatResponse, sendChat } from '../api/chat'
-import MessageCard, { type ChatMessage } from './MessageCard.vue'
+import { createMockChatResponse, getChatHistory, sendChat } from '../api/chat'
+import MessageCard from './MessageCard.vue'
+import { useConversationStore } from '../stores/conversation'
 
-const props = withDefaults(defineProps<{ userId?: string | number; userRole?: string }>(), { userId: 0, userRole: '客户' })
-const conversationId = ref(`wealth-${Date.now().toString(36)}`)
+const props = withDefaults(defineProps<{ userId?: string | number; userRole?: string; customerName?: string }>(), { userId: 0, userRole: '客户', customerName: '' })
+const conversations = useConversationStore()
+const userKey = computed(() => String(props.userId))
+const session = computed(() => conversations.sessionFor(userKey.value))
+const messages = computed(() => session.value.messages)
 const mockEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_CHAT_MOCK === 'true'
 const prompts = ['我有 50 万，如何稳健配置？', '帮我评估当前投资风险', '有哪些适合长期持有的产品？', '我想了解账户赎回流程']
-const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const loading = ref(false)
 const error = ref('')
 const scrollArea = ref<HTMLElement>()
+
+async function hydrateHistory() {
+  try {
+    const history = await getChatHistory()
+    conversations.hydrateUserSession(userKey.value, history)
+    await scrollToBottom()
+  } catch {
+    // 历史读取失败不阻塞当前会话；发送下一条消息会建立新会话。
+  }
+}
 
 function ask(prompt: string) {
   input.value = prompt
@@ -56,21 +69,21 @@ function ask(prompt: string) {
 async function send() {
   const message = input.value.trim()
   if (!message || loading.value) return
-  messages.value.push({ role: 'user', content: message })
+  conversations.appendMessage(userKey.value, { role: 'user', content: message })
   input.value = ''
   loading.value = true
   error.value = ''
   await scrollToBottom()
 
   try {
-    const response = await sendChat({ user_id: props.userId, user_role: props.userRole, conversation_id: conversationId.value, message })
-    if (response.metadata.session_id) conversationId.value = response.metadata.session_id
-    messages.value.push({ role: 'assistant', content: response.answer, response })
+    const response = await sendChat({ user_id: props.userId, user_role: props.userRole, conversation_id: session.value.conversationId, message })
+    if (response.metadata.session_id) conversations.setSessionId(userKey.value, response.metadata.session_id)
+    conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '金融服务暂时不可用'
     if (mockEnabled) {
       const response = createMockChatResponse(message)
-      messages.value.push({ role: 'assistant', content: response.answer, response, isMock: true })
+      conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response, isMock: true })
     }
   } finally {
     loading.value = false
@@ -82,4 +95,8 @@ async function scrollToBottom() {
   await nextTick()
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'smooth' })
 }
+
+onMounted(() => {
+  void hydrateHistory()
+})
 </script>

@@ -162,6 +162,14 @@ except Exception as e:
     print(f"  [WARN] 统一入口路由加载失败: {e}")
 
 try:
+    from app.api.feedback import router as feedback_router
+    app.include_router(feedback_router, prefix="/api", tags=["对话反馈"])
+    from app.api.analytics import router as analytics_router
+    app.include_router(analytics_router, prefix="/api", tags=["对话分析"])
+except Exception as e:
+    print(f"  [WARN] 对话平台路由加载失败: {e}")
+
+try:
     from app.api.knowledge import router as knowledge_router
     app.include_router(knowledge_router, prefix="/api/knowledge", tags=["知识库管理"])
 except Exception as e:
