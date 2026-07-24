@@ -1,12 +1,13 @@
 """
-风控周期校准任务（APScheduler）
-===============================
+风控周期校准任务（APScheduler / AsyncIOScheduler）
+=================================================
 每周日凌晨3点执行：置信度重算 + 过期预警标记
+使用 AsyncIOScheduler 确保协程运行在主事件循环上。
 """
 
 import logging
 from datetime import date, datetime, timedelta
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, text, update
 
 from app.config.database import async_session_factory
@@ -15,14 +16,8 @@ from app.engine.confidence import ConfidenceCalculator
 
 logger = logging.getLogger(__name__)
 
-_scheduler: BackgroundScheduler = None
+_scheduler: AsyncIOScheduler = None
 _confidence = ConfidenceCalculator()
-
-
-def _weekly_calibration():
-    """每周日执行：重算所有待处理预警的置信度，标记过期预警"""
-    import asyncio
-    asyncio.run(_run_calibration())
 
 
 async def _run_calibration():
@@ -112,12 +107,16 @@ async def _run_calibration():
             cumulative_upgraded += 1
 
         await db.flush()
+
+        # 风评到期提醒
+        expiry_reminders = await _create_expiry_reminders(db)
+
         logger.info(
             f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, "
-            f"SLA升级{sla_upgraded}条, 累计升级{cumulative_upgraded}条, 更新{updated}条"
+            f"SLA升级{sla_upgraded}条, 累计升级{cumulative_upgraded}条, "
+            f"更新{updated}条, 风评提醒{expiry_reminders}条"
         )
         await db.commit()
-        logger.info(f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, 更新{updated}条, 风评提醒{expiry_reminders}条")
 
 
 async def _create_expiry_reminders(db) -> int:
@@ -152,14 +151,15 @@ async def _create_expiry_reminders(db) -> int:
 
 
 def start_scheduler():
-    """启动周期校准任务（在 main.py 启动时调用）"""
+    """启动周期校准任务（在 main.py 启动时调用）。
+    使用 AsyncIOScheduler，协程直接运行在主事件循环上。"""
     global _scheduler
     if _scheduler is not None:
         return
 
-    _scheduler = BackgroundScheduler()
+    _scheduler = AsyncIOScheduler()
     _scheduler.add_job(
-        _weekly_calibration,
+        _run_calibration,
         'cron',
         day_of_week='sun',
         hour=3,

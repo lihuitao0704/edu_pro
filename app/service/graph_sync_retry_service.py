@@ -12,7 +12,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 
 from app.config.database import async_session_factory
@@ -20,7 +20,7 @@ from app.tool.neo4j_sync import sync_holding, sync_risk_level, remove_holding
 
 logger = logging.getLogger(__name__)
 
-_scheduler: BackgroundScheduler | None = None
+_scheduler: AsyncIOScheduler | None = None
 MAX_RETRIES = 10
 SCAN_INTERVAL_SECONDS = 60
 
@@ -77,18 +77,19 @@ async def record_sync_failure(
 
 async def _scan_and_retry() -> None:
     """扫描待重试记录，逐一重试。成功标记/失败累加/超限标记人工处理。"""
-    async with async_session_factory() as db:
-        # 查询所有 pending 状态且到了重试时间的记录
-        result = await db.execute(
-            text("""
-                SELECT id, sync_type, payload, retry_count, max_retries
-                FROM fin_graph_sync_retry
-                WHERE status = 'pending'
-                  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-                ORDER BY id ASC
-                LIMIT 50
-            """)
-        )
+    try:
+        async with async_session_factory() as db:
+            # 查询所有 pending 状态且到了重试时间的记录
+            result = await db.execute(
+                text("""
+                    SELECT id, sync_type, payload, retry_count, max_retries
+                    FROM fin_graph_sync_retry
+                    WHERE status = 'pending'
+                      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                    ORDER BY id ASC
+                    LIMIT 50
+                """)
+            )
         rows = result.fetchall()
 
         if not rows:
@@ -166,27 +167,25 @@ async def _scan_and_retry() -> None:
                         next_retry.strftime("%H:%M:%S"),
                     )
                 await db.commit()
-
-
-def _scan_and_retry_sync():
-    """同步包装器，供 APScheduler 调用"""
-    asyncio.run(_scan_and_retry())
+    except Exception as exc:
+        logger.warning("图谱同步重试扫描失败（表可能尚未创建）: %s", exc)
 
 
 def start_graph_sync_retry_scheduler():
-    """启动图谱同步重试后台任务（每 60 秒执行一次）"""
+    """启动图谱同步重试后台任务（每 60 秒执行一次）。
+    使用 AsyncIOScheduler 确保协程运行在主事件循环上。"""
     global _scheduler
     if _scheduler is not None:
         return
 
-    _scheduler = BackgroundScheduler()
+    _scheduler = AsyncIOScheduler()
     _scheduler.add_job(
-        _scan_and_retry_sync,
+        _scan_and_retry,
         "interval",
         seconds=SCAN_INTERVAL_SECONDS,
         id="graph_sync_retry",
         name="图谱同步失败重试补偿",
-        next_run_time=datetime.now() + timedelta(seconds=10),  # 启动后 10 秒首次执行
+        next_run_time=datetime.now() + timedelta(seconds=10),
     )
     _scheduler.start()
     logger.info("图谱同步重试调度器已启动: 每 %d 秒扫描一次, 最大重试 %d 次", SCAN_INTERVAL_SECONDS, MAX_RETRIES)

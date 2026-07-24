@@ -168,7 +168,7 @@ class ChatOrchestrator:
 
         output_decision = self.output_filter.inspect(agent_result.reply)
         agent_result.reply = output_decision.safe_reply
-        context = self.memory_manager.save_context(
+        context = await self.memory_manager.save_context(
             session_id,
             actor_id,
             entities,

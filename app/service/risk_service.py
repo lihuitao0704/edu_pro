@@ -67,7 +67,7 @@ class RiskService:
         return [QuestionnaireItem(**item) for item in QUESTIONNAIRE]
 
     async def submit_assessment(self, customer_id: int, answers: List[AssessmentAnswer]) -> AssessmentResult:
-        """提交风评答卷，计算风险等级"""
+        """提交风评答卷 → 运行完整规则引擎（熔断+四维度+校准+特殊场景）"""
         # 验证客户存在
         profile_stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
         result = await self.db.execute(profile_stmt)
@@ -90,7 +90,6 @@ class RiskService:
                         break
 
         # 等级判定：将问卷原始分（16题，约34-160分）归一化到0-100，使用标准阈值
-        # 最小可能分 ≈ 34（每题最低2-3分），最大可能分 ≈ 160（每题满分10分）
         QUESTIONNAIRE_MIN = 34
         QUESTIONNAIRE_MAX = 160
         normalized = round((total - QUESTIONNAIRE_MIN) / (QUESTIONNAIRE_MAX - QUESTIONNAIRE_MIN) * 100)
@@ -99,7 +98,7 @@ class RiskService:
 
         valid_until = date.today() + timedelta(days=365)
 
-        # 保存评估记录
+        # 保存评估记录（问卷原始结果）
         assessment = RiskAssessment(
             customer_id=customer_id,
             assessment_date=date.today(),
@@ -111,7 +110,7 @@ class RiskService:
         )
         self.db.add(assessment)
 
-        # 更新画像
+        # 更新画像基础字段
         if profile:
             profile.risk_level = risk_level
             profile.risk_score = normalized
@@ -136,28 +135,42 @@ class RiskService:
 
         await self.db.flush()
         await self._upsert_questionnaire_risk_tag(customer_id, risk_level_name, valid_until)
-        await self.long_term.archive_rating_record(
-            customer_id=customer_id,
-            dimension_scores=self._questionnaire_dimension_scores(score_by_question),
-            total_score=normalized,
-            risk_level=risk_level,
-            circuit_breakers=[],
-            trigger_type="manual",
-        )
         await self.db.flush()
         await self.cache.invalidate(customer_id)
         await self.db.commit()
+
+        # ── 运行完整规则引擎：熔断 + 四维度 + 校准 + 特殊场景 ──
+        engine_result = None
         try:
-            await sync_risk_level(customer_id, risk_level)
+            from app.service.profile_service import ProfileService
+            profile_svc = ProfileService(self.db)
+            engine_result = await profile_svc.assess(customer_id, trigger_type="manual")
+            import logging
+            logging.getLogger(__name__).info(
+                "完整引擎研判完成 customer=%s level=%s breakers=%d calibrations=%d",
+                customer_id,
+                engine_result.risk_level,
+                len(engine_result.circuit_breakers),
+                len(engine_result.warnings),
+            )
         except Exception as exc:
-            # Graph synchronization is eventual; questionnaire persistence remains authoritative.
+            import logging
+            logging.getLogger(__name__).warning(
+                "完整引擎研判失败 customer=%s (回退使用问卷得分): %s", customer_id, exc
+            )
+
+        # Neo4j 同步
+        final_level = engine_result.risk_level if engine_result else risk_level
+        try:
+            await sync_risk_level(customer_id, final_level)
+        except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Neo4j risk-level sync failed for customer %s: %s", customer_id, exc)
             try:
                 from app.service.graph_sync_retry_service import record_sync_failure
                 await record_sync_failure("risk_level", {
                     "customer_id": customer_id,
-                    "risk_level": risk_level,
+                    "risk_level": final_level,
                 }, str(exc))
             except Exception as retry_exc:
                 logging.getLogger(__name__).error("记录图谱同步重试失败: %s", retry_exc)
@@ -165,7 +178,7 @@ class RiskService:
         return AssessmentResult(
             customer_id=customer_id,
             total_score=normalized,
-            risk_level=risk_level,
+            risk_level=final_level,
             valid_until=valid_until,
         )
 
@@ -210,9 +223,8 @@ class RiskService:
         if not profile or not profile.risk_level:
             raise ProfileNotFound(customer_id)
 
-        # 简化：通过 product_code 匹配产品等级
-        # 实际应从产品表查询
-        product_level = self._infer_product_level(product_code)
+        # 从数据库查询产品风险等级
+        product_level = await self._infer_product_level(product_code)
         matched = check_suitability(profile.risk_level, product_level)
 
         warning = None
@@ -231,9 +243,24 @@ class RiskService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    @staticmethod
-    def _infer_product_level(product_code: str) -> str:
-        """通过产品代码推断产品风险等级（Mock实现）"""
+    async def _infer_product_level(self, product_code: str) -> str:
+        """通过产品代码查询数据库获取产品风险等级"""
+        from sqlalchemy import text
+        result = await self.db.execute(
+            text("SELECT risk_level FROM fin_product WHERE id = :code OR product_code = :code LIMIT 1"),
+            {"code": product_code},
+        )
+        row = result.mappings().first()
+        if row and row.get("risk_level"):
+            return row["risk_level"]
+
+        # 数据库无此产品时，通过代码前缀做合理推断并记录告警
+        import logging
         code_prefix = product_code[:2] if len(product_code) >= 2 else ""
         mapping = {"F1": "R1", "F2": "R2", "F3": "R3", "F4": "R4", "F5": "R5"}
-        return mapping.get(code_prefix, "R3")
+        fallback = mapping.get(code_prefix, "R3")
+        logging.getLogger(__name__).warning(
+            "_infer_product_level: 产品 '%s' 不在数据库中，通过代码前缀推断为 %s",
+            product_code, fallback,
+        )
+        return fallback

@@ -373,167 +373,226 @@ def needs_confirmation(action: str, amount: float = 0) -> bool:
     return amount > CONFIRM_THRESHOLDS[action]
 
 
+# ══════════════════════════════════════════════════════════════════
+# 工具注册表（Issue #8 重构：消除 if/elif 链，支持扩展）
+# ══════════════════════════════════════════════════════════════════
+
+async def _resolve_customer(arguments: dict, key: str = "customer_name") -> tuple[int | None, str | None]:
+    """解析客户名称→ID，返回 (customer_id, error_message)"""
+    name = arguments.get(key, "")
+    if not name:
+        return None, f"缺少参数: {key}"
+    cid = await resolve_customer_id(name)
+    if not cid:
+        return None, f"未找到客户: {name}"
+    return cid, None
+
+
+async def _resolve_product(arguments: dict) -> tuple[int | None, str | None]:
+    """解析产品名称→ID"""
+    name = arguments.get("product_name", "")
+    if not name:
+        return None, "缺少参数: product_name"
+    pid = await resolve_product_id(name)
+    if not pid:
+        return None, f"未找到产品: {name}"
+    return pid, None
+
+
+async def _tool_purchase(arguments: dict, operator_id: int | None) -> dict:
+    """产品申购"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    pid, err = await _resolve_product(arguments)
+    if err:
+        return {"success": False, "message": err}
+    amount, err = _safe_float(arguments.get("amount", 0), "申购金额")
+    if err:
+        return {"success": False, "message": err}
+
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await purchase_product(
+            body={"customer_id": cid, "product_id": pid, "amount": amount, "operator_id": operator_id},
+            db=db,
+        )
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_query_product(arguments: dict, _operator_id: int | None) -> dict:
+    """产品查询"""
+    pid, err = await _resolve_product(arguments)
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await query_product(product_id=pid, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_query_product_list(arguments: dict, _operator_id: int | None) -> dict:
+    """产品列表查询"""
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await list_products(
+            risk_level=arguments.get("risk_level"),
+            product_type=arguments.get("product_type"),
+            db=db,
+        )
+        ok = result.get("code") == 200 if isinstance(result, dict) else result.code == 200
+        data = result.get("data") if isinstance(result, dict) else result.data
+        return {"success": ok, "data": data}
+
+
+async def _tool_customer_holdings(arguments: dict, _operator_id: int | None) -> dict:
+    """客户持仓查询"""
+    name = arguments.get("customer_name", "")
+    found, data = await get_customer_products(name)
+    if not found:
+        return {"success": False, "message": data}
+    if not data:
+        return {"success": False, "message": f"客户 {name} 无持仓记录"}
+    return {"success": True, "data": data}
+
+
+async def _tool_suitable_products(arguments: dict, _operator_id: int | None) -> dict:
+    """适配产品查询"""
+    products = await get_suitable_products(arguments.get("risk_level", "R3"))
+    return {"success": True, "data": products}
+
+
+async def _tool_redeem(arguments: dict, operator_id: int | None) -> dict:
+    """产品赎回"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    pid, err = await _resolve_product(arguments)
+    if err:
+        return {"success": False, "message": err}
+    shares, err = _safe_float(arguments.get("shares", 0), "赎回份额")
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await redeem_product(body={
+            "customer_id": cid, "product_id": pid, "shares": shares, "operator_id": operator_id,
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_transfer(arguments: dict, operator_id: int | None) -> dict:
+    """资金转账"""
+    from_id, err = await _resolve_customer(arguments, "from_customer_name")
+    if err:
+        return {"success": False, "message": err}
+    to_id, err = await _resolve_customer(arguments, "to_customer_name")
+    if err:
+        return {"success": False, "message": err}
+    amount, err = _safe_float(arguments.get("amount", 0), "转账金额")
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await transfer_funds(body={
+            "from_customer_id": from_id, "to_customer_id": to_id,
+            "amount": amount, "operator_id": operator_id,
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_redo_assessment(arguments: dict, operator_id: int | None) -> dict:
+    """风评重做"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    answers = arguments.get("answers", [])
+    if not answers:
+        return {"success": False, "message": "请先让客户完成风险评估问卷，获取答案后再执行风评重做"}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await redo_assessment(body={
+            "customer_id": cid, "answers": answers, "operator_id": operator_id,
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_update_contact(arguments: dict, _operator_id: int | None) -> dict:
+    """联系信息更新"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await update_contact(body={
+            "customer_id": cid,
+            "field": arguments.get("field", ""),
+            "value": arguments.get("value", ""),
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_report_suspicious(arguments: dict, operator_id: int | None) -> dict:
+    """可疑交易上报"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await report_suspicious(body={
+            "customer_id": cid, "reason": arguments.get("reason", ""), "reporter_id": operator_id,
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+async def _tool_create_work_order(arguments: dict, operator_id: int | None) -> dict:
+    """创建工单"""
+    cid, err = await _resolve_customer(arguments)
+    if err:
+        return {"success": False, "message": err}
+    from app.config.database import async_session_factory
+    async with async_session_factory() as db:
+        result = await create_work_order(body={
+            "customer_id": cid,
+            "order_type": arguments.get("order_type", "咨询"),
+            "content": arguments.get("content", ""),
+            "submitter_id": operator_id,
+        }, db=db)
+        return {"success": result.code == 200, "message": result.message, "data": result.data}
+
+
+# 工具注册表：名称 → 处理函数
+_TOOL_REGISTRY: dict[str, callable] = {
+    "purchase_product": _tool_purchase,
+    "query_product": _tool_query_product,
+    "query_product_list": _tool_query_product_list,
+    "get_customer_holdings": _tool_customer_holdings,
+    "get_suitable_products": _tool_suitable_products,
+    "redeem_product": _tool_redeem,
+    "transfer_funds": _tool_transfer,
+    "redo_assessment": _tool_redo_assessment,
+    "update_contact": _tool_update_contact,
+    "report_suspicious": _tool_report_suspicious,
+    "create_work_order": _tool_create_work_order,
+}
+
+
 async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None) -> dict:
-    """执行工具函数"""
-    if tool_name == "purchase_product":
-        customer_name = arguments.get("customer_name", "")
-        product_name = arguments.get("product_name", "")
-        amount, err = _safe_float(arguments.get("amount", 0), "申购金额")
-        if err:
-            return {"success": False, "message": err}
+    """通过工具注册表分发执行（支持热注册新工具）"""
+    handler = _TOOL_REGISTRY.get(tool_name)
+    if handler is None:
+        return {"success": False, "message": f"未知工具: {tool_name}"}
+    try:
+        return await handler(arguments, operator_id)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("工具执行失败 tool=%s: %s", tool_name, exc)
+        return {"success": False, "message": f"工具执行异常: {str(exc)}"}
 
-        # 解析 ID
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
 
-        product_id = await resolve_product_id(product_name)
-        if not product_id:
-            return {"success": False, "message": f"未找到产品: {product_name}"}
-
-        # 调用申购接口（需要传入 db session，这里简化处理）
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await purchase_product(
-                body={
-                    "customer_id": customer_id,
-                    "product_id": product_id,
-                    "amount": amount,
-                    "operator_id": operator_id,
-                },
-                db=db,
-            )
-            return {
-                "success": result.code == 200,
-                "message": result.message,
-                "data": result.data,
-            }
-
-    elif tool_name == "query_product":
-        product_name = arguments.get("product_name", "")
-        product_id = await resolve_product_id(product_name)
-        if not product_id:
-            return {"success": False, "message": f"未找到产品: {product_name}"}
-
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await query_product(product_id=product_id, db=db)
-            return {
-                "success": result.code == 200,
-                "message": result.message,
-                "data": result.data,
-            }
-
-    elif tool_name == "query_product_list":
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await list_products(
-                risk_level=arguments.get("risk_level"),
-                product_type=arguments.get("product_type"),
-                db=db,
-            )
-            return {
-                "success": result.get("code") == 200 if isinstance(result, dict) else result.code == 200,
-                "data": result.get("data") if isinstance(result, dict) else result.data,
-            }
-
-    elif tool_name == "get_customer_holdings":
-        customer_name = arguments.get("customer_name", "")
-        found, data = await get_customer_products(customer_name)
-        if not found:
-            return {"success": False, "message": data}  # data 是错误信息字符串
-        if not data:
-            return {"success": False, "message": f"客户 {customer_name} 无持仓记录"}
-        return {"success": True, "data": data}
-
-    elif tool_name == "get_suitable_products":
-        risk_level = arguments.get("risk_level", "R3")
-        products = await get_suitable_products(risk_level)
-        return {"success": True, "data": products}
-
-    elif tool_name == "redeem_product":
-        customer_name = arguments.get("customer_name", "")
-        product_name = arguments.get("product_name", "")
-        shares, err = _safe_float(arguments.get("shares", 0), "赎回份额")
-        if err:
-            return {"success": False, "message": err}
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
-        product_id = await resolve_product_id(product_name)
-        if not product_id:
-            return {"success": False, "message": f"未找到产品: {product_name}"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await redeem_product(body={"customer_id": customer_id, "product_id": product_id, "shares": shares, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    elif tool_name == "transfer_funds":
-        from_name = arguments.get("from_customer_name", "")
-        to_name = arguments.get("to_customer_name", "")
-        amount, err = _safe_float(arguments.get("amount", 0), "转账金额")
-        if err:
-            return {"success": False, "message": err}
-        from_id = await resolve_customer_id(from_name)
-        to_id = await resolve_customer_id(to_name)
-        if not from_id:
-            return {"success": False, "message": f"未找到转出客户: {from_name}"}
-        if not to_id:
-            return {"success": False, "message": f"未找到转入客户: {to_name}"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await transfer_funds(body={"from_customer_id": from_id, "to_customer_id": to_id, "amount": amount, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    elif tool_name == "redo_assessment":
-        customer_name = arguments.get("customer_name", "")
-        answers = arguments.get("answers", [])
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
-        if not answers:
-            return {"success": False, "message": "请先让客户完成风险评估问卷，获取答案后再执行风评重做"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await redo_assessment(body={"customer_id": customer_id, "answers": answers, "operator_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    elif tool_name == "update_contact":
-        customer_name = arguments.get("customer_name", "")
-        field = arguments.get("field", "")
-        value = arguments.get("value", "")
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await update_contact(body={"customer_id": customer_id, "field": field, "value": value}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    elif tool_name == "report_suspicious":
-        customer_name = arguments.get("customer_name", "")
-        reason = arguments.get("reason", "")
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await report_suspicious(body={"customer_id": customer_id, "reason": reason, "reporter_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    elif tool_name == "create_work_order":
-        customer_name = arguments.get("customer_name", "")
-        order_type = arguments.get("order_type", "咨询")
-        content = arguments.get("content", "")
-        customer_id = await resolve_customer_id(customer_name)
-        if not customer_id:
-            return {"success": False, "message": f"未找到客户: {customer_name}"}
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            result = await create_work_order(body={"customer_id": customer_id, "order_type": order_type, "content": content, "submitter_id": operator_id}, db=db)
-            return {"success": result.code == 200, "message": result.message, "data": result.data}
-
-    return {"success": False, "message": f"未知工具: {tool_name}"}
+def register_tool(name: str, handler: callable) -> None:
+    """热注册新工具到注册表"""
+    _TOOL_REGISTRY[name] = handler
 
 
 async def operator_chat(

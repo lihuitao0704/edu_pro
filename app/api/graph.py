@@ -153,3 +153,78 @@ async def graph_query(body: dict):
         return {"code": 400, "message": f"不支持的查询类型: {query_type}"}
 
     return {"code": 200, "message": "成功", "data": result}
+
+
+# ═══════════════════════════════════════════════════════════
+# MySQL ↔ Neo4j 一致性对账
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/reconciliation")
+async def reconciliation_check():
+    """
+    MySQL ↔ Neo4j 一致性对账：
+    - 检查 fin_graph_sync_retry 中的待处理/失败记录
+    - 检查 Neo4j 同步状态概览
+    """
+    from app.config.database import async_session_factory
+    from sqlalchemy import text
+
+    async with async_session_factory() as db:
+        # 同步失败统计
+        pending = await db.execute(
+            text("SELECT COUNT(*) FROM fin_graph_sync_retry WHERE status = 'pending'")
+        )
+        pending_count = pending.scalar() or 0
+
+        manual = await db.execute(
+            text("SELECT COUNT(*) FROM fin_graph_sync_retry WHERE status = 'manual_review'")
+        )
+        manual_count = manual.scalar() or 0
+
+        # 最近失败明细 (top 10)
+        recent = await db.execute(
+            text("""
+                SELECT id, sync_type, retry_count, error_message, status, created_at
+                FROM fin_graph_sync_retry
+                WHERE status IN ('pending', 'manual_review')
+                ORDER BY created_at DESC LIMIT 10
+            """)
+        )
+        recent_failures = [
+            {
+                "id": row.id,
+                "sync_type": row.sync_type,
+                "retry_count": row.retry_count,
+                "error_message": (row.error_message or "")[:200],
+                "status": row.status,
+                "created_at": str(row.created_at) if row.created_at else None,
+            }
+            for row in recent.fetchall()
+        ]
+
+        # 按类型统计失败
+        by_type = await db.execute(
+            text("""
+                SELECT sync_type, status, COUNT(*) as cnt
+                FROM fin_graph_sync_retry
+                WHERE status != 'success'
+                GROUP BY sync_type, status
+                ORDER BY sync_type, status
+            """)
+        )
+        by_type_stats = [
+            {"sync_type": row.sync_type, "status": row.status, "count": row.cnt}
+            for row in by_type.fetchall()
+        ]
+
+    return {
+        "code": 200,
+        "message": "对账完成",
+        "data": {
+            "pending_retries": pending_count,
+            "manual_review_needed": manual_count,
+            "healthy": pending_count == 0 and manual_count == 0,
+            "recent_failures": recent_failures,
+            "by_type": by_type_stats,
+        },
+    }

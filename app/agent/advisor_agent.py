@@ -80,11 +80,16 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 回答时请使用 Markdown 格式，包含以下结构（按需裁剪，不必全部都有）：
 
 ```
+## 🚨 风控预警
+（如果 smart_recommend 返回了 risk_alerts 且 alert_level 为 high/medium，
+  必须首先展示风控预警状态，说明哪些推荐已受限）
+
 ## 📊 客户风险画像
 （如果调了 profile_tool 或 smart_recommend，展示基本信息 + 四维度得分 + 风险等级 + 熔断告警）
 
 ## 🎯 产品推荐
 （如果调了 smart_recommend 或 recommend_products，列出推荐产品，含风险等级、预期收益、匹配度、推荐理由）
+（如果客户有风控预警，必须说明产品推荐已被限制在安全范围内）
 
 ## 📐 资产配置建议
 （如果调了 smart_recommend 或 asset_allocation，展示各资产类型配比和说明）
@@ -109,6 +114,7 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 - 不要编造数据，所有信息必须来自工具返回结果
 - 不要给出具体的买卖操作指令（如"立即买入"）
 - 不要忽略 warnings 和熔断信息
+- **不要忽略风控预警**：如果 smart_recommend 返回了 risk_warning 或 risk_alerts.alert_level 为 high/medium，必须在回复中突出展示风控警告，并说明产品推荐已受限制
 - 如果工具返回了错误，诚实告知用户并说明原因
 
 # 异常处理指南
@@ -227,22 +233,41 @@ class AdvisorAgent(BaseAgent):
                     logger.info(f"投顾Agent跨session记忆召回完成 | customer_id={customer_id}")
             except Exception as e:
                 logger.warning(f"投顾Agent跨session记忆召回失败(不影响主流程): {e}")
+                try:
+                    from app.api.admin import inc_metric
+                    inc_metric("memory_recall_failures")
+                except Exception:
+                    pass
 
-        # ── 记忆召回：短期记忆（同 session 多轮） ──
+        # ── 记忆召回：短期记忆（同 session 多轮，基于 token 限制而非固定条数）──
         history_messages: list[HumanMessage] = []
         if self.memory:
             try:
-                history = await self.memory.get_messages(max_tokens=2048)
-                for msg in history[-6:]:  # 最多注入 3 轮（6 条）
-                    role = msg.get("role", "user")
+                from langchain_core.messages import AIMessage
+
+                history = await self.memory.get_messages(max_tokens=4096)  # 增加到 4096 tokens
+                # 从最新到最旧取消息，直到接近 token 限制（简单估算：1 char ≈ 0.5 token）
+                estimated_tokens = 0
+                max_history_tokens = 3000  # 留给历史的 token 预算
+                selected = []
+                for msg in reversed(history):
                     content = msg.get("content", "")
                     if not content:
                         continue
+                    char_count = len(content)
+                    est = char_count // 2  # 粗略估算
+                    if estimated_tokens + est > max_history_tokens:
+                        break
+                    estimated_tokens += est
+                    selected.append(msg)
+                selected.reverse()  # 恢复时间顺序
+
+                for msg in selected:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
                     if role == "user":
                         history_messages.append(HumanMessage(content=content))
                     else:
-                        from langchain_core.messages import AIMessage
-
                         history_messages.append(AIMessage(content=content))
             except Exception as e:
                 logger.warning(f"投顾Agent记忆召回失败: {e}")
@@ -269,6 +294,11 @@ class AdvisorAgent(BaseAgent):
             )
         except asyncio.TimeoutError:
             logger.warning("AdvisorAgent 执行超时(180s)，返回降级提示")
+            try:
+                from app.api.admin import inc_metric
+                inc_metric("agent_timeouts")
+            except Exception:
+                pass
             return {
                 "reply": "投顾分析超时，请尝试简化问题或稍后重试。",
                 "recommendations": [],
@@ -279,6 +309,11 @@ class AdvisorAgent(BaseAgent):
             }
         except Exception as e:
             logger.error(f"AdvisorAgent 执行失败: {e}", exc_info=True)
+            try:
+                from app.api.admin import inc_metric
+                inc_metric("agent_errors")
+            except Exception:
+                pass
             return {
                 "reply": f"投顾服务暂时不可用，请稍后重试。错误详情：{str(e)}",
                 "recommendations": [],
@@ -331,7 +366,7 @@ class AdvisorAgent(BaseAgent):
 
     @staticmethod
     def _make_smart_recommend_tool(db: AsyncSession):
-        """创建一键智能推荐工具（画像+推荐+配置，一次工具调用完成）"""
+        """创建一键智能推荐工具（画像+风险预警检查+推荐+配置，一次工具调用完成）"""
         from app.tool.profile_tool import ProfileTool
         from app.tool.recommendation_tool import RecommendationTool
         from app.tool.allocation_tool import AllocationTool
@@ -343,12 +378,15 @@ class AdvisorAgent(BaseAgent):
         @tool
         async def smart_recommend(customer_id: int, top_n: int = 3) -> str:
             """
-            一键智能推荐工具：自动完成客户画像查询 + 产品推荐 + 资产配置建议。
+            一键智能推荐工具：自动完成客户画像查询 + 风控预警检查 + 产品推荐 + 资产配置建议。
 
             当用户要求"推荐产品""适合什么产品""买什么好""有什么推荐"时，
             优先调用此工具，不需要先调 profile_tool 再调 recommend_products。
 
-            此工具内部并行查询画像和推荐，比分开调用快一倍。
+            此工具内部会：
+            1. 检查客户是否有未处理的风控预警（高风险客户限制推荐R1-R2产品）
+            2. 并行查询画像和推荐
+            3. 综合风险预警和画像等级给出推荐
 
             重要：如果客户画像不存在（status=not_found），会回退推荐R1最低风险产品，
             并提示用户完成风评问卷。不要因此返回空结果或拒绝推荐。
@@ -358,16 +396,55 @@ class AdvisorAgent(BaseAgent):
                 top_n: 返回 Top N 个推荐产品，默认 3
 
             Returns:
-                JSON 格式的一站式结果，包含客户画像摘要、产品推荐列表、资产配置建议
+                JSON 格式的一站式结果，包含客户画像摘要、风控预警状态、产品推荐列表、资产配置建议
             """
             import json
             import asyncio
+            from datetime import datetime as dt, timedelta
+            from sqlalchemy import text, select, func
+            from app.model.entities import FinRiskAlert
+
+            # ── Issue #6 修复：检查风控预警状态 ──
+            risk_alerts = []
+            risk_alert_level = "none"
+            try:
+                thirty_days_ago = dt.now() - timedelta(days=30)
+                alert_result = await db.execute(
+                    select(FinRiskAlert)
+                    .where(
+                        FinRiskAlert.customer_id == customer_id,
+                        FinRiskAlert.status == "pending",
+                    )
+                    .order_by(FinRiskAlert.create_time.desc())
+                    .limit(10)
+                )
+                alerts = alert_result.scalars().all()
+                risk_alerts = [
+                    {
+                        "alert_id": a.id,
+                        "alert_type": a.alert_type,
+                        "alert_level": a.alert_level,
+                        "trigger_detail": (a.trigger_detail or "")[:200],
+                        "created_at": str(a.create_time) if a.create_time else None,
+                    }
+                    for a in alerts
+                ]
+                # 确定最高风险预警级别
+                high_count = sum(1 for a in risk_alerts if a["alert_level"] == "high")
+                medium_count = sum(1 for a in risk_alerts if a["alert_level"] == "medium")
+                if high_count > 0:
+                    risk_alert_level = "high"
+                elif medium_count > 0:
+                    risk_alert_level = "medium"
+                elif risk_alerts:
+                    risk_alert_level = "low"
+            except Exception as e:
+                logger.warning(f"风控预警查询失败 customer={customer_id}: {e}")
 
             # 并行执行画像查询和产品推荐（互不依赖的数据并行获取）
             profile_coro = profile_tool._arun(customer_id)
             alloc_coro = alloc_tool.get_allocation(customer_id)
 
-            # 先等画像结果回来（推荐需要知道风险等级）
             profile_json, alloc_result = await asyncio.gather(profile_coro, alloc_coro)
 
             # 解析画像获取风险等级，传给推荐
@@ -379,24 +456,66 @@ class AdvisorAgent(BaseAgent):
             risk_level = None
             profile_not_found = False
             if isinstance(profile_data, dict):
-                # 检查画像是否不存在
                 if profile_data.get("status") == "not_found":
                     profile_not_found = True
-                    risk_level = "C1"  # 无画像时回退到最低风险等级
+                    risk_level = "C1"
                 else:
                     assessment = profile_data.get("assessment", {})
                     risk_level = assessment.get("risk_level")
 
-            # 用画像的风险等级做推荐
-            rec_result = await rec_tool.recommend(customer_id, top_n, fallback_risk=risk_level)
+            # ── Issue #6 修复：高风险客户限制产品推荐范围 ──
+            effective_top_n = top_n
+            restricted_risk = None
+            if risk_alert_level == "high":
+                # 高风险预警客户：限制只能推荐 R1-R2 产品
+                restricted_risk = "C2"  # 对应 R2
+                effective_top_n = max(top_n, 5)  # 多取一些以防过滤后不够
+                logger.info(
+                    "客户 %s 存在高风险预警，产品推荐限制为 R1-R2",
+                    customer_id,
+                )
+            elif risk_alert_level == "medium":
+                # 中风险预警客户：限制只能推荐 R1-R3 产品
+                restricted_risk = "C3"  # 对应 R3
+                logger.info(
+                    "客户 %s 存在中风险预警，产品推荐限制为 R1-R3",
+                    customer_id,
+                )
 
-            # 无画像时，确保返回最低风险产品和明确提示
+            # 用风控限制后的风险等级做推荐
+            effective_risk = restricted_risk or risk_level
+            rec_result = await rec_tool.recommend(customer_id, effective_top_n, fallback_risk=effective_risk)
+
+            # ── Issue #6 修复：对高风险客户过滤推荐结果 ──
+            recommendations = rec_result.get("recommendations", [])
+            if risk_alert_level in ("high", "medium"):
+                max_allowed_risk = 2 if risk_alert_level == "high" else 3  # R2 or R3
+                recommendations = [
+                    r for r in recommendations
+                    if AdvisorAgent._product_risk_num(r.get("risk_level", "R5")) <= max_allowed_risk
+                ]
+                # 如果过滤后不够 top_n，补足
+                if len(recommendations) < top_n:
+                    recommendations = recommendations[:top_n] if recommendations else []
+
+            # 构建最终的推荐结果
+            rec_result_filtered = {
+                **rec_result,
+                "recommendations": recommendations[:top_n],
+            }
+
+            # 无画像时的处理
             if profile_not_found:
                 result = {
                     "customer_profile": profile_data,
-                    "recommendations": rec_result.get("recommendations", []),
+                    "recommendations": rec_result_filtered.get("recommendations", []),
                     "allocation": alloc_result,
-                    "reasoning": rec_result.get("reasoning", ""),
+                    "reasoning": rec_result_filtered.get("reasoning", ""),
+                    "risk_alerts": {
+                        "alert_level": risk_alert_level,
+                        "alert_count": len(risk_alerts),
+                        "alerts": risk_alerts,
+                    },
                     "status": "profile_not_found",
                     "notice": (
                         "⚠️ 该客户当前风险测评已失效或不存在，系统已回退推荐R1级（最低风险）产品。"
@@ -407,14 +526,45 @@ class AdvisorAgent(BaseAgent):
             else:
                 result = {
                     "customer_profile": profile_data,
-                    "recommendations": rec_result.get("recommendations", []),
+                    "recommendations": rec_result_filtered.get("recommendations", []),
                     "allocation": alloc_result,
-                    "reasoning": rec_result.get("reasoning", ""),
+                    "reasoning": rec_result_filtered.get("reasoning", ""),
+                    "risk_alerts": {
+                        "alert_level": risk_alert_level,
+                        "alert_count": len(risk_alerts),
+                        "alerts": risk_alerts,
+                    },
                 }
+                # 高风险客户添加风控警告
+                if risk_alert_level == "high":
+                    result["risk_warning"] = (
+                        "🚨 该客户存在高风险预警（未处理），系统已自动将产品推荐限制为 R1-R2 低风险产品。"
+                        "建议联系风控专员处理预警后再推荐高风险产品。"
+                    )
+                elif risk_alert_level == "medium":
+                    result["risk_warning"] = (
+                        "⚠️ 该客户存在中风险预警，系统已将产品推荐限制为 R1-R3 中低风险产品。"
+                    )
 
             return json.dumps(result, ensure_ascii=False, default=str)
 
         return smart_recommend
+
+    @staticmethod
+    def _product_risk_num(risk_level: str) -> int:
+        """将风险等级字符串转为数字，用于比较过滤"""
+        if not risk_level:
+            return 5
+        level = str(risk_level).strip().upper()
+        if level in ("R1", "C1"):
+            return 1
+        if level in ("R2", "C2"):
+            return 2
+        if level in ("R3", "C3"):
+            return 3
+        if level in ("R4", "C4"):
+            return 4
+        return 5
 
     @staticmethod
     def _make_recommend_tool(db: AsyncSession):

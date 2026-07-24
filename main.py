@@ -183,6 +183,13 @@ except Exception as e:
     print(f"  [WARN] 对话平台路由加载失败: {e}")
 
 try:
+    from app.api.admin import router as admin_router
+    app.include_router(admin_router, prefix="/api/admin", tags=["管理"])
+    print("  API: /api/admin (健康检查 / 可观测性 / 规则热加载) [OK]")
+except Exception as e:
+    print(f"  [WARN] 管理路由加载失败: {e}")
+
+try:
     from app.api.knowledge import router as knowledge_router
     app.include_router(knowledge_router, prefix="/api/knowledge", tags=["知识库管理"])
 except Exception as e:
