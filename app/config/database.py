@@ -123,28 +123,35 @@ async def close_redis():
 # ==================== Neo4j ====================
 
 _neo4j_driver: Optional[object] = None
+_neo4j_init_lock = __import__("threading").Lock()  # 线程锁，防止并发初始化创建多个驱动（1.5 修复）
+
+# 修复 3.2：将连接池从 10 扩容至 50，适应高并发场景
+NEO4J_POOL_SIZE = 50
 
 
 def get_neo4j_driver():
-    """获取 Neo4j 驱动"""
+    """获取 Neo4j 驱动（双重检查锁保证线程安全）"""
     global _neo4j_driver
     if _neo4j_driver is None:
-        _neo4j_driver = AsyncGraphDatabase.driver(
-            settings.neo4j.uri,
-            auth=(settings.neo4j.user, settings.neo4j.password),
-            max_connection_lifetime=3600,
-            max_connection_pool_size=10,
-            connection_acquisition_timeout=settings.neo4j.timeout,
-        )
+        with _neo4j_init_lock:
+            if _neo4j_driver is None:
+                _neo4j_driver = AsyncGraphDatabase.driver(
+                    settings.neo4j.uri,
+                    auth=(settings.neo4j.user, settings.neo4j.password),
+                    max_connection_lifetime=3600,
+                    max_connection_pool_size=NEO4J_POOL_SIZE,
+                    connection_acquisition_timeout=settings.neo4j.timeout,
+                )
     return _neo4j_driver
 
 
 async def close_neo4j():
     """关闭 Neo4j 连接"""
     global _neo4j_driver
-    if _neo4j_driver:
-        await _neo4j_driver.close()
-        _neo4j_driver = None
+    with _neo4j_init_lock:
+        if _neo4j_driver:
+            await _neo4j_driver.close()
+            _neo4j_driver = None
 
 
 # ==================== Milvus ====================

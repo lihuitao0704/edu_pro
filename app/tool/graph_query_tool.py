@@ -15,14 +15,22 @@ neo4j = Neo4jClient()
 
 
 async def resolve_customer_id(customer_name: str) -> Optional[int]:
-    """根据客户姓名查找 customer_id（MySQL）"""
+    """根据客户姓名查找 customer_id（MySQL）
+    仅做精确匹配，杜绝模糊匹配导致对错误客户执行操作（1.6 修复）"""
+    if not customer_name or not customer_name.strip():
+        return None
     async with async_session_factory() as session:
         result = await session.execute(
-            text("SELECT id FROM sys_user WHERE real_name = :name AND user_type = 'CUSTOMER' LIMIT 1"),
-            {"name": customer_name},
+            text("SELECT id FROM sys_user WHERE real_name = :name AND user_type = 'CUSTOMER'"),
+            {"name": customer_name.strip()},
         )
-        row = result.first()
-        return row[0] if row else None
+        rows = result.fetchall()
+        if len(rows) == 0:
+            return None
+        if len(rows) > 1:
+            # 存在重名：拒绝猜测，返回 None 由调用方提示用户补充信息
+            return None
+        return rows[0][0]
 
 
 async def resolve_product_id(product_name: str) -> Optional[int]:
@@ -46,15 +54,18 @@ async def resolve_product_id(product_name: str) -> Optional[int]:
         return row[0] if row else None
 
 
-async def get_customer_products(customer_name: str) -> List[dict]:
+async def get_customer_products(customer_name: str):
     """
     查询客户持仓产品
     入参: 客户姓名（如"张三"）
-    返回: [{product_name, product_code, product_type, shares, current_value, profit_ratio}]
+    返回: (found: bool, data: list|str)
+      - (True, [...]) 找到客户且有持仓
+      - (True, [])   找到客户但无持仓
+      - (False, msg) 未找到客户（精确匹配失败或重名）
     """
     customer_id = await resolve_customer_id(customer_name)
-    if not customer_id:
-        return []
+    if customer_id is None:
+        return False, f"未找到客户: {customer_name}（请确认姓名或存在重名）"
 
     results = await neo4j.run_query(
         """
@@ -75,7 +86,7 @@ async def get_customer_products(customer_name: str) -> List[dict]:
             r["profit_ratio"] = round(float(r["profit_ratio"]), 2)
         if r.get("shares"):
             r["shares"] = round(float(r["shares"]), 2)
-    return results
+    return True, results
 
 
 async def get_suitable_products(risk_level: str, limit: int = 10) -> List[dict]:

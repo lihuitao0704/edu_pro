@@ -103,19 +103,22 @@ async def customer_chat_stream(
 
 
 @operator_router.post("/operator")
-async def chat_operator(body: OperatorChatRequest, request: Request) -> OperatorChatResponse:
+async def chat_operator(body: OperatorChatRequest, request: Request) -> dict:
     """
     业务操作 Agent 对话接口
     POST /api/chat/operator
     """
     authenticated_user = getattr(request.state, "user", None) or {}
-    result = await operator_chat(
-        message=body.message,
-        session_id=body.session_id,
-        user_id=int(authenticated_user.get("user_id") or 0),
-        user_role=get_request_role(request),
-    )
-    return OperatorChatResponse(**result)
+    try:
+        result = await operator_chat(
+            message=body.message,
+            session_id=body.session_id,
+            user_id=int(authenticated_user.get("user_id") or 0),
+            user_role=get_request_role(request),
+        )
+        return success(data=result)
+    except Exception as e:
+        return error(code=500, message=f"业务操作处理异常: {e}")
 
 
 # ==================== 数据分析 Agent ====================

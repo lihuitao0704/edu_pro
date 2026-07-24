@@ -133,7 +133,7 @@ async def import_mock_markets(driver):
 
 
 async def import_products(driver):
-    """从 MySQL 导入产品数据，创建 Product 节点 + BELONGS_TO/MANAGED_BY 关系"""
+    """从 MySQL 导入产品数据，创建 Product 节点 + BELONGS_TO/MANAGED_BY 关系（批量导入优化）"""
     async with async_session_factory() as mysql_session:
         result = await mysql_session.execute(text("SELECT * FROM fin_product"))
         rows = result.fetchall()
@@ -150,94 +150,177 @@ async def import_products(driver):
         val = row[idx]
         return val if val is not None else default
 
-    count = 0
-    async with driver.session(database=settings.neo4j.database) as neo4j_session:
-        for row in rows:
-            row = list(row)
-            product_id = row[col_map["id"]]
-            product_code = row[col_map["product_code"]]
-            product_name = row[col_map["product_name"]]
-            product_type = safe_get(row, "product_type", "混合型")
-            risk_level = safe_get(row, "risk_level", "R3")
-            expected_return = float(safe_get(row, "expected_return", 0))
-            min_amount = float(safe_get(row, "min_amount", 1000))
-            fund_manager_name = safe_get(row, "fund_manager", "")
-            status = safe_get(row, "status", "在售")
+    # 收集批量数据
+    products_data = []
+    industry_set = set()
+    relations_data = {
+        "risk_level": [],
+        "has_product": [],
+        "belongs_to": [],
+        "managed_by": [],
+        "suitable_for": [],
+        "traded_on": [],
+    }
 
-            # 创建产品节点
+    for row in rows:
+        row = list(row)
+        product_id = row[col_map["id"]]
+        product_code = row[col_map["product_code"]]
+        product_name = row[col_map["product_name"]]
+        product_type = safe_get(row, "product_type", "混合型")
+        risk_level = safe_get(row, "risk_level", "R3")
+        expected_return = float(safe_get(row, "expected_return", 0))
+        min_amount = float(safe_get(row, "min_amount", 1000))
+        fund_manager_name = safe_get(row, "fund_manager", "")
+        status = safe_get(row, "status", "在售")
+
+        # 收集产品节点数据
+        products_data.append({
+            "product_id": product_id,
+            "code": product_code,
+            "name": product_name,
+            "type": product_type,
+            "risk_level": risk_level,
+            "expected_return": expected_return,
+            "min_amount": min_amount,
+            "fm_name": fund_manager_name,
+            "status": status,
+        })
+
+        # 收集风险等级关系
+        relations_data["risk_level"].append({"pid": product_id, "level": risk_level})
+        relations_data["has_product"].append({"pid": product_id, "level": risk_level})
+
+        # 处理行业（从数据库读取真实行业，修复 2.5）
+        industry_name = safe_get(row, "industry", "")
+        prefix = product_code[:3].upper()
+        if industry_name:
+            industry_id = f"IND_{industry_name}"
+            industry_set.add((industry_id, industry_name))
+        else:
+            # 兜底：使用 Mock 映射
+            industry_id = PRODUCT_INDUSTRY_MAP.get(prefix, "IND001")
+        relations_data["belongs_to"].append({"pid": product_id, "ind_id": industry_id})
+
+        # 收集基金经理关系（Mock 轮询）
+        fm_index = product_id % len(MOCK_FUND_MANAGERS)
+        fm_id = MOCK_FUND_MANAGERS[fm_index]["manager_id"]
+        relations_data["managed_by"].append({"pid": product_id, "fm_id": fm_id})
+
+        # 收集适当性关系
+        relations_data["suitable_for"].append({"pid": product_id, "level": risk_level})
+
+        # 收集市场关系（Mock 映射）
+        market_id = PRODUCT_MARKET_MAP.get(prefix, "MKT004")
+        relations_data["traded_on"].append({"pid": product_id, "mid": market_id})
+
+    # 批量执行 Neo4j 操作
+    async with driver.session(database=settings.neo4j.database) as neo4j_session:
+        # 1. 批量创建产品节点（UNWIND优化）
+        if products_data:
             await neo4j_session.run(
                 """
-                MERGE (p:Product {id: $product_id})
-                SET p.code = $code, p.name = $name, p.type = $type,
-                    p.risk_level = $risk_level, p.expected_return = $expected_return,
-                    p.min_amount = $min_amount, p.fund_manager = $fm_name,
-                    p.status = $status
+                UNWIND $products AS p
+                MERGE (prod:Product {id: p.product_id})
+                SET prod.code = p.code, prod.name = p.name, prod.type = p.type,
+                    prod.risk_level = p.risk_level, prod.expected_return = p.expected_return,
+                    prod.min_amount = p.min_amount, prod.fund_manager = p.fm_name,
+                    prod.status = p.status
                 """,
-                product_id=product_id,
-                code=product_code,
-                name=product_name,
-                type=product_type,
-                risk_level=risk_level,
-                expected_return=expected_return,
-                min_amount=min_amount,
-                fm_name=fund_manager_name,
-                status=status,
+                products=products_data,
             )
 
-            # 产品 → 风险等级 (SUITABLE_FOR)
+        # 2. 批量创建/合并行业节点
+        if industry_set:
             await neo4j_session.run(
-                "MATCH (p:Product {id: $pid}), (r:RiskLevel {level: $level}) "
-                "MERGE (p)-[:HAS_RISK_LEVEL]->(r)",
-                pid=product_id, level=risk_level,
+                """
+                UNWIND $industries AS ind
+                MERGE (i:Industry {industry_id: ind.ind_id})
+                SET i.name = ind.name
+                """,
+                industries=[{"ind_id": ind_id, "name": name} for ind_id, name in industry_set],
             )
 
-            # 风险等级 → 产品 (HAS_PRODUCT，反向用于适当性查询)
+        # 3. 批量创建关系（UNWIND优化）
+        batch_size = 1000
+
+        # 产品→风险等级
+        for i in range(0, len(relations_data["risk_level"]), batch_size):
+            batch = relations_data["risk_level"][i:i+batch_size]
             await neo4j_session.run(
-                "MATCH (r:RiskLevel {level: $level}), (p:Product {id: $pid}) "
-                "MERGE (r)-[:HAS_PRODUCT]->(p)",
-                level=risk_level, pid=product_id,
+                """
+                UNWIND $relations AS rel
+                MATCH (p:Product {id: rel.pid}), (r:RiskLevel {level: rel.level})
+                MERGE (p)-[:HAS_RISK_LEVEL]->(r)
+                """,
+                relations=batch,
             )
 
-            # 产品 → 行业 (BELONGS_TO) — Mock 映射
-            prefix = product_code[:3].upper()
-            industry_id = PRODUCT_INDUSTRY_MAP.get(prefix, "IND001")
+        # 风险等级→产品（反向）
+        for i in range(0, len(relations_data["has_product"]), batch_size):
+            batch = relations_data["has_product"][i:i+batch_size]
             await neo4j_session.run(
-                "MATCH (p:Product {id: $pid}), (i:Industry {industry_id: $ind_id}) "
-                "MERGE (p)-[:BELONGS_TO]->(i)",
-                pid=product_id, ind_id=industry_id,
+                """
+                UNWIND $relations AS rel
+                MATCH (r:RiskLevel {level: rel.level}), (p:Product {id: rel.pid})
+                MERGE (r)-[:HAS_PRODUCT]->(p)
+                """,
+                relations=batch,
             )
 
-            # 产品 → 基金经理 (MANAGED_BY) — Mock 轮询
-            fm_index = product_id % len(MOCK_FUND_MANAGERS)
-            fm_id = MOCK_FUND_MANAGERS[fm_index]["manager_id"]
+        # 产品→行业
+        for i in range(0, len(relations_data["belongs_to"]), batch_size):
+            batch = relations_data["belongs_to"][i:i+batch_size]
             await neo4j_session.run(
-                "MATCH (p:Product {id: $pid}), (fm:FundManager {manager_id: $fm_id}) "
-                "MERGE (p)-[:MANAGED_BY]->(fm)",
-                pid=product_id, fm_id=fm_id,
+                """
+                UNWIND $relations AS rel
+                MATCH (p:Product {id: rel.pid}), (i:Industry {industry_id: rel.ind_id})
+                MERGE (p)-[:BELONGS_TO]->(i)
+                """,
+                relations=batch,
             )
 
-            # 风险等级 → 产品 (SUITABLE_FOR) — 适当性匹配：该风险等级适合这些产品
+        # 产品→基金经理
+        for i in range(0, len(relations_data["managed_by"]), batch_size):
+            batch = relations_data["managed_by"][i:i+batch_size]
             await neo4j_session.run(
-                "MATCH (r:RiskLevel {level: $level}), (p:Product {id: $pid}) "
-                "MERGE (r)-[:SUITABLE_FOR]->(p)",
-                level=risk_level, pid=product_id,
+                """
+                UNWIND $relations AS rel
+                MATCH (p:Product {id: rel.pid}), (fm:FundManager {manager_id: rel.fm_id})
+                MERGE (p)-[:MANAGED_BY]->(fm)
+                """,
+                relations=batch,
             )
 
-            # 产品 → 市场 (TRADED_ON) — Mock 映射
-            market_id = PRODUCT_MARKET_MAP.get(prefix, "MKT004")
+        # 风险等级→产品（适当性）
+        for i in range(0, len(relations_data["suitable_for"]), batch_size):
+            batch = relations_data["suitable_for"][i:i+batch_size]
             await neo4j_session.run(
-                "MATCH (p:Product {id: $pid}), (m:Market {market_id: $mid}) "
-                "MERGE (p)-[:TRADED_ON]->(m)",
-                pid=product_id, mid=market_id,
+                """
+                UNWIND $relations AS rel
+                MATCH (r:RiskLevel {level: rel.level}), (p:Product {id: rel.pid})
+                MERGE (r)-[:SUITABLE_FOR]->(p)
+                """,
+                relations=batch,
             )
 
-            count += 1
+        # 产品→市场
+        for i in range(0, len(relations_data["traded_on"]), batch_size):
+            batch = relations_data["traded_on"][i:i+batch_size]
+            await neo4j_session.run(
+                """
+                UNWIND $relations AS rel
+                MATCH (p:Product {id: rel.pid}), (m:Market {market_id: rel.mid})
+                MERGE (p)-[:TRADED_ON]->(m)
+                """,
+                relations=batch,
+            )
 
-    print(f"  ✅ 产品节点 ({count}) + 关联关系")
+    print(f"  ✅ 产品节点 ({len(products_data)}) + 关联关系（批量导入）")
 
 
 async def import_customers(driver):
-    """从 MySQL 导入客户数据，创建 Customer 节点 + HAS_RISK_LEVEL 关系"""
+    """从 MySQL 导入客户数据，创建 Customer 节点 + HAS_RISK_LEVEL 关系（批量导入优化）"""
     async with async_session_factory() as mysql_session:
         # 查询所有客户
         result = await mysql_session.execute(
@@ -257,42 +340,61 @@ async def import_customers(driver):
             if cid not in risk_map:
                 risk_map[cid] = row[1]
 
-    count = 0
+    # 收集批量数据
+    customers_data = []
+    risk_relations = []
+
+    for row in customers:
+        customer_id = row[0]
+        username = row[1]
+        real_name = row[2] or username
+        customer_level = row[4] or "普通"
+
+        # 风险等级映射: C1-C5 → R1-R5
+        assessed_level = risk_map.get(customer_id, "C3")
+        risk_level = assessed_level.replace("C", "R") if assessed_level.startswith("C") else "R3"
+
+        customers_data.append({
+            "customer_id": customer_id,
+            "name": real_name,
+            "username": username,
+            "level": customer_level,
+        })
+        risk_relations.append({
+            "cid": customer_id,
+            "level": risk_level,
+        })
+
+    # 批量执行 Neo4j 操作
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
-        for row in customers:
-            customer_id = row[0]
-            username = row[1]
-            real_name = row[2] or username
-            customer_level = row[4] or "普通"
-
-            # 风险等级映射: C1-C5 → R1-R5
-            assessed_level = risk_map.get(customer_id, "C3")
-            risk_level = assessed_level.replace("C", "R") if assessed_level.startswith("C") else "R3"
-
+        # 1. 批量创建客户节点（UNWIND优化）
+        if customers_data:
             await neo4j_session.run(
                 """
-                MERGE (c:Customer {id: $customer_id})
-                SET c.name = $name, c.username = $username,
-                    c.customer_level = $level
+                UNWIND $customers AS c
+                MERGE (cust:Customer {id: c.customer_id})
+                SET cust.name = c.name, cust.username = c.username,
+                    cust.customer_level = c.level
                 """,
-                customer_id=customer_id, name=real_name,
-                username=username, level=customer_level,
+                customers=customers_data,
             )
 
-            # 客户 → 风险等级
+        # 2. 批量创建客户→风险等级关系（UNWIND优化）
+        if risk_relations:
             await neo4j_session.run(
-                "MATCH (c:Customer {id: $cid}), (r:RiskLevel {level: $level}) "
-                "MERGE (c)-[:HAS_RISK_LEVEL]->(r)",
-                cid=customer_id, level=risk_level,
+                """
+                UNWIND $relations AS rel
+                MATCH (c:Customer {id: rel.cid}), (r:RiskLevel {level: rel.level})
+                MERGE (c)-[:HAS_RISK_LEVEL]->(r)
+                """,
+                relations=risk_relations,
             )
 
-            count += 1
-
-    print(f"  ✅ 客户节点 ({count}) + 风险等级关系")
+    print(f"  ✅ 客户节点 ({len(customers_data)}) + 风险等级关系（批量导入）")
 
 
 async def import_holdings(driver):
-    """从 MySQL 导入持仓数据，创建 INVESTS_IN 关系"""
+    """从 MySQL 导入持仓数据，创建 INVESTS_IN 关系（批量导入优化）"""
     async with async_session_factory() as mysql_session:
         result = await mysql_session.execute(
             text("SELECT customer_id, product_id, shares, cost_amount, "
@@ -301,27 +403,36 @@ async def import_holdings(driver):
         )
         holdings = result.fetchall()
 
-    count = 0
+    # 收集批量数据
+    holdings_data = []
+    for row in holdings:
+        holdings_data.append({
+            "cid": row[0],
+            "pid": row[1],
+            "shares": float(row[2] or 0),
+            "cost": float(row[3] or 0),
+            "value": float(row[4] or 0),
+            "pl": float(row[5] or 0),
+            "ratio": float(row[6] or 0),
+        })
+
+    # 批量执行 Neo4j 操作
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
-        for row in holdings:
+        if holdings_data:
+            # 批量创建/更新持仓关系（UNWIND优化）
             await neo4j_session.run(
                 """
-                MATCH (c:Customer {id: $cid}), (p:Product {id: $pid})
-                MERGE (c)-[h:INVESTS_IN]->(p)
-                SET h.shares = $shares, h.cost_amount = $cost,
-                    h.current_value = $value, h.profit_loss = $pl,
-                    h.profit_ratio = $ratio
+                UNWIND $holdings AS h
+                MATCH (c:Customer {id: h.cid}), (p:Product {id: h.pid})
+                MERGE (c)-[inv:INVESTS_IN]->(p)
+                SET inv.shares = h.shares, inv.cost_amount = h.cost,
+                    inv.current_value = h.value, inv.profit_loss = h.pl,
+                    inv.profit_ratio = h.ratio
                 """,
-                cid=row[0], pid=row[1],
-                shares=float(row[2] or 0),
-                cost=float(row[3] or 0),
-                value=float(row[4] or 0),
-                pl=float(row[5] or 0),
-                ratio=float(row[6] or 0),
+                holdings=holdings_data,
             )
-            count += 1
 
-    print(f"  ✅ 持仓关系 ({count})")
+    print(f"  ✅ 持仓关系 ({len(holdings_data)})（批量导入）")
 
 
 async def show_stats(driver):

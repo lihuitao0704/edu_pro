@@ -35,6 +35,24 @@ from app.utils.data_masking import mask_text
 
 settings = get_settings()
 
+# ==================== 业务常量 ====================
+
+_MAX_AMOUNT = 10_000_000  # 单笔金额上限 1000 万
+
+
+def _safe_float(value, field: str = "金额") -> tuple[float, Optional[str]]:
+    """安全转换为 float，失败时返回 (0.0, 错误信息)"""
+    try:
+        v = float(value)
+        if v <= 0:
+            return 0.0, f"{field}必须大于0"
+        if v > _MAX_AMOUNT:
+            return 0.0, f"{field}超过上限（{_MAX_AMOUNT}元）"
+        return v, None
+    except (ValueError, TypeError):
+        return 0.0, f"{field}格式错误（无法转为数字）"
+
+
 # ==================== LLM 客户端 ====================
 
 # 使用 AsyncOpenAI 异步客户端，避免阻塞事件循环
@@ -44,7 +62,7 @@ llm_client = AsyncOpenAI(
     api_key=settings.llm.openai_api_key,
     base_url=settings.llm.openai_base_url,
     timeout=settings.llm.openai_timeout,
-    max_retries=0,
+    max_retries=3,  # 修复：LLM API临时故障时自动重试，提升稳定性
     http_client=_http_client,
 )
 
@@ -60,11 +78,13 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
     try:
         from app.config.database import get_redis
         r = await get_redis()
+        summary = _build_confirmation_summary(action, arguments)
         await r.setex(
             f"{_CONFIRM_PREFIX}{session_id}",
             _CONFIRM_TTL,
             json.dumps({"action": action, "arguments": arguments,
-                        "user_id": user_id, "user_role": user_role}),
+                        "user_id": user_id, "user_role": user_role,
+                        "summary": summary}),
         )
         return True
     except Exception:
@@ -92,6 +112,27 @@ async def _delete_pending_confirm(session_id: str):
         await r.delete(f"{_CONFIRM_PREFIX}{session_id}")
     except Exception:
         pass
+
+
+def _build_confirmation_summary(action: str, arguments: dict) -> str:
+    """
+    生成待确认操作的自然语言摘要，用于：
+    1. 展示给用户明确确认内容（避免盲目确认）
+    2. 存入 Redis，确认时校验一致性
+    """
+    if action == "purchase_product":
+        return (f"申购：客户 {arguments.get('customer_name','')} "
+                f"购买 {arguments.get('product_name','')}，"
+                f"金额 {arguments.get('amount', 0)} 元")
+    if action == "redeem_product":
+        return (f"赎回：客户 {arguments.get('customer_name','')} "
+                f"赎回 {arguments.get('product_name','')}，"
+                f"份额 {arguments.get('shares', 0)}")
+    if action == "transfer_funds":
+        return (f"转账：{arguments.get('from_customer_name','')} → "
+                f"{arguments.get('to_customer_name','')}，"
+                f"金额 {arguments.get('amount', 0)} 元")
+    return f"执行 {action}，参数 {arguments}"
 
 # ==================== RBAC 权限矩阵 ====================
 
@@ -331,7 +372,9 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
     if tool_name == "purchase_product":
         customer_name = arguments.get("customer_name", "")
         product_name = arguments.get("product_name", "")
-        amount = float(arguments.get("amount", 0))
+        amount, err = _safe_float(arguments.get("amount", 0), "申购金额")
+        if err:
+            return {"success": False, "message": err}
 
         # 解析 ID
         customer_id = await resolve_customer_id(customer_name)
@@ -390,10 +433,12 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
 
     elif tool_name == "get_customer_holdings":
         customer_name = arguments.get("customer_name", "")
-        holdings = await get_customer_products(customer_name)
-        if not holdings:
+        found, data = await get_customer_products(customer_name)
+        if not found:
+            return {"success": False, "message": data}  # data 是错误信息字符串
+        if not data:
             return {"success": False, "message": f"客户 {customer_name} 无持仓记录"}
-        return {"success": True, "data": holdings}
+        return {"success": True, "data": data}
 
     elif tool_name == "get_suitable_products":
         risk_level = arguments.get("risk_level", "R3")
@@ -403,7 +448,9 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
     elif tool_name == "redeem_product":
         customer_name = arguments.get("customer_name", "")
         product_name = arguments.get("product_name", "")
-        shares = float(arguments.get("shares", 0))
+        shares, err = _safe_float(arguments.get("shares", 0), "赎回份额")
+        if err:
+            return {"success": False, "message": err}
         customer_id = await resolve_customer_id(customer_name)
         if not customer_id:
             return {"success": False, "message": f"未找到客户: {customer_name}"}
@@ -418,7 +465,9 @@ async def execute_tool(tool_name: str, arguments: dict, operator_id: int = None)
     elif tool_name == "transfer_funds":
         from_name = arguments.get("from_customer_name", "")
         to_name = arguments.get("to_customer_name", "")
-        amount = float(arguments.get("amount", 0))
+        amount, err = _safe_float(arguments.get("amount", 0), "转账金额")
+        if err:
+            return {"success": False, "message": err}
         from_id = await resolve_customer_id(from_name)
         to_id = await resolve_customer_id(to_name)
         if not from_id:
@@ -506,12 +555,13 @@ async def operator_chat(
             await _delete_pending_confirm(session_id)
             action = pending["action"]
             arguments = pending["arguments"]
+            summary = pending.get("summary", _build_confirmation_summary(action, arguments))
             result = await execute_tool(action, arguments, operator_id=pending["user_id"])
             if result.get("success"):
-                reply = _format_success_reply(action, arguments, result.get("data"))
+                reply = f"✅ 已确认执行：{summary}\n\n" + _format_success_reply(action, arguments, result.get("data"))
                 status = "ok"
             else:
-                reply = result.get("message", f"{action} 操作失败")
+                reply = f"❌ 确认操作执行失败：{summary}\n原因：{result.get('message', f'{action} 操作失败')}"
                 status = "error"
             await memory.add_message("assistant", reply)
             return {"reply": reply, "action": action, "params": arguments,
@@ -531,7 +581,16 @@ async def operator_chat(
             return {"reply": reply,
                     "action": None, "params": {}, "status": "cancelled", "session_id": session_id}
 
-    # 1. 调用 LLM（Function Calling），附带历史上下文
+    # 1. 前置权限校验：先确定该角色可用工具，再调用 LLM（避免浪费 token）
+    allowed_actions = RBAC_PERMISSIONS.get(user_role, [])
+    if not allowed_actions:
+        reply = f"抱歉，角色（{user_role}）没有任何业务操作权限，请联系管理员。"
+        await memory.add_message("assistant", reply)
+        return {"reply": reply, "action": None, "params": {},
+                "status": "permission_denied", "session_id": session_id}
+    available_tools = [t for t in TOOLS if t["function"]["name"] in allowed_actions]
+
+    # 2. 调用 LLM（Function Calling），附带历史上下文 + 仅可用工具
     history = await memory.get_messages(max_tokens=2048)
     # 历史中已包含刚加入的 user message，直接拼接系统提示词
     llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
@@ -540,7 +599,7 @@ async def operator_chat(
         response = await llm_client.chat.completions.create(
             model=settings.llm.openai_model_chat,
             messages=llm_messages,
-            tools=TOOLS,
+            tools=available_tools,
             tool_choice="auto",
             temperature=settings.llm.openai_temperature,
         )
@@ -557,7 +616,7 @@ async def operator_chat(
 
     msg = response.choices[0].message
 
-    # 2. 没有工具调用 → 普通对话回复
+    # 3. 没有工具调用 → 普通对话回复
     if not msg.tool_calls:
         reply = mask_text(msg.content or "请问您需要办理什么业务？")
         await memory.add_message("assistant", reply)
@@ -569,7 +628,7 @@ async def operator_chat(
             "session_id": session_id,
         }
 
-    # 3. 处理所有工具调用（LLM 可能一次返回多个）
+    # 4. 处理所有工具调用（LLM 可能一次返回多个）
     replies = []
     actions_taken = []
 
@@ -581,14 +640,19 @@ async def operator_chat(
             replies.append(f"⚠️ 工具 {action} 参数解析失败，已跳过。")
             continue
 
-        # 4. RBAC 权限校验
+        # 5. 防御性权限校验（工具已过滤，此处为兜底）
         if not check_permission(user_role, action):
             replies.append(f"抱歉，您的角色（{user_role}）没有执行 {action} 的权限")
             actions_taken.append({"action": action, "status": "permission_denied"})
             continue
 
-        # 5. 二次确认检查（存入 Redis，等待用户确认）
-        amount = float(arguments.get("amount", 0))
+        # 6. 二次确认检查（存入 Redis，等待用户确认）
+        amount, amount_err = _safe_float(arguments.get("amount", 0), "金额")
+        if amount_err and needs_confirmation(action, 0):
+            # amount 非法但操作需要确认阈值，无法判断是否超阈值，拒绝
+            replies.append(f"⚠️ {amount_err}，无法执行 {action}")
+            actions_taken.append({"action": action, "status": "param_error"})
+            continue
         if needs_confirmation(action, amount):
             saved = await _save_pending_confirm(session_id, action, arguments, user_id, user_role)
             if not saved:
@@ -597,9 +661,11 @@ async def operator_chat(
                 replies.append(reply)
                 actions_taken.append({"action": action, "status": "system_error"})
                 continue
+            summary = _build_confirmation_summary(action, arguments)
             # 拼接已处理的结果 + 确认提示
             pending_count = len(msg.tool_calls) - len(actions_taken) - 1  # 剩余未处理
-            reply = f"您即将执行 {action}，金额 {amount} 元，超过确认阈值。请回复'确认'执行，或'取消'放弃。"
+            reply = (f"⚠️ 大额操作需确认：{summary}\n\n"
+                     f"请回复 '确认' 执行，或 '取消' 放弃。")
             if replies:
                 reply = "\n\n".join(replies) + "\n\n" + reply
             if pending_count > 0:
@@ -613,11 +679,11 @@ async def operator_chat(
                 "session_id": session_id,
             }
 
-        # 6. 执行工具
+        # 7. 执行工具
         result = await execute_tool(action, arguments, operator_id=user_id)
         actions_taken.append({"action": action, "params": arguments})
 
-        # 7. 构造单条回复
+        # 8. 构造单条回复
         if result.get("success"):
             replies.append(_format_success_reply(action, arguments, result.get("data")))
             # 事件广播（成功操作后发布到 Redis Pub/Sub）

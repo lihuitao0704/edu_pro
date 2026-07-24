@@ -16,6 +16,7 @@
 import json
 import uuid
 from datetime import datetime
+from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerError
 
 # 事件类型常量
 EVENT_RISK_ALERT = "event:risk_alert"
@@ -32,13 +33,73 @@ ACTION_EVENT_MAP = {
     "redo_assessment":   EVENT_PROFILE_UPDATE,
 }
 
+# 事件发布熔断器：失败3次后熔断，30秒后尝试恢复
+_event_breaker = CircuitBreaker(fail_max=3, reset_timeout=30)
+
+
+async def _save_failed_event(event_type: str, payload: dict, trace_id: str, error: str) -> None:
+    """
+    持久化失败的事件到MySQL（降级策略）
+    当Redis不可用时，将事件保存到数据库，后续可以通过定时任务重试
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        from sqlalchemy import text
+        from app.config.database import async_session_factory
+
+        async with async_session_factory() as session:
+            # 检查表是否存在，不存在则创建
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS event_failed_log (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_type VARCHAR(100) NOT NULL,
+                    payload JSON NOT NULL,
+                    trace_id VARCHAR(50),
+                    error TEXT,
+                    create_time DATETIME NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                    INDEX idx_status (status),
+                    INDEX idx_create_time (create_time)
+                )
+            """))
+
+            # 插入失败事件
+            await session.execute(
+                text("""
+                    INSERT INTO event_failed_log
+                    (event_type, payload, trace_id, error, create_time, status)
+                    VALUES (:type, :payload, :trace, :error, NOW(), 'PENDING')
+                """),
+                {
+                    "type": event_type,
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                    "trace": trace_id,
+                    "error": error[:500] if error else "",  # 限制错误信息长度
+                }
+            )
+            await session.commit()
+            logger.info(f"失败事件已持久化: {event_type}, trace_id={trace_id}")
+    except Exception as e:
+        logger.error(f"持久化失败事件异常: {e}")
+
 
 async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> None:
     """
     发布事件到 Redis Pub/Sub 频道
-    Redis 不可用时静默失败（降级），不影响主业务
+    修复 3.10：添加重试机制（最多 3 次，指数退避）+ 熔断机制
+    失败时持久化到MySQL，避免事件丢失
     """
-    try:
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+
+    max_retries = 3
+    retry_delay = 0.5  # 初始重试延迟（秒）
+
+    async def _do_publish():
+        """实际的发布逻辑（被熔断器保护）"""
         from app.config.database import get_redis
         r = await get_redis()
         message = {
@@ -49,9 +110,34 @@ async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> N
             "trace_id": trace_id or uuid.uuid4().hex[:8],
         }
         await r.publish(event_type, json.dumps(message, ensure_ascii=False))
-    except Exception:
-        # Redis 不可用时降级：仅忽略，不阻塞主流程
-        pass
+
+    # 使用熔断器保护发布逻辑
+    try:
+        # 重试逻辑
+        for attempt in range(max_retries + 1):
+            try:
+                await _event_breaker.call(_do_publish)
+                return  # 发布成功，退出重试循环
+            except CircuitBreakerError:
+                # 熔断器打开，快速失败，持久化事件
+                logger.warning(f"事件发布被熔断: {event_type}, trace_id={trace_id}")
+                await _save_failed_event(event_type, payload, trace_id, "熔断器打开")
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    # 重试前等待（指数退避）
+                    logger.warning(
+                        f"事件发布失败 (尝试 {attempt + 1}/{max_retries}): {e}，{retry_delay}s 后重试"
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+                else:
+                    # 所有重试失败，持久化事件
+                    logger.warning(f"事件发布最终失败 (已重试 {max_retries} 次): {e}")
+                    await _save_failed_event(event_type, payload, trace_id, str(e))
+    except Exception as e:
+        logger.error(f"事件发布异常: {e}")
+        await _save_failed_event(event_type, payload, trace_id, str(e))
 
 
 async def publish_operation_event(action: str, arguments: dict, data: dict,

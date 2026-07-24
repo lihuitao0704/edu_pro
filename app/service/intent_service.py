@@ -153,31 +153,43 @@ class IntentService:
             return "chitchat", 0.5
 
     def _extract_intent_from_text(self, text: str) -> str:
-        """从LLM返回的文本中提取意图标签"""
+        """从LLM返回的文本中提取意图标签（修复 2.1：增强提取逻辑的健壮性）"""
         import re
 
-        # 如果文本本身就是一个有效的意图标签，直接返回
+        text_lower = text.lower().strip()
         valid_intents = ["product_inquiry", "policy_interpretation", "faq", "chitchat", "transfer_human"]
-        if text.lower() in valid_intents:
-            return text.lower()
 
-        # 尝试匹配 "意图：xxx" 或 "意图:xxx" 格式
-        match = re.search(r'意图[：:]\s*(\w+)', text)
+        # 1. 如果文本本身就是一个有效的意图标签，直接返回
+        if text_lower in valid_intents:
+            return text_lower
+
+        # 2. 尝试匹配 "意图：xxx" 或 "意图:xxx" 格式（支持中英文冒号）
+        match = re.search(r'意图[：:]\s*([\w_]+)', text)
         if match:
-            return match.group(1).lower()
-
-        # 尝试从文本末尾提取最后一个有效意图
-        for intent in reversed(valid_intents):
-            if intent in text.lower():
+            intent = match.group(1).lower()
+            if intent in valid_intents:
                 return intent
 
-        # 尝试匹配 "product_inquiry" 等关键词
+        # 3. 尝试从文本中提取任意位置的有效意图标签（更宽松）
         for intent in valid_intents:
-            if intent in text.lower():
+            # 使用单词边界匹配，避免部分匹配（如 "product" 匹配到 "product_inquiry"）
+            pattern = r'\b' + re.escape(intent) + r'\b'
+            if re.search(pattern, text_lower):
                 return intent
 
-        # 无法提取，返回原文本
-        return text.lower()
+        # 4. 尝试提取最后一个出现的有效意图（兜底策略）
+        found_intents = []
+        for intent in valid_intents:
+            if intent in text_lower:
+                found_intents.append(intent)
+
+        if found_intents:
+            # 返回最后出现的意图（假设 LLM 在末尾给出最终答案）
+            return found_intents[-1]
+
+        # 5. 无法提取，返回原文本（后续会校验是否为有效意图）
+        logger.warning(f"无法从文本中提取有效意图: {text[:100]}...")
+        return text_lower
 
     def get_knowledge_type(self, intent: str) -> Optional[str]:
         """获取意图对应的知识类型"""

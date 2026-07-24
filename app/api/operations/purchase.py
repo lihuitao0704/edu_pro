@@ -4,12 +4,15 @@
 """
 
 import uuid
+import asyncio
+import logging
 from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+import sqlalchemy.exc as sa_exc
 
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
@@ -18,6 +21,7 @@ from app.security.authorization import authenticated_actor_id, require_roles
 
 router = APIRouter()
 _transaction_flow = TransactionFlowService()
+_logger = logging.getLogger(__name__)
 
 
 def generate_transaction_no() -> str:
@@ -58,13 +62,23 @@ async def purchase_product(
     product_id = body.get("product_id")
     amount = Decimal(str(body.get("amount", 0)))
     operator_id = authenticated_actor_id(user, body.get("operator_id"))
+    idempotency_key = body.get("idempotency_key")  # 修复 1.2：支持幂等性检查
 
     if not customer_id or not product_id or amount <= 0:
         return ApiResponse(code=400, message="参数不完整", trace_id=uuid.uuid4().hex[:8])
 
-    # 1. 查询产品信息
+    # 修复 2.10：API 层金额上限校验（防止绕过 operator_agent 直接调用）
+    MAX_PURCHASE_AMOUNT = Decimal("10000000")  # 1000 万
+    if amount > MAX_PURCHASE_AMOUNT:
+        return ApiResponse(
+            code=400,
+            message=f"申购金额 {amount} 元超过单笔上限 {MAX_PURCHASE_AMOUNT} 元",
+            trace_id=uuid.uuid4().hex[:8],
+        )
+
+    # 1. 查询产品信息（修复 1.8：加行锁防止并发申购下架产品）
     product = await db.execute(
-        text("SELECT * FROM fin_product WHERE id = :pid AND status = '在售'"),
+        text("SELECT * FROM fin_product WHERE id = :pid AND status = '在售' FOR UPDATE"),
         {"pid": product_id},
     )
     product = product.mappings().first()
@@ -104,14 +118,34 @@ async def purchase_product(
             trace_id=uuid.uuid4().hex[:8],
         )
 
-    # 4. 获取当前净值（Mock：用 expected_return 模拟）
-    nav = Decimal("1.000000")  # 简化：净值为1
+    # 4. 获取当前净值（修复 1.1：使用 expected_return 计算 Mock 净值）
+    # 注意：生产环境应从 product_nav 表查询实时净值，当前为 Mock 实现
+    annual_return = Decimal(str(product["expected_return"] or 0)) / Decimal("100")
+    # Mock 净值计算：假设初始净值为 1，按年化收益率折算到每日
+    daily_return = annual_return / Decimal("365")
+    nav = Decimal("1") + daily_return
 
     # 5. 计算份额（金额/净值，简化无手续费）— 全程 Decimal
     shares = amount / nav
 
-    # 6. 写入交易流水
+    # 6. 写入交易流水（修复 1.2：检查幂等性）
     txn_no = generate_transaction_no()
+    if idempotency_key:
+        # 检查是否已存在相同幂等键的交易
+        existing = await db.execute(
+            text("SELECT transaction_no FROM fin_transaction WHERE remark LIKE :key LIMIT 1"),
+            {"key": f"%[idempotency:{idempotency_key}]%"},
+        )
+        if existing_txn := existing.scalar():
+            return ApiResponse(
+                code=200,
+                message="重复请求，返回原交易结果",
+                data={"transaction_no": existing_txn, "duplicate": True},
+                trace_id=uuid.uuid4().hex[:8],
+            )
+        # 将幂等键存入 remark 字段（实际生产环境应有独立的 idempotency_key 列）
+        txn_no = f"{txn_no}[idempotency:{idempotency_key}]"
+
     await db.execute(
         text("""
             INSERT INTO fin_transaction
@@ -132,48 +166,67 @@ async def purchase_product(
         },
     )
 
-    # 7. 更新或新建持仓（加行锁防止并发）
-    existing = await db.execute(
-        text("SELECT id, shares, cost_amount FROM fin_holdings "
-             "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中' FOR UPDATE"),
-        {"cid": customer_id, "pid": product_id},
-    )
-    existing = existing.mappings().first()
+    # 7. 更新或新建持仓（加行锁防止并发）+ 死锁检测和重试
+    MAX_RETRY = 3
+    for attempt in range(MAX_RETRY):
+        try:
+            existing = await db.execute(
+                text("SELECT id, shares, cost_amount FROM fin_holdings "
+                     "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中' FOR UPDATE"),
+                {"cid": customer_id, "pid": product_id},
+            )
+            existing = existing.mappings().first()
 
-    if existing:
-        # DB 返回 Numeric → 自动映射为 Decimal，直接相加无精度损失
-        existing_shares = Decimal(str(existing["shares"] or 0))
-        existing_cost = Decimal(str(existing["cost_amount"] or 0))
-        new_shares = existing_shares + shares
-        new_cost = existing_cost + amount
-        await db.execute(
-            text("UPDATE fin_holdings SET shares = :s, cost_amount = :c, "
-                 "current_value = :v, update_time = NOW() WHERE id = :id"),
-            {"s": float(new_shares), "c": float(new_cost), "v": float(new_cost), "id": existing["id"]},
-        )
-    else:
-        await db.execute(
-            text("""
-                INSERT INTO fin_holdings
-                (customer_id, product_id, shares, cost_amount, current_value, status)
-                VALUES (:cid, :pid, :s, :c, :v, '持有中')
-            """),
-            {"cid": customer_id, "pid": product_id, "s": float(shares),
-             "c": float(amount), "v": float(amount)},
-        )
+            if existing:
+                # DB 返回 Numeric → 自动映射为 Decimal，直接相加无精度损失
+                existing_shares = Decimal(str(existing["shares"] or 0))
+                existing_cost = Decimal(str(existing["cost_amount"] or 0))
+                new_shares = existing_shares + shares
+                new_cost = existing_cost + amount
+                await db.execute(
+                    text("UPDATE fin_holdings SET shares = :s, cost_amount = :c, "
+                         "current_value = :v, update_time = NOW() WHERE id = :id"),
+                    {"s": float(new_shares), "c": float(new_cost), "v": float(new_cost), "id": existing["id"]},
+                )
+            else:
+                await db.execute(
+                    text("""
+                        INSERT INTO fin_holdings
+                        (customer_id, product_id, shares, cost_amount, current_value, status)
+                        VALUES (:cid, :pid, :s, :c, :v, '持有中')
+                    """),
+                    {"cid": customer_id, "pid": product_id, "s": float(shares),
+                     "c": float(amount), "v": float(amount)},
+                )
 
-    risk_monitor = await _transaction_flow.monitor(
-        db,
-        {
-            "customer_id": customer_id,
-            "transaction_id": txn_no,
-            "amount": float(amount),
-            "transaction_type": "purchase",
-            "timestamp": datetime.now().isoformat(),
-            "investor_account": str(customer_id),
-        },
-    )
-    await db.commit()
+            risk_monitor = await _transaction_flow.monitor(
+                db,
+                {
+                    "customer_id": customer_id,
+                    "transaction_id": txn_no,
+                    "amount": float(amount),
+                    "transaction_type": "purchase",
+                    "timestamp": datetime.now().isoformat(),
+                    "investor_account": str(customer_id),
+                },
+            )
+            await db.commit()
+            break  # 成功，退出重试循环
+
+        except sa_exc.DeadlockDetected as e:
+            _logger.warning(f"申购死锁检测，重试 {attempt + 1}/{MAX_RETRY}: {e}")
+            await db.rollback()
+            await asyncio.sleep(0.1 * (attempt + 1))  # 指数退避
+            if attempt == MAX_RETRY - 1:
+                return ApiResponse(
+                    code=500,
+                    message="系统繁忙，请稍后重试",
+                    trace_id=uuid.uuid4().hex[:8],
+                )
+        except Exception as e:
+            await db.rollback()
+            _logger.error(f"申购持仓更新失败: {e}")
+            raise
 
     return ApiResponse(
         code=200,

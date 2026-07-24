@@ -135,7 +135,17 @@ class GraphRAGPipeline:
         logger.info(f"[GraphRAG] 收到查询: {query}")
 
         # ── 阶段1: 实体提取 ──
-        entities = await self._extract_entities(query)
+        try:
+            entities = await self._extract_entities(query)
+        except ValueError as e:
+            # 修复 2.6：实体提取失败时直接返回友好提示，避免空实体导致查询所有数据
+            logger.warning(f"[GraphRAG] 实体提取失败，终止检索: {e}")
+            return (
+                f"抱歉，暂时无法理解您的问题：{e}\n\n"
+                f"建议：\n"
+                "- 使用更简洁的描述，例如「持有新能源产品的R4客户」\n"
+                "- 明确行业、风险等级等关键信息"
+            )
         logger.info(f"[GraphRAG] 实体提取结果: {entities}")
 
         # ── 阶段2: 并行检索 ──
@@ -166,10 +176,20 @@ class GraphRAGPipeline:
                 "entities": {...},
                 "graph_results": [...],
                 "vector_results": [...],
-                "fused": [...]
+                "fused": [...],
+                "error": "..." (可选，实体提取失败时存在)
             }
         """
-        entities = await self._extract_entities(query)
+        try:
+            entities = await self._extract_entities(query)
+        except ValueError as e:
+            return {
+                "entities": {},
+                "graph_results": [],
+                "vector_results": [],
+                "fused": [],
+                "error": str(e),
+            }
         graph_results, vector_results = await asyncio.gather(
             self._graph_search(entities),
             self._vector_search(query),
@@ -199,16 +219,15 @@ class GraphRAGPipeline:
                 content = content.split("\n", 1)[1]
                 if content.endswith("```"):
                     content = content[:-3]
-            return json.loads(content)
+            entities = json.loads(content)
+            # 至少提取到一个非空实体才算成功
+            if not any(v for v in entities.values() if v):
+                raise ValueError("实体提取结果为空")
+            return entities
         except Exception as e:
-            logger.warning(f"[GraphRAG] 实体提取失败: {e}，使用空实体继续")
-            return {
-                "industry": None,
-                "risk_level": None,
-                "product_type": None,
-                "customer_name": None,
-                "product_name": None,
-            }
+            # 修复 2.6：实体提取失败时不再静默继续，而是向上抛出明确异常
+            logger.error(f"[GraphRAG] 实体提取失败: {e}")
+            raise ValueError(f"无法理解您的问题，请尝试换一种描述方式（原因：{e}）") from e
 
     # ═══════════════════════════════════════════════════════════
     # 阶段2a: Neo4j 多跳查询
@@ -436,10 +455,23 @@ class GraphRAGPipeline:
         加权融合排序（含去重 + 互证加分）
 
         - 图谱结果以 graph_score（0-1）参与
-        - 向量结果以 vector_score（0-1，已归一化）参与
+        - 向量结果以 vector_score（0-1，归一化后）参与
         - 综合分 = graph_weight × graph_score + vector_weight × vector_score
         - 如果同一实体在两个来源都出现，给予 1.2x 互证加分并去重
         """
+        # ── 修复 2.7：对向量分数做 min-max 归一化，确保与 graph_score 同量纲 ──
+        if vector_results:
+            raw_scores = [float(v.get("vector_score", 0)) for v in vector_results]
+            min_s, max_s = min(raw_scores), max(raw_scores)
+            span = max_s - min_s
+            if span > 0:
+                for item, raw in zip(vector_results, raw_scores):
+                    item["_norm_vector_score"] = (raw - min_s) / span
+            else:
+                # 所有分数相同 → 统一为 0.5
+                for item in vector_results:
+                    item["_norm_vector_score"] = 0.5
+
         # 用于去重的 key → merged item 映射
         merged_map: Dict[str, dict] = {}
 
@@ -467,9 +499,9 @@ class GraphRAGPipeline:
                 "_dedup_key": dedup_key,
             }
 
-        # 向量结果
+        # 向量结果（使用归一化后的分数）
         for item in vector_results:
-            vs = item.get("vector_score", 0)
+            vs = item.get("_norm_vector_score", item.get("vector_score", 0))
             dedup_key = (item.get("title", "") or item.get("content", "")[:80]).strip()
             if dedup_key in merged_map:
                 # 同一实体在两个来源都出现 → 互证加分

@@ -139,7 +139,10 @@ async def graph_query(body: dict):
     params = body.get("params", {})
 
     if query_type == "customer_products":
-        result = await graph_query_tool.get_customer_products(params.get("customer_name", ""))
+        found, data = await graph_query_tool.get_customer_products(params.get("customer_name", ""))
+        if not found:
+            return {"code": 404, "message": data, "data": []}
+        result = data
     elif query_type == "suitable_products":
         result = await graph_query_tool.get_suitable_products(params.get("risk_level", "R3"))
     elif query_type == "product_industry":
