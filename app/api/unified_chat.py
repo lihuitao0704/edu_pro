@@ -165,7 +165,11 @@ async def unified_chat(
         session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
-            req.message, session_id, actor_id, get_request_role_from_user(user)
+            req.message,
+            session_id,
+            actor_id,
+            get_request_role_from_user(user),
+            customer_id=req.user_id,
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         if result.agent != "safety_guard":
@@ -206,7 +210,11 @@ async def unified_chat_stream(
         session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
-            req.message, session_id, actor_id, get_request_role_from_user(user)
+            req.message,
+            session_id,
+            actor_id,
+            get_request_role_from_user(user),
+            customer_id=req.user_id,
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         if result.agent != "safety_guard":
