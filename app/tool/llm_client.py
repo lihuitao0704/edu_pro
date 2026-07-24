@@ -68,7 +68,10 @@ class LLMClient:
                     messages=messages,
                     temperature=0.3,
                 )
-                result: str = response.choices[0].message.content
+                result = response.choices[0].message.content
+                if not result:
+                    logger.warning("LLM 返回空内容")
+                    return ""
                 logger.info("LLM 调用成功")
                 return result
             except Exception as e:
@@ -100,6 +103,11 @@ class LLMClient:
 
 你是一个SQL专家。根据以下表结构，将自然语言转为SQL语句。
 
+【拒识规则】
+如果用户的问题与数据库查询、数据统计、业务分析完全无关（如问候、闲聊、写作、诗歌、天气等），
+请直接返回一行：-- REJECT
+不要尝试生成无意义的 SQL，不要编造数据。
+
 【表结构】
 {schema_text}
 
@@ -118,10 +126,24 @@ SQL：SELECT h.* FROM `fin_holdings` h JOIN `sys_user` u ON h.`customer_id` = u.
 用户问：统计各产品类型的平均收益率
 SQL：SELECT `product_type`, AVG(`expected_return`) FROM `fin_product` GROUP BY `product_type`
 
+用户问：你好
+SQL：-- REJECT
+
 用户问：{user_query}
 SQL："""
 
         result = self.chat(prompt)
+
+        # 防御：LLM 返回空内容
+        if not result:
+            logger.warning("LLM 返回空内容，返回拒识标记")
+            return "-- REJECT"
+
+        # 检测 LLM 主动拒识
+        if result.strip().upper().startswith("-- REJECT"):
+            logger.info(f"LLM 拒识：{result[:80]}")
+            return "-- REJECT"
+
         # 清理 markdown 代码块标记
         result = result.replace("```sql", "").replace("```", "").strip()
 

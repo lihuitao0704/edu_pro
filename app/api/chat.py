@@ -152,6 +152,8 @@ async def chat_analyst(
                     "session_id": request.session_id,
                     "safety": result.get("safety"),
                     "truncated": result.get("truncated", False),
+                    "rejected": result.get("rejected", False),
+                    "reject_reason": result.get("reject_reason"),
                     "timing": result.get("timing"),
                 },
                 message="查询成功",
@@ -164,6 +166,8 @@ async def chat_analyst(
                     "sql": result.get("sql"),
                     "session_id": request.session_id,
                     "safety": result.get("safety"),
+                    "rejected": result.get("rejected", False),
+                    "reject_reason": result.get("reject_reason"),
                 },
             )
     except Exception as e:

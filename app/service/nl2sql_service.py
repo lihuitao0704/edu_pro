@@ -33,7 +33,14 @@ ALL_TABLES = [
     "fin_knowledge_meta",
 ]
 
-# 敏感列黑名单（禁止在 SELECT 中查询这些列）
+# 拒识：纯问候语/闲聊关键词
+GREETING_PATTERNS = [
+    "你好", "您好", "嗨", "在吗", "在不在", "哈喽", "hello", "hi",
+]
+NON_QUERY_PATTERNS = [
+    "写诗", "写歌", "画画", "讲笑话", "天气", "吃了吗", "你是谁",
+    "你叫什么", "帮我写", "帮我画", "翻译", "推荐电影", "推荐音乐",
+]
 SENSITIVE_COLUMNS = {
     "password", "password_hash", "pwd", "passwd",
     "api_key", "api_secret", "secret_key", "secret",
@@ -186,6 +193,44 @@ SQL：SELECT * FROM `fin_customer_profile` WHERE `customer_id` = (SELECT `id` FR
 SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
 """
 
+    @staticmethod
+    def _check_query_intent(query: str) -> Optional[str]:
+        """快速预检：判断用户输入是否为数据查询意图
+
+        Returns:
+            None: 通过预检，可继续生成 SQL
+            str: 拒识原因（如 'greeting', 'non_query', 'too_short'）
+        """
+        q = query.strip()
+
+        # 1. 过短
+        if len(q) < 2:
+            return "too_short"
+
+        # 2. 纯问候语
+        for pat in GREETING_PATTERNS:
+            if q == pat or (q.startswith(pat) and len(q) <= len(pat) + 3):
+                return "greeting"
+
+        # 3. 明确非查询意图
+        for pat in NON_QUERY_PATTERNS:
+            if pat in q:
+                return "non_query"
+
+        # 4. 无业务关键词 + 短输入 → 可疑
+        business_keywords = {
+            "查询", "客户", "产品", "持仓", "交易", "统计", "资产", "收益",
+            "风险", "画像", "工单", "知识", "多少", "哪些", "什么", "哪个",
+            "最近", "超过", "低于", "大于", "小于", "平均", "总和", "用户",
+            "理财", "份额", "申购", "赎回", "流水", "预警", "风控",
+        }
+        keyword_hit = any(kw in q for kw in business_keywords)
+
+        if not keyword_hit and len(q) <= 10:
+            return "non_query"
+
+        return None
+
     def generate_sql(self, query: str) -> str:
         """根据自然语言生成 SQL"""
         logger.info(f"生成 SQL，用户查询: {query}")
@@ -193,7 +238,15 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
         foreign_keys = self._get_foreign_keys()
         examples = self._get_few_shot_examples()
         full_schema = schema + "\n" + foreign_keys + "\n" + examples
-        sql = self.llm.generate_sql(query, full_schema)
+        try:
+            sql = self.llm.generate_sql(query, full_schema)
+        except Exception as e:
+            logger.warning(f"LLM 生成 SQL 异常: {e}")
+            sql = None
+        # 防御：SQL 为空或 None 时兜底
+        if not sql or not sql.strip():
+            logger.warning("LLM 返回空 SQL，使用兜底")
+            sql = "SELECT 1"
         logger.info(f"生成 SQL: {sql}")
         return sql
 
@@ -297,6 +350,26 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
         logger.info(f"===== NL2SQL 完整流程开始 =====")
         logger.info(f"用户问题: {query}")
 
+        # ---- 第一层：快速预检 ----
+        reject_reason = self._check_query_intent(query)
+        if reject_reason:
+            logger.info(f"预检拒识: {reject_reason}")
+            return {
+                "success": True,
+                "sql": None,
+                "query_result": None,
+                "explanation": "我是数据分析助手，请提出与业务数据相关的问题。例如：\n"
+                               "• 查询资产超过100万的客户\n"
+                               "• 各产品类型的平均收益率\n"
+                               "• 客户张三的持仓有哪些\n"
+                               "• 近30天各等级风险预警数量",
+                "error": None,
+                "safety": {"select_only": True, "row_limit": True, "no_sensitive": True},
+                "truncated": False,
+                "rejected": True,
+                "reject_reason": reject_reason,
+            }
+
         # 生成缓存 key：nl2sql:{user_id}:{md5(query)}
         cache_key = f"nl2sql:{user_id}:{hashlib.md5(query.encode('utf-8')).hexdigest()}"
 
@@ -317,6 +390,25 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
             sql = self.generate_sql(query)
             t_generate = time.time() - t1
 
+            # ---- 第二层：LLM 拒识 ----
+            if sql and sql.strip().upper().startswith("-- REJECT"):
+                logger.info("LLM 拒识，返回友好引导")
+                return {
+                    "success": True,
+                    "sql": None,
+                    "query_result": None,
+                    "explanation": "我是数据分析助手，请提出与业务数据相关的问题。例如：\n"
+                                   "• 查询资产超过100万的客户\n"
+                                   "• 各产品类型的平均收益率\n"
+                                   "• 客户张三的持仓有哪些\n"
+                                   "• 近30天各等级风险预警数量",
+                    "error": None,
+                    "safety": {"select_only": True, "row_limit": True, "no_sensitive": True},
+                    "truncated": False,
+                    "rejected": True,
+                    "reject_reason": "llm_reject",
+                }
+
             valid, msg = self.validate_sql(sql)
             if not valid:
                 return {
@@ -326,6 +418,7 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                     "explanation": None,
                     "error": msg,
                     "safety": {"select_only": False, "row_limit": True, "no_sensitive": False},
+                    "rejected": False,
                 }
 
             t2 = time.time()
@@ -340,6 +433,7 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                     "explanation": None,
                     "error": result["error"],
                     "safety": {"select_only": True, "row_limit": True, "no_sensitive": True},
+                    "rejected": False,
                 }
 
             t3 = time.time()
@@ -360,6 +454,8 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                     "no_sensitive": True,
                 },
                 "truncated": exceeded,
+                "rejected": False,
+                "reject_reason": None,
                 "timing": {
                     "generate_ms": round(t_generate * 1000),
                     "execute_ms": round(t_execute * 1000),
@@ -389,6 +485,7 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                 "error": str(e),
                 "safety": {"select_only": False, "row_limit": False, "no_sensitive": False},
                 "truncated": False,
+                "rejected": False,
             }
 
     @staticmethod
