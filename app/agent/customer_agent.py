@@ -441,13 +441,18 @@ class CustomerServiceAgent:
             return json.dumps(error_json, ensure_ascii=False)
 
     def _extract_json_from_text(self, text: str) -> Optional[dict]:
-        """从 LLM 返回的文本中提取 JSON 对象"""
+        """从 LLM 返回的文本中提取 JSON 对象（含推理文本剥离）"""
         import json
         import re
 
         if not text:
             return None
 
+        text = text.strip()
+
+        # 0. 剥离推理/思考前缀（如"我们被要求..."、"思考过程：..."）
+        text = re.sub(r'^(?:思考过程|分析过程|推理过程|思考|分析|推理|让我分析|我来分析)[^\{}\n]*[:：]?\s*', '', text)
+        text = re.sub(r'^(?:我们被要求|我需要|根据要求)[^\{}\n]*\n+', '', text)
         text = text.strip()
 
         # 1. 去除可能的 markdown 代码块包裹
