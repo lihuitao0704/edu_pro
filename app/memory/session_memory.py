@@ -29,23 +29,57 @@ class SessionMemory:
         await r.expire(self.key, settings.redis.session_ttl)
 
     async def get_messages(self, max_tokens: int = 4096) -> List[dict]:
-        """获取历史消息（按 token 预算截断）"""
-        r = await self._get_redis()
-        raw = await r.lrange(self.key, 0, -1)
+        """获取历史消息（按 token 预算截断），Redis不可用时降级到MySQL"""
+        # 1. 尝试从 Redis 读取
+        try:
+            r = await self._get_redis()
+            if r:
+                raw = await r.lrange(self.key, 0, -1)
+                if raw:
+                    messages = [json.loads(m) for m in raw]
+                    return self._truncate_by_tokens(messages, max_tokens)
+        except Exception:
+            pass  # Redis 不可用，降级到 MySQL
 
-        messages = [json.loads(m) for m in raw]
+        # 2. 降级：从 MySQL conversation_archive 读取
+        logger = __import__('logging').getLogger(__name__)
+        try:
+            from app.config.database import async_session_factory
+            from sqlalchemy import select
+            from app.model.entities import ConversationArchive
+            async with async_session_factory() as db:
+                stmt = (
+                    select(ConversationArchive)
+                    .where(ConversationArchive.session_id == self.session_id)
+                    .order_by(ConversationArchive.create_time.asc())
+                    .limit(50)
+                )
+                result = await db.execute(stmt)
+                records = result.scalars().all()
+                if records:
+                    messages = [
+                        {"role": r.role, "content": r.content}
+                        for r in records
+                    ]
+                    logger.info(f"会话记忆从MySQL降级读取 | session={self.session_id} | count={len(messages)}")
+                    return self._truncate_by_tokens(messages, max_tokens)
+        except Exception as e:
+            logger.warning(f"MySQL 会话记忆读取失败: {e}")
 
-        # 从新到旧累计 token，超过预算则截断（用 append+reverse 代替 insert(0) 避免 O(n²)）
+        return []
+
+    @staticmethod
+    def _truncate_by_tokens(messages: List[dict], max_tokens: int) -> List[dict]:
+        """按 token 预算截断消息（从新到旧累计）"""
         accumulated = 0
         result = []
         for msg in reversed(messages):
-            estimated = max(len(msg["content"]) // 2, 1)  # 粗略估算：2 字符 ≈ 1 token，至少 1 token
+            estimated = max(len(msg.get("content", "")) // 2, 1)
             if accumulated + estimated > max_tokens:
                 break
             result.append(msg)
             accumulated += estimated
         result.reverse()
-
         return result
 
     async def get_all_messages(self) -> List[dict]:

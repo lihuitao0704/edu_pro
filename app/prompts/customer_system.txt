@@ -43,6 +43,9 @@ JSON 格式如下：
 ## 历史偏好：
 {historical_preferences}
 
+## 历史对话回忆：
+{historical_conversations}
+
 ## 参考资料：
 {context_documents}
 

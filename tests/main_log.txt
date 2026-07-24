@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "d:\edu_pro\main.py", line 7, in <module>
-    from fastapi import FastAPI
-ModuleNotFoundError: No module named 'fastapi'

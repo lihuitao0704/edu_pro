@@ -1,8 +1,11 @@
 """
 Embedding Tool — 文本向量化
 调用 Ollama 本地 Embedding 模型（bge-m3）
+支持 Redis 缓存 query→embedding 映射，减少重复计算
 """
 
+import hashlib
+import json
 from typing import Optional
 import httpx
 
@@ -12,27 +15,72 @@ from app.utils.logger import get_logger
 logger = get_logger("tool.embedding")
 settings = get_settings()
 
+# Embedding 缓存 TTL（秒）
+EMBEDDING_CACHE_TTL = 3600  # 1小时
+
 
 class EmbeddingTool:
-    """文本 Embedding 生成工具（Ollama）"""
+    """文本 Embedding 生成工具（Ollama + Redis 缓存）"""
 
     def __init__(self):
-        self.base_url = settings.llm.ollama_embed_url  # http://192.168.110.59:11434
-        self.model = settings.llm.ollama_model_embedding  # bge-m3
-        self.dim = settings.milvus.dim  # 1024
+        self.base_url = settings.llm.ollama_embed_url
+        self.model = settings.llm.ollama_model_embedding
+        self.dim = settings.milvus.dim
         self.timeout = settings.llm.openai_timeout
+
+    @staticmethod
+    def _cache_key(text: str) -> str:
+        """生成缓存 key：embed:{model}:{md5(text)}"""
+        text_hash = hashlib.md5(text.encode("utf-8")).hexdigest()
+        return f"embed:{settings.llm.ollama_model_embedding}:{text_hash}"
+
+    async def _get_cached(self, text: str) -> Optional[list[float]]:
+        """从 Redis 读取缓存的 embedding"""
+        try:
+            from app.config.database import get_redis
+            r = await get_redis()
+            cached = await r.get(self._cache_key(text))
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+        return None
+
+    async def _set_cache(self, text: str, embedding: list[float]) -> None:
+        """写入 Redis 缓存"""
+        try:
+            from app.config.database import get_redis
+            r = await get_redis()
+            await r.setex(
+                self._cache_key(text),
+                EMBEDDING_CACHE_TTL,
+                json.dumps(embedding),
+            )
+        except Exception:
+            pass
 
     async def encode(self, text: str) -> list[float]:
         """
-        单条文本向量化
+        单条文本向量化（带 Redis 缓存）
 
         Args:
             text: 待编码文本
         Returns:
             1024 维浮点向量
         """
+        # 1. 先查缓存
+        cached = await self._get_cached(text)
+        if cached:
+            logger.info(f"Embedding 缓存命中 | text_len={len(text)}")
+            return cached
+
+        # 2. 缓存未命中，调用 Ollama
         result = await self.encode_batch([text])
-        return result[0]
+        embedding = result[0]
+
+        # 3. 写入缓存
+        await self._set_cache(text, embedding)
+        return embedding
 
     async def encode_batch(self, texts: list[str]) -> list[list[float]]:
         """

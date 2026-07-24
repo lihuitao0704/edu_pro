@@ -171,26 +171,47 @@ async def start_event_subscriber() -> None:
     """
     启动事件订阅消费者（作为后台 task 在 lifespan 中运行）
 
-    订阅 channel:
-      - event:risk_alert → 更新客户画像 risk_flag（投顾/客服联动）
-    Redis 不可用时静默退出，不影响主服务。
-    """
-    try:
-        from app.config.database import get_redis
-        r = await get_redis()
-        pubsub = r.pubsub()
-        await pubsub.subscribe(EVENT_RISK_ALERT)
-        _subscriber_logger.info("事件订阅消费者已启动，监听: %s", EVENT_RISK_ALERT)
+    订阅 channel（合并原 AdvisorService.subscribe_risk_alerts 的职责）:
+      - event:risk_alert → 更新客户画像 risk_flag(MySQL) + Redis风险标记(TTL) + 清除缓存
+      - event:profile_update → 清除画像缓存
+      - event:work_order_change → 记录日志
 
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                try:
-                    data = json.loads(message["data"])
-                    await _handle_event(data)
-                except Exception as e:
-                    _subscriber_logger.warning("事件处理异常: %s", e)
-    except Exception as e:
-        _subscriber_logger.warning("事件订阅启动失败(不影响主服务): %s", e)
+    Redis 不可用或连接断开时自动重连（指数退避，最长 60s），不影响主服务。
+    """
+    import asyncio
+
+    reconnect_delay = 1  # 初始重连延迟（秒）
+    max_reconnect_delay = 60
+
+    while True:
+        try:
+            from app.config.database import get_redis
+            r = await get_redis()
+            pubsub = r.pubsub()
+            await pubsub.subscribe(EVENT_RISK_ALERT, EVENT_PROFILE_UPDATE, EVENT_WORK_ORDER_CHANGE)
+            _subscriber_logger.info(
+                "事件订阅消费者已启动，监听: %s, %s, %s",
+                EVENT_RISK_ALERT, EVENT_PROFILE_UPDATE, EVENT_WORK_ORDER_CHANGE,
+            )
+            reconnect_delay = 1  # 连接成功后重置延迟
+
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        await _handle_event(data)
+                    except Exception as e:
+                        _subscriber_logger.warning("事件处理异常: %s", e)
+
+        except asyncio.CancelledError:
+            _subscriber_logger.info("事件订阅消费者收到取消信号，正常退出")
+            break
+        except Exception as e:
+            _subscriber_logger.warning(
+                "事件订阅连接异常（%s 后重连）: %s", reconnect_delay, e
+            )
+            await asyncio.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
 
 async def _handle_event(event: dict) -> None:
@@ -210,10 +231,10 @@ async def _handle_event(event: dict) -> None:
 
 async def _handle_risk_alert(payload: dict) -> None:
     """
-    处理风控预警事件 → 更新客户画像 risk_flag + 清除缓存
+    处理风控预警事件 → 更新客户画像 risk_flag(MySQL) + Redis风险标记(TTL) + 清除缓存
 
     联动逻辑（对应功能设计 §7.3 场景二）：
-      风控Agent发布 risk_alert → 投顾Agent更新画像风险标记 → 下次推荐时降权
+      风控Agent发布 risk_alert → 更新画像风险标记(MySQL+Redis) → 下次推荐时降权
     """
     customer_id = payload.get("customer_id")
     alert_level = payload.get("alert_level", "medium")
@@ -233,18 +254,25 @@ async def _handle_risk_alert(payload: dict) -> None:
             )
             await db.commit()
         _subscriber_logger.info(
-            "风控联动: 客户%s 画像 risk_flag 更新为 %s", customer_id, risk_flag
+            "风控联动(MySQL): 客户%s 画像 risk_flag 更新为 %s", customer_id, risk_flag
         )
     except Exception as e:
-        _subscriber_logger.warning("更新画像 risk_flag 失败: %s", e)
+        _subscriber_logger.warning("更新画像 risk_flag(MySQL) 失败: %s", e)
 
-    # 2. 清除 Redis 画像缓存（下次读取自动回源拿最新 risk_flag）
+    # 2. 设置 Redis 风险标记 + 清除画像缓存
     try:
         from app.config.database import get_redis
         r = await get_redis()
+        # Redis 风险标记（含 TTL，供 AdvisorService._check_risk_flag() 实时查询）
+        await r.set(f"risk_flag:{customer_id}", risk_flag, ex=86400)  # 24h TTL
+        # 清除画像缓存（下次读取自动回源拿最新 risk_flag）
         await r.delete(f"profile:{customer_id}")
-    except Exception:
-        pass
+        _subscriber_logger.info(
+            "风控联动(Redis): 客户%s risk_flag=%s (TTL=24h) + 缓存已清除",
+            customer_id, risk_flag,
+        )
+    except Exception as e:
+        _subscriber_logger.warning("Redis 操作失败(不影响MySQL更新): %s", e)
 
 
 async def _handle_profile_update(payload: dict) -> None:

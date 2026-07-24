@@ -39,6 +39,14 @@ wheels/
 logs/
 *.log
 
+# 数据库dump
+*.sql
+*.sql.gz
+
+# 测试输出
+tests/*.txt
+!tests/*.md
+
 # 测试
 .pytest_cache/
 .coverage

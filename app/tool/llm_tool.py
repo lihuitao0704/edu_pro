@@ -196,6 +196,70 @@ class LLMTool:
         messages = [{"role": "user", "content": prompt}]
         return await self.chat(messages=messages, temperature=temperature, max_tokens=64)
 
+    async def chat_with_fallback(
+        self,
+        messages: list[dict],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        带多级降级的对话调用（P0-14 修复）。
+
+        降级链：主模型 → 本地 LongCat 备用 → 兜底话术
+        每一级独立配置 timeout，失败自动切换到下一级。
+
+        Args:
+            messages: OpenAI 格式消息列表
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+        Returns:
+            LLM 回复文本，全部失败时返回兜底话术
+        """
+        temp = temperature or self.default_temperature
+        tokens = max_tokens or self.default_max_tokens
+
+        # ── 第1级：主模型（当前配置的模型） ──
+        try:
+            return await asyncio.wait_for(
+                self.chat(messages=messages, temperature=temp, max_tokens=tokens),
+                timeout=self.client.timeout if self.client.timeout else 30,
+            )
+        except Exception as e:
+            logger.warning(f"主模型({self.model})调用失败，尝试降级: {type(e).__name__}")
+
+        # ── 第2级：LongCat 备用模型 ──
+        if settings.llm.longcat_api_key and settings.llm.longcat_model != self.model:
+            try:
+                logger.info(f"降级到 LongCat 备用模型: {settings.llm.longcat_model}")
+                fallback_client = AsyncOpenAI(
+                    api_key=settings.llm.longcat_api_key,
+                    base_url=settings.llm.longcat_base_url,
+                    timeout=20,
+                    max_retries=0,
+                )
+                response = await asyncio.wait_for(
+                    fallback_client.chat.completions.create(
+                        model=settings.llm.longcat_model,
+                        messages=messages,
+                        temperature=temp,
+                        max_tokens=tokens,
+                    ),
+                    timeout=20,
+                )
+                content = response.choices[0].message.content or ""
+                logger.info(f"LongCat 降级成功 | model={settings.llm.longcat_model}")
+                return content.strip()
+            except Exception as e2:
+                logger.warning(f"LongCat 降级失败: {type(e2).__name__}")
+
+        # ── 第3级：兜底话术 ──
+        logger.error(f"所有 LLM 调用均失败，返回兜底话术")
+        return (
+            "抱歉，系统当前繁忙，暂时无法为您提供完整服务。"
+            "建议您稍后重试，或拨打客服热线400-XXX-XXXX咨询人工客服。"
+            "我们正在努力恢复服务，感谢您的耐心等待。"
+        )
+
 
 # 全局单例
 _llm_tool: Optional[LLMTool] = None

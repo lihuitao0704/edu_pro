@@ -86,43 +86,99 @@ class UserMemoryRecallService:
         """
         从历史对话归档中召回用户偏好摘要。
 
-        检索用户最近的 assistant 回复，提取为偏好摘要文本。
+        同时检索用户最近的 user+assistant 对话对，构建有上下文的记忆摘要。
         如果无历史记录，返回空字符串。
         """
+        # 获取最近的对话记录（同时包含 user 和 assistant）
         archives = await db.execute(
             select(ConversationArchive)
-            .where(
-                ConversationArchive.user_id == user_id,
-                ConversationArchive.role == "assistant",
-            )
+            .where(ConversationArchive.user_id == user_id)
             .order_by(ConversationArchive.create_time.desc())
-            .limit(limit)
+            .limit(limit * 2)  # 取双倍以覆盖 user+assistant 对
         )
         records = archives.scalars().all()
         if not records:
             return ""
 
-        # 去重 + 截取关键片段
-        seen: set[str] = set()
-        snippets: list[str] = []
+        # 按 session_id 分组，取最近 session 的用户问题
+        seen_sessions: dict[str, list] = {}
         for record in records:
-            content = (record.content or "").strip()
-            if not content or content in seen:
-                continue
-            # 只取前 100 字，避免 prompt 过长
-            snippet = content[:100]
-            seen.add(content)
-            snippets.append(snippet)
+            sid = record.session_id or "unknown"
+            if sid not in seen_sessions:
+                seen_sessions[sid] = []
+            seen_sessions[sid].append(record)
 
-        if not snippets:
+        # 构建有上下文的记忆摘要
+        context_parts: list[str] = []
+        for sid, msgs in list(seen_sessions.items())[:limit]:
+            # 取该 session 的第一条用户消息作为"用户曾问过"
+            user_msgs = [m for m in msgs if m.role == "user"]
+            if user_msgs:
+                first_user_msg = user_msgs[-1]  # 最旧的用户消息
+                content = (first_user_msg.content or "").strip()[:80]
+                if content:
+                    context_parts.append(f"曾问过: {content}")
+
+        if not context_parts:
             return ""
 
-        preferences = "；".join(snippets)
-        summary = f"历史对话摘要：{preferences}。"
+        summary = "历史记忆：" + "；".join(context_parts) + "。"
         logger.info(
-            f"召回历史偏好 | user_id={user_id} | 记录数={len(snippets)}"
+            f"召回历史记忆 | user_id={user_id} | session数={len(context_parts)}"
         )
         return summary
+
+    async def recall_recent_conversations(
+        self, db, user_id: int, max_sessions: int = 3, max_msgs_per_session: int = 4
+    ) -> str:
+        """
+        召回用户最近几次会话的对话摘要（完整 user+assistant 对话对）。
+
+        用于注入 LLM prompt，使 Agent 了解用户近期都在聊什么。
+        返回格式化的对话文本，无历史时返回空字符串。
+        """
+        # 获取该用户最近的所有对话
+        archives = await db.execute(
+            select(ConversationArchive)
+            .where(ConversationArchive.user_id == user_id)
+            .order_by(ConversationArchive.create_time.desc())
+            .limit(50)  # 先取一批再按 session 分组
+        )
+        records = archives.scalars().all()
+        if not records:
+            return ""
+
+        # 按 session 分组（保持时间顺序）
+        from collections import OrderedDict
+        sessions: OrderedDict = OrderedDict()
+        for record in reversed(records):  # 从旧到新遍历
+            sid = record.session_id or "unknown"
+            if sid not in sessions:
+                sessions[sid] = []
+            sessions[sid].append(record)
+
+        # 取最近的几个 session
+        recent_sids = list(sessions.keys())[-max_sessions:]
+
+        lines: list[str] = []
+        for sid in recent_sids:
+            msgs = sessions[sid][-max_msgs_per_session:]  # 每个 session 最多取几条
+            session_lines = []
+            for msg in msgs:
+                role_label = "用户" if msg.role == "user" else "助手"
+                content = (msg.content or "").strip()[:120]
+                if content:
+                    session_lines.append(f"  {role_label}: {content}")
+            if session_lines:
+                lines.append(f"[历史会话 {sid[:8]}...]")
+                lines.extend(session_lines)
+
+        if not lines:
+            return ""
+
+        result = "以下是该用户近期的历史对话记录（供参考，帮助理解用户背景）：\n" + "\n".join(lines)
+        logger.info(f"召回历史对话 | user_id={user_id} | session数={len(recent_sids)}")
+        return result
 
 
 def get_memory_recall_service() -> UserMemoryRecallService:

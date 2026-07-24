@@ -197,6 +197,36 @@ class AdvisorAgent(BaseAgent):
         """
         customer_id = kwargs.get("customer_id")
 
+        # ── 意图分类（轻量预筛，辅助LLM更快决策）──
+        advisor_intent = None
+        advisor_intent_confidence = 0.0
+        try:
+            from app.service.intent_service import get_intent_service
+            intent_svc = get_intent_service()
+            advisor_intent, advisor_intent_confidence = await intent_svc.classify_advisor(message)
+            logger.info(
+                f"投顾意图分类: {advisor_intent} (置信度: {advisor_intent_confidence:.2f})"
+            )
+        except Exception as e:
+            logger.warning(f"投顾意图分类失败(不影响主流程): {e}")
+
+        # ── 跨 session 记忆召回（长期记忆：画像摘要 + 历史偏好）──
+        cross_session_context = ""
+        if customer_id:
+            try:
+                from app.service.memory_recall_service import get_memory_recall_service
+                memory_recall = get_memory_recall_service()
+                user_profile = await memory_recall.build_user_profile_summary(self.db, customer_id)
+                historical_prefs = await memory_recall.recall_historical_preferences(self.db, customer_id)
+                if user_profile:
+                    cross_session_context += f"\n\n[客户画像]\n{user_profile}"
+                if historical_prefs:
+                    cross_session_context += f"\n\n[历史偏好]\n{historical_prefs}"
+                if cross_session_context:
+                    logger.info(f"投顾Agent跨session记忆召回完成 | customer_id={customer_id}")
+            except Exception as e:
+                logger.warning(f"投顾Agent跨session记忆召回失败(不影响主流程): {e}")
+
         # ── 记忆召回：短期记忆（同 session 多轮） ──
         history_messages: list[HumanMessage] = []
         if self.memory:
@@ -216,8 +246,13 @@ class AdvisorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"投顾Agent记忆召回失败: {e}")
 
-        # 构造当前用户消息（注入 customer_id 上下文）
+        # 构造当前用户消息（注入 customer_id 上下文 + 意图提示 + 跨session记忆）
         user_message = self._build_user_message(message, customer_id)
+        if advisor_intent and advisor_intent_confidence >= 0.80:
+            intent_hint = self._build_intent_hint(advisor_intent)
+            user_message = user_message + "\n\n" + intent_hint
+        if cross_session_context:
+            user_message = user_message + cross_session_context
 
         # 组装完整消息列表：历史 + 当前
         all_messages = history_messages + [HumanMessage(content=user_message)]
@@ -265,13 +300,35 @@ class AdvisorAgent(BaseAgent):
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
 
-        # ── 记忆写入：保存本轮对话到短期记忆 ──
+        # ── 记忆写入：保存本轮对话到短期记忆 + 异步归档 ──
         if self.memory:
             try:
                 await self.memory.add_message("user", message)
                 await self.memory.add_message("assistant", reply)
             except Exception as e:
                 logger.warning(f"投顾Agent记忆写入失败: {e}")
+
+            # 异步归档到长期记忆（后台任务，不阻塞主流程）
+            try:
+                from app.service.memory_service import MemoryService
+                memory_svc = MemoryService(self.db)
+                memory_svc.archive_conversation_bg(
+                    session_id=self.session_id,
+                    user_id=customer_id or 0,
+                    agent_type="advisor",
+                    role="user",
+                    content=message,
+                )
+                memory_svc.archive_conversation_bg(
+                    session_id=self.session_id,
+                    user_id=customer_id or 0,
+                    agent_type="advisor",
+                    role="assistant",
+                    content=reply,
+                )
+                logger.info(f"投顾Agent归档已触发 | session={self.session_id}")
+            except Exception as e:
+                logger.warning(f"投顾Agent归档触发失败: {e}")
 
         return {
             "reply": reply,
@@ -439,6 +496,25 @@ class AdvisorAgent(BaseAgent):
                 f"如果用户提到该客户，调用工具时请使用 customer_id={customer_id}）"
             )
         return f"用户问题：{message}"
+
+    @staticmethod
+    def _build_intent_hint(intent: str) -> str:
+        """根据投顾意图分类结果，生成轻量级工具提示（辅助LLM更快决策）"""
+        hints = {
+            "product_recommend": (
+                "（意图提示：用户意图为「产品推荐」，优先调用 smart_recommend 工具）"
+            ),
+            "portfolio_analysis": (
+                "（意图提示：用户意图为「持仓分析」，优先调用 analysis_holdings 工具）"
+            ),
+            "asset_allocation": (
+                "（意图提示：用户意图为「资产配置」，优先调用 asset_allocation 工具）"
+            ),
+            "comparison": (
+                "（意图提示：用户意图为「客户对比」，优先调用 compare_customers 工具）"
+            ),
+        }
+        return hints.get(intent, "")
 
     @staticmethod
     def _extract_reply(result: dict) -> str:

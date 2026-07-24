@@ -54,26 +54,15 @@ async def lifespan(app: FastAPI):
         print(f"  Scheduler: 启动失败 ({e})")
 
     # 启动事件总线订阅消费者（多 Agent 协作闭环）
+    # 统一订阅者：同时处理 risk_alert → risk_flag(MySQL+Redis) + cache clear + profile_update + work_order_change
     event_subscriber_task = None
-    advisor_subscriber_task = None
     try:
         import asyncio
         from app.service.event_bus import start_event_subscriber
         event_subscriber_task = asyncio.create_task(start_event_subscriber())
-        print("  EventBus: 事件订阅消费者已启动（监听 risk_alert / profile_update / work_order_change）")
+        print("  EventBus: 事件订阅消费者已启动（risk_alert→risk_flag + profile_update + work_order_change）")
     except Exception as e:
         print(f"  EventBus: 启动失败 ({e})")
-
-    # 启动投顾风控事件订阅者（high 级别警报 → 自动标记风险客户）
-    try:
-        import asyncio
-        from app.service.advisor_service import AdvisorService
-        advisor_subscriber_task = asyncio.create_task(
-            AdvisorService.subscribe_risk_alerts()
-        )
-        print("  EventBus: 投顾风控订阅者已启动（high 警报 → risk_flag）")
-    except Exception as e:
-        print(f"  EventBus: 投顾订阅者启动失败 ({e})")
 
     print("  服务就绪，等待请求...\n")
     yield
@@ -81,8 +70,6 @@ async def lifespan(app: FastAPI):
     print("[关闭] 系统正在停止...")
     if event_subscriber_task:
         event_subscriber_task.cancel()
-    if advisor_subscriber_task:
-        advisor_subscriber_task.cancel()
     try:
         from app.service.risk_scheduler import stop_scheduler
         stop_scheduler()
@@ -170,12 +157,6 @@ try:
     app.include_router(advisor_router, prefix="/api/chat", tags=["投顾对话"])
 except Exception as e:
     print(f"  [WARN] 投顾路由加载失败: {e}")
-
-try:
-    from app.api.profile import router as profile_api_router
-    app.include_router(profile_api_router, prefix="/api/chat", tags=["画像分析"])
-except Exception as e:
-    print(f"  [WARN] 画像分析路由加载失败: {e}")
 
 try:
     from app.api.chat import customer_router

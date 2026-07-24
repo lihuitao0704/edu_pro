@@ -1,6 +1,6 @@
 """
 Document Parser — 文档解析与分块
-支持 txt/md/docx 格式，针对金融知识文档的特殊分块策略
+支持 txt / md / docx / pdf 格式，针对金融知识文档的特殊分块策略
 """
 
 import re
@@ -12,28 +12,101 @@ from app.utils.logger import get_logger
 
 logger = get_logger("tool.document_parser")
 
+# PDF 解析库为可选依赖（未安装时自动降级）
+try:
+    import pdfplumber
+    _HAS_PDFPLUMBER = True
+except ImportError:
+    _HAS_PDFPLUMBER = False
+    logger.warning("pdfplumber 未安装，PDF 解析功能不可用。安装命令: pip install pdfplumber")
+
 
 class DocumentParser:
-    """文档解析工具"""
+    """文档解析工具（支持 txt / md / docx / pdf）"""
 
     def parse(self, file_path: str) -> str:
         """
         解析文档为纯文本
 
         Args:
-            file_path: 文件路径（支持 .txt / .md / .docx）
+            file_path: 文件路径（支持 .txt / .md / .docx / .pdf）
         Returns:
             文档文本内容
         """
         path = Path(file_path)
         suffix = path.suffix.lower()
 
-        if suffix == ".txt" or suffix == ".md":
+        if suffix in (".txt", ".md"):
             return path.read_text(encoding="utf-8")
         elif suffix == ".docx":
             return self._parse_docx(file_path)
+        elif suffix == ".pdf":
+            return self._parse_pdf(file_path)
         else:
-            raise ValueError(f"不支持的文件格式: {suffix}")
+            raise ValueError(f"不支持的文件格式: {suffix}，支持的格式: .txt / .md / .docx / .pdf")
+
+    def _parse_pdf(self, file_path: str) -> str:
+        """解析 PDF 文件（需要 pdfplumber 库）"""
+        if not _HAS_PDFPLUMBER:
+            raise ImportError(
+                "PDF 解析需要 pdfplumber 库，请执行: pip install pdfplumber"
+            )
+
+        paragraphs: list[str] = []
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, 1):
+                    text = page.extract_text()
+                    if text:
+                        paragraphs.append(f"[第{page_num}页]\n{text.strip()}")
+
+                    # 尝试提取表格
+                    try:
+                        tables = page.extract_tables()
+                        for table in tables:
+                            if table:
+                                table_text = self._format_table(table)
+                                if table_text:
+                                    paragraphs.append(table_text)
+                    except Exception:
+                        pass  # 表格提取失败不影响文本提取
+
+            if not paragraphs:
+                raise ValueError("PDF 文件中未提取到文本内容（可能是扫描件/图片型PDF）")
+
+            logger.info(f"PDF 解析成功 | pages={len(pdf.pages)} | paragraphs={len(paragraphs)}")
+            return "\n\n".join(paragraphs)
+
+        except Exception as e:
+            logger.error(f"PDF 解析失败: {e}")
+            raise
+
+    @staticmethod
+    def _format_table(table: list[list]) -> str:
+        """将 PDF 表格转为 Markdown 表格文本"""
+        if not table or not table[0]:
+            return ""
+
+        # 过滤全空行
+        rows = [[cell or "" for cell in row] for row in table if any(cell for cell in row)]
+        if not rows:
+            return ""
+
+        lines = []
+        # 表头
+        header = "| " + " | ".join(str(c) for c in rows[0]) + " |"
+        lines.append(header)
+        # 分隔符
+        sep = "|" + "|".join("---" for _ in rows[0]) + "|"
+        lines.append(sep)
+        # 数据行
+        for row in rows[1:]:
+            # 补齐列数
+            padded = list(row) + [""] * (len(rows[0]) - len(row))
+            line = "| " + " | ".join(str(c)[:100] for c in padded[:len(rows[0])]) + " |"
+            lines.append(line)
+
+        return "\n".join(lines)
 
     def _parse_docx(self, file_path: str) -> str:
         """解析 docx 文件"""

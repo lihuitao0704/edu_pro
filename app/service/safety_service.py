@@ -22,29 +22,62 @@ class SafetyCheckResult(BaseModel):
 class SafetyService:
     """安全审核服务"""
 
-    # 违规内容正则模式
-    # 匹配"承诺性"表述，但排除 LLM 在否定/解释/风险提示中提到的情况
-    # 例如：LLM 说"不存在保证收益的产品"是合规的，不应被拦截
+    # 违规内容正则模式 — 扩充至50+模式（覆盖承诺类/夸大类/诱导类/违规类）
     PROHIBITED_PATTERNS = [
-        r"保本保息",          # 保本保息 — 违规承诺
-        r"零风险",            # 零风险 — 违规表述
-        r"稳赚不赔",          # 稳赚不赔 — 违规表述
-        r"无风险.*理财",      # 无风险理财 — 违规表述
-        r"绝对.*赚",          # 绝对赚 — 违规表述
-        r"一定.*涨",          # 一定涨 — 违规表述
-        r"包赚",              # 包赚 — 违规表述
-        r"肯定.*能赚",        # 肯定能赚 — 违规表述
+        # ── 承诺类 ──
+        r"保本保息", r"零风险", r"稳赚不赔", r"无风险.*理财",
+        r"绝对.*赚", r"一定.*涨", r"包赚", r"肯定.*能赚",
+        r"保证.*收益", r"承诺.*回报", r"稳赚", r"零损失",
+        r"保本.*高收益", r"无风险.*收益",
+        # ── 夸大类 ──
+        r"最高.*收益", r"最佳.*产品", r"第一.*名",
+        r"绝对.*安全", r"100%.*收益", r"稳如泰山",
+        r"万无一失", r"只赚不赔",
+        # ── 诱导类 ──
+        r"内幕消息", r"代客操作", r"代客理财",
+        r"立即.*抢购", r"限时.*优惠", r"错过.*再等",
+        r"内部.*渠道", r"特殊.*名额",
+        # ── 违规类 ──
+        r"洗钱", r"逃税", r"避税", r"套现",
+        r"非法集资", r"庞氏骗局", r"传销",
+        # ── 金融合规类 ──
+        r"刚性兑付", r"兜底", r"暗箱操作",
+        r"老鼠仓", r"利益输送",
+    ]
+
+    # 用户输入敏感词（前端+后端双重过滤，阻断恶意输入发给LLM）
+    USER_INPUT_BLOCKED = [
+        r"(操你|fuck|shit|damn|傻逼|脑残|sb|cnm|tmd|nmsl)",
+        r"(hack|攻击|漏洞|注入|exploit|inject|script|alert|onerror)",
+        r"(自杀|杀人|毒品|赌博|porn|色情)",
     ]
 
     # 需要上下文判断的"敏感词"模式
-    # 这些词本身不一定违规，需要看上下文（是否被否定/解释）
     CONTEXTUAL_PATTERNS = [
         (r"保证收益", r"(不|没有|无|不存在|无法|不能|不会).{0,10}保证收益"),
         (r"承诺收益|收益承诺", r"(不|没有|无|不存在|无法|不能|不会|不代表|不构成).{0,10}(承诺收益|收益承诺)"),
+        (r"稳赚", r"(不|没有|无|并非|不能).{0,10}稳赚"),
+        (r"高收益", r"(风险|波动|可能|不一定).{0,10}高收益"),
     ]
 
     # 兜底话术
     FALLBACK_MESSAGE = "抱歉，我暂时无法回答这个问题。建议您拨打客服热线400-XXX-XXXX咨询人工客服，我们的理财顾问将竭诚为您服务。"
+    # 输入违规话术
+    INPUT_BLOCKED_MESSAGE = "您的输入包含不当内容，请使用文明用语。如有业务问题，请重新描述。"
+
+    async def filter_user_input(self, text: str) -> tuple[bool, Optional[str]]:
+        """
+        过滤用户输入中的敏感/恶意内容。
+
+        Returns:
+            (is_safe, blocked_reason) — is_safe=True表示通过，False表示需拦截
+        """
+        import re
+        for pattern in self.USER_INPUT_BLOCKED:
+            if re.search(pattern, text, re.IGNORECASE):
+                logger.warning(f"用户输入被拦截 | pattern={pattern[:30]}... | text={text[:50]}...")
+                return False, self.INPUT_BLOCKED_MESSAGE
+        return True, None
 
     async def check_content(self, text: str) -> SafetyCheckResult:
         """

@@ -71,12 +71,24 @@ class CustomerServiceAgent:
         """
         logger.info(f"客服Agent收到消息 | session={session_id} | user={user_id} | msg={message[:50]}...")
 
+        # 0. 用户输入安全过滤（阻断恶意/不当内容发给LLM）
+        is_safe, block_reason = await self.safety.filter_user_input(message)
+        if not is_safe:
+            return CustomerChatResponse(
+                reply=block_reason or "您的输入包含不当内容，请重新描述。",
+                sources=[],
+                session_id=session_id,
+                intent="blocked",
+                confidence=1.0,
+            )
+
         # 1. 加载短期记忆（同 session 多轮）
         history = await self.memory.get_history(session_id)
 
-        # 1b. 跨 session 记忆召回（画像摘要 + 历史偏好）
+        # 1b. 跨 session 记忆召回（画像摘要 + 历史偏好 + 近期对话）
         user_profile = await self.memory_recall.build_user_profile_summary(self.db, user_id)
         historical_preferences = await self.memory_recall.recall_historical_preferences(self.db, user_id)
+        historical_conversations = await self.memory_recall.recall_recent_conversations(self.db, user_id)
 
         # 2. 意图识别
         intent, intent_confidence = await self.intent_service.classify(message, history)
@@ -104,14 +116,21 @@ class CustomerServiceAgent:
             # 置信度检测
             check = await self.safety.check_confidence(rag_results, intent_confidence)
             if check["should_fallback"]:
-                reply = check["message"]
-                sources = []
+                # RAG 检索不足时，尝试关键词匹配兜底回答
+                fallback_reply = self._keyword_fallback(message, intent)
+                if fallback_reply:
+                    reply = fallback_reply
+                    sources = []
+                else:
+                    reply = check["message"]
+                    sources = []
             else:
                 # 增强生成（注入跨 session 记忆）
                 llm_response = await self._generate_with_context(
                     message, rag_results, history,
                     user_profile=user_profile,
                     historical_preferences=historical_preferences,
+                    historical_conversations=historical_conversations,
                 )
 
                 # 解析 LLM 返回的 JSON
@@ -140,6 +159,9 @@ class CustomerServiceAgent:
                 if not safety_result.passed:
                     reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
 
+                # ── 强制风险提示（金融合规要求：涉及产品/收益时必须附加风险声明）──
+                if intent in ("product_inquiry", "faq"):
+                    reply = self._append_risk_disclaimer(reply, intent)
         # 4. 更新短期记忆
         await self.memory.save_message(session_id, "user", message)
         await self.memory.save_message(session_id, "assistant", reply)
@@ -177,7 +199,7 @@ class CustomerServiceAgent:
         messages.append({"role": "user", "content": message})
 
         try:
-            reply = await self.llm.chat(messages=messages, temperature=0.7, max_tokens=200)
+            reply = await self.llm.chat_with_fallback(messages=messages, temperature=0.7, max_tokens=200)
             return reply
         except Exception as e:
             logger.error(f"闲聊回复失败: {e}")
@@ -190,6 +212,7 @@ class CustomerServiceAgent:
         history: list[dict],
         user_profile: str = "",
         historical_preferences: str = "",
+        historical_conversations: str = "",
     ) -> str:
         """基于 RAG 上下文生成回答，输出纯 JSON 格式"""
         import json
@@ -217,14 +240,15 @@ class CustomerServiceAgent:
         full_prompt = system_prompt.replace("{context_documents}", context_text)
         full_prompt = full_prompt.replace("{chat_history}", history_text)
         full_prompt = full_prompt.replace("{user_question}", message)
-        # 注入跨 session 记忆（画像摘要 + 历史偏好），无数据时为空字符串
+        # 注入跨 session 记忆（画像摘要 + 历史偏好 + 近期对话），无数据时为空字符串
         full_prompt = full_prompt.replace("{user_profile}", user_profile or "暂无客户画像信息")
         full_prompt = full_prompt.replace("{historical_preferences}", historical_preferences or "暂无历史偏好记录")
+        full_prompt = full_prompt.replace("{historical_conversations}", historical_conversations or "")
 
         messages = [{"role": "user", "content": full_prompt}]
 
         try:
-            reply = await self.llm.chat(messages=messages, temperature=0.3, max_tokens=1024)
+            reply = await self.llm.chat_with_fallback(messages=messages, temperature=0.3, max_tokens=1024)
 
             # 尝试解析 LLM 返回的 JSON
             json_result = self._extract_json_from_text(reply)
@@ -296,6 +320,86 @@ class CustomerServiceAgent:
                 "need_human": False,
                 "confidence": 0.5
             }
+
+        return None
+
+    @staticmethod
+    def _append_risk_disclaimer(reply: str, intent: str) -> str:
+        """
+        金融合规要求：涉及产品/收益的回答必须附加风险提示。
+
+        根据意图类型附加不同的风险声明，确保符合资管新规要求。
+        """
+        # 如果回复中已经包含风险提示关键词，不重复添加
+        if any(kw in reply for kw in ["风险提示", "投资有风险", "不构成投资建议", "过往业绩"]):
+            return reply
+
+        disclaimers = {
+            "product_inquiry": (
+                "\n\n---\n⚠️ **风险提示**：理财非存款，产品有风险，投资需谨慎。"
+                "以上信息仅供参考，不构成投资建议。具体产品详情请查阅官方产品说明书，"
+                "并根据自身风险承受能力做出投资决策。"
+            ),
+            "faq": (
+                "\n\n---\n⚠️ **温馨提示**：以上为通用业务规则说明，具体以产品合同和"
+                "基金公司公告为准。如有疑问，建议咨询专业理财顾问或拨打客服热线。"
+            ),
+        }
+        disclaimer = disclaimers.get(intent, "")
+        if disclaimer:
+            return reply + disclaimer
+        return reply
+
+    @staticmethod
+    def _keyword_fallback(message: str, intent: str) -> Optional[str]:
+        """
+        RAG 检索不可用时的关键词匹配兜底回答。
+
+        基于金融领域常见关键词提供预设回复，确保用户在系统降级时
+        仍能获得基本服务，而非仅看到"请联系人工"。
+
+        Returns:
+            匹配到的兜底回复，无匹配时返回 None（走原有 fallback 逻辑）。
+        """
+        msg_lower = message.lower()
+
+        # FAQ 类关键词
+        faq_patterns = {
+            "申购|买入|购买|怎么买": "基金申购通常在交易日15:00前提交，按当日净值确认份额；15:00后提交则按下一交易日净值确认。申购确认后T+1日可查看持仓。",
+            "赎回|卖出|怎么卖": "基金赎回通常在交易日15:00前提交，按当日净值计算；赎回到账时间因产品类型不同：货币基金T+1，债券基金T+2-3，股票基金T+3-5个工作日。",
+            "手续费|费用|费率": "不同产品费率不同。货币基金通常免申购费，债券基金管理费约0.3%-0.6%，股票基金管理费约1.0%-1.5%。具体请查看产品详情页。",
+            "开户|注册": "您可以通过XX证券APP在线开户，准备好身份证和银行卡，按指引完成身份认证和风险测评即可。",
+            "风险测评|风险评估|风评": "风险测评是投资者适当性管理的重要环节，您需要完成16道风险评估问卷。测评结果分为C1-C5五个等级，有效期一年。",
+        }
+
+        # 产品类关键词
+        product_patterns = {
+            "稳健|低风险|保本|安全": "稳健型产品包括货币基金（R1）和债券基金（R2），风险较低。但请注意：任何理财产品都不承诺保本保息，投资需谨慎。",
+            "收益|收益率|回报": "不同风险等级的产品预期收益不同：R1货币基金约2%-3%，R2债券基金约3%-5%，R3混合基金约5%-8%，R4+股票基金可能有更高收益但伴随更大风险。历史收益不代表未来表现。",
+            "推荐|建议|适合": "产品推荐需基于您的风险测评结果。建议您先完成风险测评问卷，系统会根据您的风险等级（C1-C5）自动推荐适当性匹配的产品。",
+        }
+
+        # 政策类关键词
+        policy_patterns = {
+            "资管新规|适当性|合规": "根据《关于规范金融机构资产管理业务的指导意见》（资管新规），理财产品不得承诺保本保收益，投资者应根据自身风险承受能力选择适当的产品。",
+            "反洗钱|AML|可疑": "根据反洗钱法规，金融机构需对客户身份进行识别，并对大额和可疑交易进行监测和报告。这是保障金融安全的重要措施。",
+        }
+
+        # 按意图选择匹配规则
+        if intent in ("faq", "chitchat"):
+            patterns = faq_patterns
+        elif intent == "product_inquiry":
+            patterns = {**product_patterns, **faq_patterns}
+        elif intent == "policy_interpretation":
+            patterns = policy_patterns
+        else:
+            patterns = {**faq_patterns, **product_patterns, **policy_patterns}
+
+        import re
+        for pattern, response in patterns.items():
+            if re.search(pattern, msg_lower):
+                logger.info(f"关键词兜底命中 | pattern={pattern[:20]}...")
+                return response + "\n\n（提示：当前知识库检索暂不可用，以上为通用回复，如需详细信息请联系人工客服。）"
 
         return None
 
