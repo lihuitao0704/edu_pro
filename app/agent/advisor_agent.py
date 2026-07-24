@@ -313,19 +313,12 @@ class AdvisorAgent(BaseAgent):
             try:
                 from app.service.memory_service import MemoryService
                 memory_svc = MemoryService(self.db)
-                memory_svc.archive_conversation_bg(
+                await memory_svc.archive_turn(
                     session_id=self.session_id,
                     user_id=customer_id or 0,
                     agent_type="advisor",
-                    role="user",
-                    content=message,
-                )
-                memory_svc.archive_conversation_bg(
-                    session_id=self.session_id,
-                    user_id=customer_id or 0,
-                    agent_type="advisor",
-                    role="assistant",
-                    content=reply,
+                    user_content=message,
+                    assistant_content=reply,
                 )
                 logger.info(f"投顾Agent归档已触发 | session={self.session_id}")
             except Exception as e:
