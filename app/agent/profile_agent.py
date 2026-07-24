@@ -12,7 +12,7 @@
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -123,12 +123,19 @@ class ProfileAgent(BaseAgent):
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}"),
         ])
-        agent = create_tool_calling_agent(
-            llm=self._llm,
+        self._agent = create_agent(
+            model=self._llm,
             tools=[self._profile_tool],
-            prompt=self._prompt,
+            system_prompt=PROFILE_AGENT_SYSTEM_PROMPT,
         )
-        self._agent = AgentExecutor(agent=agent, tools=[self._profile_tool])
+
+    async def _run_agent(self, input_text: str) -> dict:
+        """统一执行 agent（兼容 create_agent 的 ainvoke 接口）"""
+        result = await self._agent.ainvoke(
+            {"messages": [HumanMessage(content=input_text)]},
+            config={"recursion_limit": 4},
+        )
+        return result
 
     # ═══════════════════════════════════════════════════════════════
     # 对外接口
@@ -150,7 +157,7 @@ class ProfileAgent(BaseAgent):
         # 构造发送给 LLM 的消息
         user_message = self._build_user_message(message, customer_id)
         try:
-            result = await self._agent.ainvoke({"input": user_message})
+            result = await self._run_agent(user_message)
         except Exception as e:
             logger.error(f"Agent 执行失败: {e}")
             return {

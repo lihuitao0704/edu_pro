@@ -114,6 +114,10 @@ async def _handle_event(event: dict) -> None:
 
     if event_type == EVENT_RISK_ALERT:
         await _handle_risk_alert(payload)
+    elif event_type == EVENT_PROFILE_UPDATE:
+        await _handle_profile_update(payload)
+    elif event_type == EVENT_WORK_ORDER_CHANGE:
+        await _handle_work_order_change(payload)
     else:
         _subscriber_logger.debug("未处理的事件类型: %s", event_type)
 
@@ -155,3 +159,35 @@ async def _handle_risk_alert(payload: dict) -> None:
         await r.delete(f"profile:{customer_id}")
     except Exception:
         pass
+
+
+async def _handle_profile_update(payload: dict) -> None:
+    """
+    处理画像更新事件 → 清除相关客户画像缓存。
+
+    联动逻辑：客户信息更新（联系方式/重新评估）→ 清除缓存 → 下次读取拿最新数据。
+    """
+    customer_id = payload.get("arguments", {}).get("customer_id")
+    if not customer_id:
+        return
+
+    try:
+        from app.config.database import get_redis
+        r = await get_redis()
+        await r.delete(f"profile:{customer_id}")
+        _subscriber_logger.info("画像更新联动: 客户%s 缓存已清除", customer_id)
+    except Exception as e:
+        _subscriber_logger.warning("画像缓存清除失败: %s", e)
+
+
+async def _handle_work_order_change(payload: dict) -> None:
+    """
+    处理工单变更事件 → 记录日志（预留扩展点）。
+
+    后续可扩展：工单创建 → 通知客户经理、更新客户画像服务记录等。
+    """
+    customer_id = payload.get("arguments", {}).get("customer_id")
+    action = payload.get("action", "unknown")
+    _subscriber_logger.info(
+        "工单变更事件 | customer_id=%s | action=%s", customer_id, action
+    )

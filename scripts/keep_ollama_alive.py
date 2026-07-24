@@ -25,7 +25,7 @@ import time
 import urllib.request
 
 # ── 配置（按你的环境修改） ──────────────────────────────────
-OLLAMA_URL = os.getenv("OLLAMA_EMBED_URL", "http://192.168.0.100:11434")
+OLLAMA_URL = os.getenv("OLLAMA_EMBED_URL", "http://172.20.10.2:11434")
 MODEL = os.getenv("OLLAMA_MODEL", "bge-m3")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "30"))      # 秒，轮询间隔
 RESTART_COOLDOWN = int(os.getenv("RESTART_COOLDOWN", "60"))  # 秒，重启冷却防疯狂重启

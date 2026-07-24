@@ -60,8 +60,15 @@ class RAGService:
         if top_k:
             config = {**config, "top_k": top_k}
 
-        # 1. 生成查询向量
-        query_embedding = await self.embedding_tool.encode(query)
+        # 1. 生成查询向量（失败时降级为空结果，不中断主流程）
+        try:
+            query_embedding = await self.embedding_tool.encode(query)
+        except Exception as e:
+            logger.warning(
+                f"Embedding 编码失败，RAG 检索降级为空结果 | "
+                f"query={query[:30]}... | error={str(e)[:80]}"
+            )
+            return []
 
         # 2. Milvus 粗排检索
         raw_results = self.milvus_tool.search(

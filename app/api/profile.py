@@ -1,141 +1,80 @@
-"""画像 API 路由"""
+"""
+画像分析与解释 API 路由
+注册 ProfileAgent 和 ExplanationAgent，使其可通过 HTTP 调用。
+"""
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.config.database import get_db
-from app.service.profile_service import ProfileService
-from app.model.schemas import (
-    ProfileUpdateRequest, ProfileAssessRequest)
-from app.utils.response import success, error
-from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
-from app.security.authorization import require_roles
 
+from app.agent.profile_agent import ProfileAgent
+from app.agent.explanation_agent import ExplanationAgent
+from app.config.database import get_db
+from app.security.authorization import enforce_customer_scope, require_roles
+from app.utils.response import success, error
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 router = APIRouter()
 
 
-@router.get("/{customer_id}/calibration")
-async def get_calibration_history(
-    customer_id: int,
-    limit: int = 10,
+class ProfileAnalyzeRequest(BaseModel):
+    """画像分析请求"""
+    message: str = "请分析该客户的风险画像"
+    customer_id: int
+
+
+class ExplainRequest(BaseModel):
+    """解释请求"""
+    message: str = "请解释推荐原因"
+    customer_id: int
+
+
+@router.post("/profile/analyze")
+async def analyze_profile(
+    req: ProfileAnalyzeRequest,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_roles("理财顾问", "风控专员", "客户经理", "管理员")),
+    user: dict = Depends(require_roles("理财顾问", "管理员")),
 ):
     """
-    查询客户双轨校准历史记录
+    画像分析接口（ProfileAgent）
 
-    返回：
-    - latest: 最新校准快照（来自画像表）
-    - history: 历史校准记录列表（来自 fin_calibration_record）
+    输入客户ID → 调用 ProfileService 获取画像 → LLM 生成可读的画像解读。
     """
-    from sqlalchemy import select, desc
-    from app.model.entities import FinCustomerProfile, FinCalibrationRecord
+    enforce_customer_scope(user, req.customer_id)
 
-    # 获取画像中的最新快照
-    profile_stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
-    profile_result = await db.execute(profile_stmt)
-    profile = profile_result.scalar_one_or_none()
-
-    latest = profile.calibration_json if profile and hasattr(profile, 'calibration_json') else None
-
-    # 获取历史记录
-    stmt = (
-        select(FinCalibrationRecord)
-        .where(FinCalibrationRecord.customer_id == customer_id)
-        .order_by(desc(FinCalibrationRecord.calibrate_time))
-        .limit(limit)
-    )
-    result = await db.execute(stmt)
-    records = result.scalars().all()
-
-    history = [
-        {
-            "id": r.id,
-            "calibrate_time": str(r.calibrate_time) if r.calibrate_time else None,
-            "direction": r.direction,
-            "triggered_rules": r.triggered_rules,
-            "summary": r.summary,
-        }
-        for r in records
-    ]
-
-    return success(data={
-        "customer_id": customer_id,
-        "latest": latest,
-        "history": history,
-        "total_records": len(history),
-    })
-
-
-@router.get("/{customer_id}")
-async def get_profile(
-    customer_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: dict = Depends(
-        require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
-    ),
-):
-    """查询客户画像（Cache-Aside）"""
-    if user.get("role") == "客户" and int(user.get("user_id") or 0) != customer_id:
-        return error(403, "客户只能访问本人画像")
-    service = ProfileService(db)
-    profile = await service.get_profile(customer_id)
-    if not profile:
-        return error(404, f"客户 {customer_id} 的画像不存在")
-
-    return success(data={
-        "customer_id": profile.customer_id,
-        "risk_level": profile.risk_level,
-        "risk_score": profile.risk_score,
-        "confidence_score": str(profile.confidence_score) if profile.confidence_score else None,
-        "basic_score": str(profile.basic_score) if profile.basic_score else None,
-        "experience_score": str(profile.experience_score) if profile.experience_score else None,
-        "risk_pref_score": str(profile.risk_pref_score) if profile.risk_pref_score else None,
-        "behavior_score": str(profile.behavior_score) if profile.behavior_score else None,
-        "total_assets": str(profile.total_assets) if profile.total_assets else None,
-        "investment_experience": profile.investment_experience,
-        "annual_income_range": profile.annual_income_range,
-        "risk_flag": profile.risk_flag,
-        "update_time": str(profile.update_time) if profile.update_time else None,
-    })
-
-
-@router.put("/{customer_id}")
-async def update_profile(
-    customer_id: int,
-    req: ProfileUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    _: dict = Depends(require_roles("理财顾问", "管理员")),
-):
-    """增量更新客户画像标签"""
-    service = ProfileService(db)
-    result = await service.update_tags(customer_id, req.tags)
-    return success(data=result, message=f"已更新 {result['updated_tags']} 个标签")
-
-
-@router.post("/{customer_id}/assess")
-async def assess_profile(
-    customer_id: int,
-    req: ProfileAssessRequest = None,
-    db: AsyncSession = Depends(get_db),
-    _: dict = Depends(require_roles("理财顾问", "管理员")),
-):
-    """
-    执行画像研判打分
-
-    流程: 接收ID → 调用画像引擎 → 四维度打分 → 检查熔断 → 返回JSON结果
-    响应格式对齐文档 14.2 章节
-    """
-    # 路径参数优先，请求体中的 customer_id 作为备用（可选）
-    trigger_type = req.trigger_type if req else "manual"
-    assess_customer_id = customer_id  # 以路径参数为准
-
-    service = ProfileService(db)
     try:
-        result = await service.assess(assess_customer_id, trigger_type=trigger_type)
-        return success(data=result.model_dump())
-    except ProfileNotFound as e:
-        return error(e.code, e.message)
-    except CircuitBreakerTriggered as e:
-        return error(e.code, e.message)
+        agent = ProfileAgent(db=db)
+        result = await agent.run(req.message, customer_id=req.customer_id)
+        return success(data={
+            "reply": result.get("reply", "分析完成"),
+            "session_id": result.get("session_id", ""),
+        })
     except Exception as e:
-        return error(500, f"研判失败: {str(e)}")
+        logger.error(f"画像分析异常: {e}", exc_info=True)
+        return error(500, f"画像分析服务异常: {str(e)}")
+
+
+@router.post("/explain")
+async def explain_recommendation(
+    req: ExplainRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("理财顾问", "管理员")),
+):
+    """
+    推荐解释接口（ExplanationAgent）
+
+    输入客户ID → 获取画像和历史评分 → LLM 生成可读的推荐/风险解释。
+    """
+    enforce_customer_scope(user, req.customer_id)
+
+    try:
+        agent = ExplanationAgent(db=db)
+        result = await agent.run(req.message, customer_id=req.customer_id)
+        return success(data={
+            "reply": result.get("reply", "解释完成"),
+            "risk_level": result.get("risk_level"),
+        })
+    except Exception as e:
+        logger.error(f"解释服务异常: {e}", exc_info=True)
+        return error(500, f"解释服务异常: {str(e)}")

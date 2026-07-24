@@ -13,6 +13,7 @@ from app.service.intent_service import get_intent_service
 from app.service.rag_service import get_rag_service
 from app.service.memory_service import get_memory_service
 from app.service.safety_service import get_safety_service
+from app.service.memory_recall_service import get_memory_recall_service
 from app.tool.llm_tool import get_llm_tool
 from app.utils.logger import get_logger
 
@@ -55,6 +56,7 @@ class CustomerServiceAgent:
         self.memory = get_memory_service(db)
         self.safety = get_safety_service()
         self.llm = get_llm_tool()
+        self.memory_recall = get_memory_recall_service()
 
     async def handle(self, session_id: str, user_id: int, message: str) -> CustomerChatResponse:
         """
@@ -69,8 +71,12 @@ class CustomerServiceAgent:
         """
         logger.info(f"客服Agent收到消息 | session={session_id} | user={user_id} | msg={message[:50]}...")
 
-        # 1. 加载短期记忆
+        # 1. 加载短期记忆（同 session 多轮）
         history = await self.memory.get_history(session_id)
+
+        # 1b. 跨 session 记忆召回（画像摘要 + 历史偏好）
+        user_profile = await self.memory_recall.build_user_profile_summary(self.db, user_id)
+        historical_preferences = await self.memory_recall.recall_historical_preferences(self.db, user_id)
 
         # 2. 意图识别
         intent, intent_confidence = await self.intent_service.classify(message, history)
@@ -101,8 +107,12 @@ class CustomerServiceAgent:
                 reply = check["message"]
                 sources = []
             else:
-                # 增强生成
-                llm_response = await self._generate_with_context(message, rag_results, history)
+                # 增强生成（注入跨 session 记忆）
+                llm_response = await self._generate_with_context(
+                    message, rag_results, history,
+                    user_profile=user_profile,
+                    historical_preferences=historical_preferences,
+                )
 
                 # 解析 LLM 返回的 JSON
                 import json
@@ -174,7 +184,12 @@ class CustomerServiceAgent:
             return "您好！我是智能财富管家AI客服，请问有什么可以帮您的？"
 
     async def _generate_with_context(
-        self, message: str, rag_results: list[dict], history: list[dict]
+        self,
+        message: str,
+        rag_results: list[dict],
+        history: list[dict],
+        user_profile: str = "",
+        historical_preferences: str = "",
     ) -> str:
         """基于 RAG 上下文生成回答，输出纯 JSON 格式"""
         import json
@@ -202,6 +217,9 @@ class CustomerServiceAgent:
         full_prompt = system_prompt.replace("{context_documents}", context_text)
         full_prompt = full_prompt.replace("{chat_history}", history_text)
         full_prompt = full_prompt.replace("{user_question}", message)
+        # 注入跨 session 记忆（画像摘要 + 历史偏好），无数据时为空字符串
+        full_prompt = full_prompt.replace("{user_profile}", user_profile or "暂无客户画像信息")
+        full_prompt = full_prompt.replace("{historical_preferences}", historical_preferences or "暂无历史偏好记录")
 
         messages = [{"role": "user", "content": full_prompt}]
 
