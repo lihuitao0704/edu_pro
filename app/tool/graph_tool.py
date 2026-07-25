@@ -62,3 +62,72 @@ class GraphTool:
             )
             records = await result.data()
             return [r.get("p", {}) for r in records]
+
+    async def get_collaborative_recommendations(self, customer_id: int) -> List[dict]:
+        """
+        协同过滤推荐 — 3 跳
+
+        持有相同产品的其他客户，还买了哪些我没买的产品？
+        路径: Customer→INVESTS_IN→Product←INVESTS_IN←Peer→INVESTS_IN→NewProduct
+        """
+        driver = get_neo4j_driver()
+        async with driver.session(database=settings.neo4j.database) as session:
+            result = await session.run(
+                """
+                MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(:Product)<-[:INVESTS_IN]-(peer:Customer)
+                      -[:INVESTS_IN]->(rec:Product)
+                WHERE NOT (c)-[:INVESTS_IN]->(rec) AND peer.id <> $cid
+                WITH rec, count(DISTINCT peer) AS peer_count
+                RETURN rec.code AS product_code, rec.name AS product_name, peer_count
+                ORDER BY peer_count DESC LIMIT 10
+                """,
+                cid=customer_id,
+            )
+            return await result.data()
+
+    async def get_industry_diversify(self, customer_id: int) -> List[dict]:
+        """
+        行业分散推荐 — 2 跳
+
+        推荐客户持仓中未覆盖的行业的产品
+        路径: Customer→INVESTS_IN→Product→BELONGS_TO→Industry (排除已有)
+        """
+        driver = get_neo4j_driver()
+        async with driver.session(database=settings.neo4j.database) as session:
+            result = await session.run(
+                """
+                MATCH (c:Customer {id: $cid})-[:INVESTS_IN]->(:Product)-[:BELONGS_TO]->(i:Industry)
+                WITH collect(DISTINCT i.name) AS my_industries
+                MATCH (p:Product)-[:BELONGS_TO]->(new_i:Industry)
+                WHERE NOT new_i.name IN my_industries
+                RETURN p.code AS product_code, p.name AS product_name,
+                       new_i.name AS industry, size(my_industries) AS covered_count
+                LIMIT 10
+                """,
+                cid=customer_id,
+            )
+            return await result.data()
+
+    async def get_peer_purchases(self, customer_id: int) -> List[dict]:
+        """
+        同风险偏好推荐 — 3 跳
+
+        同一风险等级的其他客户在买什么我没买的？
+        路径: Customer→HAS_RISK_LEVEL→RiskLevel←HAS_RISK_LEVEL←Peer→INVESTS_IN→Product
+        """
+        driver = get_neo4j_driver()
+        async with driver.session(database=settings.neo4j.database) as session:
+            result = await session.run(
+                """
+                MATCH (c:Customer {id: $cid})-[:HAS_RISK_LEVEL]->(rl:RiskLevel)
+                MATCH (peer:Customer)-[:HAS_RISK_LEVEL]->(rl)
+                WHERE peer.id <> $cid
+                MATCH (peer)-[:INVESTS_IN]->(p:Product)
+                WHERE NOT (c)-[:INVESTS_IN]->(p)
+                WITH p, count(DISTINCT peer) AS buyer_count
+                RETURN p.code AS product_code, p.name AS product_name, buyer_count
+                ORDER BY buyer_count DESC LIMIT 10
+                """,
+                cid=customer_id,
+            )
+            return await result.data()

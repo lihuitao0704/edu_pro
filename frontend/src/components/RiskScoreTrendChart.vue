@@ -22,12 +22,16 @@ export interface RiskScoreHistoryRecord {
 }
 
 // 风险等级映射：c1/c2/c3/c4/c5 → C1保守型/C2稳健型/C3平衡型/C4进取型/C5激进型
+// 兼容中文文本（保守型/稳健型/平衡型/进取型/激进型）和 R 级（R1-R5）
 const RISK_LEVEL_DISPLAY: Record<string, string> = {
   c1: 'C1保守型', C1: 'C1保守型',
   c2: 'C2稳健型', C2: 'C2稳健型',
   c3: 'C3平衡型', C3: 'C3平衡型',
   c4: 'C4进取型', C4: 'C4进取型',
   c5: 'C5激进型', C5: 'C5激进型',
+  保守型: 'C1保守型', 稳健型: 'C2稳健型', 平衡型: 'C3平衡型',
+  进取型: 'C4进取型', 激进型: 'C5激进型',
+  R1: 'C1保守型', R2: 'C2稳健型', R3: 'C3平衡型', R4: 'C4进取型', R5: 'C5激进型',
 }
 function formatRiskLevel(level: unknown): string {
   if (!level) return ''
@@ -63,15 +67,15 @@ function renderChart() {
     yAxis: { type: 'value', min: 0, max: 100, axisLine: { show: false }, axisLabel: { color: '#8ca0b7' }, splitLine: { lineStyle: { color: '#223047' } } },
     series: [
       {
-        name: '综合评分', type: 'line', data: props.records.map((item) => item.total_score), smooth: true, symbol: 'circle', symbolSize: 7,
+        name: '综合评分', type: 'line', data: props.records.map((item) => item.total_score ?? undefined), smooth: true, symbol: 'circle', symbolSize: 7, connectNulls: false,
         lineStyle: { color: '#38bdf8', width: 4 }, itemStyle: { color: '#7dd3fc' },
         areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(56,189,248,.35)' }, { offset: 1, color: 'rgba(56,189,248,0)' }]) },
         markPoint: { symbolSize: 40, itemStyle: { color: '#1e3a5f' }, label: { color: '#dbeafe', fontSize: 10 }, data: turningPoints },
       },
-      { name: '基础属性', type: 'line', data: props.records.map((item) => item.basic_score), lineStyle: { type: 'dashed', color: '#a78bfa', width: 1.5 }, symbol: 'none' },
-      { name: '投资经验', type: 'line', data: props.records.map((item) => item.experience_score), lineStyle: { type: 'dashed', color: '#34d399', width: 1.5 }, symbol: 'none' },
-      { name: '风险偏好', type: 'line', data: props.records.map((item) => item.risk_pref_score), lineStyle: { type: 'dashed', color: '#f59e0b', width: 1.5 }, symbol: 'none' },
-      { name: '行为稳定', type: 'line', data: props.records.map((item) => item.behavior_score), lineStyle: { type: 'dashed', color: '#fb7185', width: 1.5 }, symbol: 'none' },
+      { name: '基础属性', type: 'line', data: props.records.map((item) => item.basic_score ?? undefined), lineStyle: { type: 'dashed', color: '#a78bfa', width: 1.5 }, symbol: 'none' },
+      { name: '投资经验', type: 'line', data: props.records.map((item) => item.experience_score ?? undefined), lineStyle: { type: 'dashed', color: '#34d399', width: 1.5 }, symbol: 'none' },
+      { name: '风险偏好', type: 'line', data: props.records.map((item) => item.risk_pref_score ?? undefined), lineStyle: { type: 'dashed', color: '#f59e0b', width: 1.5 }, symbol: 'none' },
+      { name: '行为稳定', type: 'line', data: props.records.map((item) => item.behavior_score ?? undefined), lineStyle: { type: 'dashed', color: '#fb7185', width: 1.5 }, symbol: 'none' },
       triggerSeries('manual', 'circle'), triggerSeries('auto', 'circle', true), triggerSeries('event', 'diamond'),
     ],
   }, true)

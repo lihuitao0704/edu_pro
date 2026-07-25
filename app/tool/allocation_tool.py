@@ -12,5 +12,4 @@ class AllocationTool:
 
     async def get_allocation(self, customer_id: int) -> dict:
         """获取资产配置建议"""
-        result = await self.advisor_service.get_allocation(customer_id)
-        return result.model_dump()
+        return await self.advisor_service.get_allocation(customer_id)

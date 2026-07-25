@@ -55,14 +55,14 @@ const FALLBACK_COLORS = ['#34d399', '#60a5fa', '#a78bfa', '#fb7185', '#fbbf24', 
 
 const hasData = computed(() => {
   if (!props.allocation) return false
-  const items = Object.entries(props.allocation).filter(([, v]) => v > 0)
+  const items = Object.entries(props.allocation).filter(([, v]) => typeof v === 'number' && v > 0)
   return items.length > 0
 })
 
 const legendData = computed<AllocationItem[]>(() => {
   if (!props.allocation) return []
   return Object.entries(props.allocation)
-    .filter(([, v]) => v > 0)
+    .filter(([, v]) => typeof v === 'number' && v > 0)
     .map(([name, value]) => ({
       name,
       value: typeof value === 'number' ? Math.round(value) : Number(value),

@@ -73,25 +73,6 @@ PRODUCT_INDUSTRY_MAP = {
     "HB": "IND004",    # 货币系列 → 金融
 }
 
-# 市场（Mock）
-MOCK_MARKETS = [
-    {"market_id": "MKT001", "name": "上海证券交易所"},
-    {"market_id": "MKT002", "name": "深圳证券交易所"},
-    {"market_id": "MKT003", "name": "北京证券交易所"},
-    {"market_id": "MKT004", "name": "场外市场"},
-]
-
-# 产品→市场 Mock 映射（按 product_code 前缀）
-PRODUCT_MARKET_MAP = {
-    "TXB": "MKT004",  # 天弘（货币/债券）→ 场外
-    "WF": "MKT001",    # Wealth系列 → 上交所
-    "HH": "MKT002",    # 混合系列 → 深交所
-    "GF": "MKT001",    # 广发系列 → 上交所
-    "YF": "MKT002",    # 易方达 → 深交所
-    "BF": "MKT004",    # 债券系列 → 场外
-    "HB": "MKT004",    # 货币系列 → 场外
-}
-
 
 async def import_customer_risk_levels(driver):
     """导入客户风险等级节点 (C1-C5)"""
@@ -140,16 +121,6 @@ async def import_mock_managers(driver):
         print(f"  [OK] 基金经理节点 ({len(MOCK_FUND_MANAGERS)})")
 
 
-async def import_mock_markets(driver):
-    """导入 Mock 市场节点"""
-    async with driver.session(database=settings.neo4j.database) as session:
-        for mkt in MOCK_MARKETS:
-            await session.run(
-                "MERGE (m:Market {market_id: $id}) SET m.name = $name",
-                id=mkt["market_id"], name=mkt["name"],
-            )
-        print(f"  [OK] 市场节点 ({len(MOCK_MARKETS)})")
-
 
 async def import_products(driver):
     """从 MySQL 导入产品数据，创建 Product 节点 + BELONGS_TO/MANAGED_BY 关系（批量导入优化）"""
@@ -178,7 +149,6 @@ async def import_products(driver):
         "belongs_to": [],
         "managed_by": [],
         "suitable_for": [],
-        "traded_on": [],
     }
 
     for row in rows:
@@ -227,10 +197,6 @@ async def import_products(driver):
 
         # 收集适当性关系
         relations_data["suitable_for"].append({"pid": product_id, "level": risk_level})
-
-        # 收集市场关系（Mock 映射）
-        market_id = PRODUCT_MARKET_MAP.get(prefix, "MKT004")
-        relations_data["traded_on"].append({"pid": product_id, "mid": market_id})
 
     # 批量执行 Neo4j 操作
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
@@ -306,18 +272,6 @@ async def import_products(driver):
                 UNWIND $relations AS rel
                 MATCH (pr:ProductRiskLevel {level_code: rel.level}), (cr:CustomerRiskLevel {level_code: rel.level})
                 MERGE (pr)-[:SUITABLE_FOR {allowed_customer_levels: [rel.level]}]->(cr)
-                """,
-                relations=batch,
-            )
-
-        # 产品→市场
-        for i in range(0, len(relations_data["traded_on"]), batch_size):
-            batch = relations_data["traded_on"][i:i+batch_size]
-            await neo4j_session.run(
-                """
-                UNWIND $relations AS rel
-                MATCH (p:Product {id: rel.pid}), (m:Market {market_id: rel.mid})
-                MERGE (p)-[:TRADED_ON]->(m)
                 """,
                 relations=batch,
             )
@@ -524,7 +478,6 @@ async def import_transactions(driver):
     # 收集批量数据
     tx_data = []
     made_relations = []
-    on_product_relations = []
 
     for row in transactions:
         tx_no = row[0]
@@ -553,7 +506,6 @@ async def import_transactions(driver):
             "create_time": create_time,
         })
         made_relations.append({"cid": customer_id, "tx_no": tx_no})
-        on_product_relations.append({"tx_no": tx_no, "pid": product_id})
 
     # 批量执行 Neo4j 操作
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
@@ -585,43 +537,19 @@ async def import_transactions(driver):
                 relations=batch,
             )
 
-        # 3. 批量创建 ON_PRODUCT 关系（Transaction → Product）
-        for i in range(0, len(on_product_relations), batch_size):
-            batch = on_product_relations[i:i+batch_size]
-            await neo4j_session.run(
-                """
-                UNWIND $relations AS rel
-                MATCH (t:Transaction {transaction_no: rel.tx_no}), (p:Product {id: rel.pid})
-                MERGE (t)-[:ON_PRODUCT]->(p)
-                """,
-                relations=batch,
-            )
-
-    print(f"  [OK] Transaction 节点 ({len(tx_data)}) + MADE/ON_PRODUCT 关系（批量导入）")
+    print(f"  [OK] Transaction 节点 ({len(tx_data)}) + MADE 关系（批量导入）")
 
 
 async def import_employees(driver):
-    """从 MySQL 导入员工数据，创建 Employee 节点 + MANAGES/HANDLED_BY 关系（批量导入优化）"""
+    """从 MySQL 导入员工数据，创建 Employee 节点"""
     async with async_session_factory() as mysql_session:
-        # 查询所有员工（sys_user 没有 department 列，用 employee_role 代替）
         emp_result = await mysql_session.execute(
             text("SELECT id, username, real_name, user_type, employee_role "
                  "FROM sys_user WHERE user_type = 'EMPLOYEE'")
         )
         employees = emp_result.fetchall()
 
-        # 查询交易记录中的经办人（用于建立 HANDLED_BY 和 MANAGES 关系）
-        tx_result = await mysql_session.execute(
-            text("SELECT transaction_no, operator_id, customer_id "
-                 "FROM fin_transaction WHERE operator_id IS NOT NULL AND operator_id > 0")
-        )
-        tx_records = tx_result.fetchall()
-
-    # 收集员工数据
     employees_data = []
-    handled_by_relations = []  # Transaction → Employee
-    manages_relations = []     # Employee → Customer (去重)
-    manages_set = set()        # 用于去重
 
     for row in employees:
         emp_id = row[0]
@@ -637,24 +565,7 @@ async def import_employees(driver):
             "department": "",
         })
 
-    # 从交易记录构建 HANDLED_BY 和 MANAGES 关系
-    for row in tx_records:
-        tx_no = row[0]
-        operator_id = row[1]
-        customer_id = row[2]
-
-        # HANDLED_BY: Transaction → Employee
-        handled_by_relations.append({"tx_no": tx_no, "emp_id": operator_id})
-
-        # MANAGES: Employee → Customer (去重)
-        manages_key = (operator_id, customer_id)
-        if manages_key not in manages_set:
-            manages_set.add(manages_key)
-            manages_relations.append({"emp_id": operator_id, "cid": customer_id})
-
-    # 批量执行 Neo4j 操作
     async with driver.session(database=settings.neo4j.database) as neo4j_session:
-        # 1. 批量创建 Employee 节点
         if employees_data:
             await neo4j_session.run(
                 """
@@ -666,33 +577,7 @@ async def import_employees(driver):
                 employees=employees_data,
             )
 
-        batch_size = 1000
-
-        # 2. 批量创建 HANDLED_BY 关系（Transaction → Employee）
-        for i in range(0, len(handled_by_relations), batch_size):
-            batch = handled_by_relations[i:i+batch_size]
-            await neo4j_session.run(
-                """
-                UNWIND $relations AS rel
-                MATCH (t:Transaction {transaction_no: rel.tx_no}), (e:Employee {employee_id: rel.emp_id})
-                MERGE (t)-[:HANDLED_BY]->(e)
-                """,
-                relations=batch,
-            )
-
-        # 3. 批量创建 MANAGES 关系（Employee → Customer）
-        for i in range(0, len(manages_relations), batch_size):
-            batch = manages_relations[i:i+batch_size]
-            await neo4j_session.run(
-                """
-                UNWIND $relations AS rel
-                MATCH (e:Employee {employee_id: rel.emp_id}), (c:Customer {id: rel.cid})
-                MERGE (e)-[:MANAGES]->(c)
-                """,
-                relations=batch,
-            )
-
-    print(f"  [OK] Employee 节点 ({len(employees_data)}) + MANAGES({len(manages_relations)})/HANDLED_BY({len(handled_by_relations)}) 关系（批量导入）")
+    print(f"  [OK] Employee 节点 ({len(employees_data)})")
 
 
 async def import_knowledge(driver):
@@ -741,34 +626,13 @@ async def import_knowledge(driver):
     print(f"  [OK] Knowledge 节点 ({len(knowledge_data)})（批量导入，暂不创建关系）")
 
 
-async def create_customer_relations(driver):
-    """创建 Customer 间 RELATED_TO 关系（基于共同持仓）"""
-    async with driver.session(database=settings.neo4j.database) as neo4j_session:
-        # 基于共同持仓产品创建 RELATED_TO 关系
-        # 两个客户持有相同产品 → 建立关联，strength = 共同产品数
-        await neo4j_session.run(
-            """
-            MATCH (c1:Customer)-[:INVESTS_IN]->(p:Product)<-[:INVESTS_IN]-(c2:Customer)
-            WHERE c1.id < c2.id  // 避免重复和自关联
-            WITH c1, c2, COUNT(p) AS common_products,
-                 COLLECT(p.name) AS product_names
-            WHERE common_products >= 1
-            MERGE (c1)-[r:RELATED_TO]->(c2)
-            SET r.relation_type = '共同持仓',
-                r.strength = common_products,
-                r.detected_at = datetime(),
-                r.product_names = product_names
-            """
-        )
-        print("  [OK] RELATED_TO 关系（基于共同持仓，已创建）")
-
 
 async def show_stats(driver):
     """打印导入后的图谱统计"""
     async with driver.session(database=settings.neo4j.database) as session:
         # 节点统计
         for label in ["Customer", "Product", "CustomerRiskLevel", "ProductRiskLevel",
-                      "Industry", "FundManager", "Market", "Transaction", "Employee",
+                      "Industry", "FundManager", "Transaction", "Employee",
                       "Knowledge"]:
             result = await session.run(f"MATCH (n:{label}) RETURN count(n) AS cnt")
             data = await result.single()
@@ -877,53 +741,47 @@ async def main():
 
     try:
         # 先清空（开发阶段）
-        print("\n[1/15] 清空旧数据...")
+        print("\n[1/14] 清空旧数据...")
         async with driver.session(database=settings.neo4j.database) as session:
             await session.run("MATCH (n) DETACH DELETE n")
         print("  [OK] 已清空")
 
         # 创建索引（幂等，加速后续 MERGE 和查询）
-        print("\n[2/15] 创建索引...")
+        print("\n[2/14] 创建索引...")
         await create_indexes(driver)
 
         # 按顺序导入
-        print("\n[3/15] 导入客户风险等级 (C1-C5)...")
+        print("\n[3/14] 导入客户风险等级 (C1-C5)...")
         await import_customer_risk_levels(driver)
 
-        print("\n[4/15] 导入产品风险等级 (R1-R5)...")
+        print("\n[4/14] 导入产品风险等级 (R1-R5)...")
         await import_product_risk_levels(driver)
 
-        print("\n[5/15] 导入 Mock 行业...")
+        print("\n[5/14] 导入 Mock 行业...")
         await import_mock_industries(driver)
 
-        print("\n[6/15] 导入 Mock 基金经理...")
+        print("\n[6/14] 导入 Mock 基金经理...")
         await import_mock_managers(driver)
 
-        print("\n[7/15] 导入 Mock 市场...")
-        await import_mock_markets(driver)
-
-        print("\n[8/15] 导入产品数据 (MySQL → Neo4j)...")
+        print("\n[7/14] 导入产品数据 (MySQL → Neo4j)...")
         await import_products(driver)
 
-        print("\n[9/15] 导入客户数据 (MySQL → Neo4j)...")
+        print("\n[8/14] 导入客户数据 (MySQL → Neo4j)...")
         await import_customers(driver)
 
-        print("\n[10/15] 导入持仓关系 (MySQL → Neo4j)...")
+        print("\n[9/14] 导入持仓关系 (MySQL → Neo4j)...")
         await import_holdings(driver)
 
-        print("\n[11/15] 导入交易流水 (MySQL → Neo4j)...")
+        print("\n[10/14] 导入交易流水 (MySQL → Neo4j)...")
         await import_transactions(driver)
 
-        print("\n[12/15] 导入员工数据 (MySQL → Neo4j)...")
+        print("\n[11/14] 导入员工数据 (MySQL → Neo4j)...")
         await import_employees(driver)
 
-        print("\n[13/15] 导入知识元数据 (MySQL → Neo4j)...")
+        print("\n[12/14] 导入知识元数据 (MySQL → Neo4j)...")
         await import_knowledge(driver)
 
-        print("\n[14/15] 创建 Customer 间关联关系...")
-        await create_customer_relations(driver)
-
-        print("\n[15/15] 创建唯一性约束...")
+        print("\n[13/14] 创建唯一性约束...")
         await create_constraints(driver)
 
         # 统计
