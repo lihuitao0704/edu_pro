@@ -256,7 +256,7 @@ async def daily_report(date: str = None, db: AsyncSession = Depends(get_db),
         sa_text(
             "SELECT customer_id, COUNT(*) as cnt FROM fin_risk_alert "
             "WHERE alert_level = 'high' AND status = 'pending' "
-            "GROUP BY customer_id ORDER BY cnt DESC LIMIT 5"
+            "GROUP BY customer_id ORDER BY cnt DESC, customer_id ASC LIMIT 5"
         ),
     )
     top_customers = [{"customer_id": row[0], "count": row[1]} for row in result.fetchall()]
