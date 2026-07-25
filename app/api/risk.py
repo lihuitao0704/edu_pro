@@ -251,14 +251,13 @@ async def daily_report(date: str = None, db: AsyncSession = Depends(get_db),
     )
     pending_total = result.fetchone()[0]
 
-    # 高风险TOP5客户
+    # 高风险TOP5客户（全部待处理高预警，非仅今日）
     result = await db.execute(
         sa_text(
             "SELECT customer_id, COUNT(*) as cnt FROM fin_risk_alert "
-            "WHERE alert_level = 'high' AND DATE(create_time) = :d "
+            "WHERE alert_level = 'high' AND status = 'pending' "
             "GROUP BY customer_id ORDER BY cnt DESC LIMIT 5"
         ),
-        {"d": target_date},
     )
     top_customers = [{"customer_id": row[0], "count": row[1]} for row in result.fetchall()]
 
