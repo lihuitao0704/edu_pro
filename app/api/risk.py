@@ -26,7 +26,15 @@ async def assessment_status(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_roles("客户", "理财顾问", "管理员")),
 ):
-    """Expose the current customer's assessment validity for login-time reminders."""
+    """Expose the current customer's assessment validity for login-time reminders.
+
+    规则：
+      - 无任何风评记录 → needs_assessment=true（画像无法检索）
+      - 风评已过期 → needs_assessment=true
+      - 风评有效且距到期 > 30 天 → needs_assessment=false（不弹窗打扰）
+      - 风评有效但距到期 ≤ 30 天 → needs_assessment=true（提前提醒续期）
+    """
+    from datetime import timedelta
     customer_id = authenticated_actor_id(user)
     assessment = (await db.execute(
         select(RiskAssessment)
@@ -35,11 +43,19 @@ async def assessment_status(
         .limit(1)
     )).scalar_one_or_none()
     valid_until = assessment.valid_until if assessment else None
-    needs_assessment = valid_until is None or valid_until < date.today()
+    today = date.today()
+    if valid_until is None:
+        needs_assessment = True  # 画像无法检索
+    elif valid_until < today:
+        needs_assessment = True  # 已过期
+    else:
+        # 距到期 ≤ 30 天才提醒
+        needs_assessment = (valid_until - today).days <= 30
     return success(data={
         "customer_id": customer_id,
         "needs_assessment": needs_assessment,
         "valid_until": valid_until.isoformat() if valid_until else None,
+        "days_remaining": (valid_until - today).days if valid_until and valid_until >= today else 0,
     })
 
 

@@ -37,8 +37,10 @@ onMounted(async () => {
   if (auth.user?.role !== '客户') return
   try {
     const status = await get<{ needs_assessment: boolean }>('/risk/assessment-status')
+    // 只有当画像无法检索 / 风评完全不存在时才弹窗
     showExpiryNotice.value = status.needs_assessment
   } catch {
+    // 接口异常说明画像服务不可用，此时也不弹窗
     showExpiryNotice.value = false
   }
 })

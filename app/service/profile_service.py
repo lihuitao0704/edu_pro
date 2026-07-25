@@ -178,25 +178,10 @@ class ProfileService:
         # 5. 特殊场景处理
         special_result = self.special.handle(customer_data, ai_level)
 
-        # 6. 决定最终等级（保守处理：熔断和特殊场景可能导致降级）
+        # 6. 决定初始等级（后续校准趋势可能再次调级）
         final_level = ai_level
 
-        # 熔断产品限制
-        blocked = cb_result.blocked_levels + special_result.product_restrictions
-        suitable = get_suitable_products(final_level)
-        if blocked:
-            suitable = [p for p in suitable if p not in blocked]
-
-        # 7. 更新画像
-        await self._update_profile_after_assess(customer_id, final_level, int(total_score), dimension_scores)
-
-        # 8. 归档记录
-        cb_list = [{"rule_id": r.get("rule_id", ""), "detail": r.get("detail", "")} for r in cb_result.triggered_rules]
-        await self.long_term.archive_rating_record(
-            customer_id, dimension_scores, total_score, final_level, cb_list, trigger_type
-        )
-
-        # 8. 双轨校准：自评画像 vs 行为真实画像
+        # ── 7a. 双轨校准：自评画像 vs 行为真实画像 ──
         calibrator = BehavioralCalibrator()
         calibration_result = calibrator.calibrate(customer_data, dimension_scores)
 
@@ -209,10 +194,11 @@ class ProfileService:
             summary=calibration_result.summary,
         )
 
-        # 8a. 持久化校准记录
+        # 持久化校准记录
         await self._persist_calibration(customer_id, calibration_info, trigger_type)
 
-        # 8b. 校准趋势分析：连续偏差累积 → 自动调整 risk_level
+        # ── 7b. 校准趋势分析：连续偏差累积 → 自动调整 risk_level ──
+        # ★ 必须在 _update_profile_after_assess 之前执行，确保调级后的 final_level 被正确持久化
         trend_result = None
         try:
             from app.engine.calibration_trend import CalibrationTrendAnalyzer
@@ -233,6 +219,21 @@ class ProfileService:
             logging.getLogger(__name__).warning(
                 "校准趋势分析失败 customer=%s (不影响主流程): %s", customer_id, exc
             )
+
+        # ── 7c. 更新画像（使用校准趋势调整后的最终等级）──
+        await self._update_profile_after_assess(customer_id, final_level, int(total_score), dimension_scores)
+
+        # 8. 归档记录
+        cb_list = [{"rule_id": r.get("rule_id", ""), "detail": r.get("detail", "")} for r in cb_result.triggered_rules]
+        await self.long_term.archive_rating_record(
+            customer_id, dimension_scores, total_score, final_level, cb_list, trigger_type
+        )
+
+        # 熔断产品限制
+        blocked = cb_result.blocked_levels + special_result.product_restrictions
+        suitable = get_suitable_products(final_level)
+        if blocked:
+            suitable = [p for p in suitable if p not in blocked]
 
         # 9. 返回结果
         warnings = cb_result.warnings + special_result.adjustments
