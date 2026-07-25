@@ -202,6 +202,25 @@ class RuleLoaderSettings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+class RiskSignalSettings(BaseSettings):
+    """客服→风控反向联动（C5频道）配置"""
+    # 去重窗口（秒）：同客户同信号类型在此时间内只上报一次
+    dedup_window: int = Field(default=1800, alias="RISK_SIGNAL_DEDUP_WINDOW")
+    # L1 关键词命中置信度阈值（低于此值触发 L3 LLM 辅助）
+    l1_confidence_threshold: float = Field(default=0.7, alias="RISK_SIGNAL_L1_THRESHOLD")
+    # L3 LLM 辅助检测置信度阈值（低于此值不上报）
+    l3_confidence_threshold: float = Field(default=0.75, alias="RISK_SIGNAL_L3_THRESHOLD")
+    # low 级信号是否上报（false=仅记录日志）
+    report_low_level: bool = Field(default=False, alias="RISK_SIGNAL_REPORT_LOW")
+    # L2 行为模式：频繁敏感信号触发阈值
+    frequent_signal_threshold: int = Field(default=3, alias="RISK_SIGNAL_FREQUENT_THRESHOLD")
+    # L2 行为模式：时间窗口（分钟）
+    frequent_signal_window_minutes: int = Field(default=30, alias="RISK_SIGNAL_FREQUENT_WINDOW")
+    # 反馈闭环：风控处理结果回传客服的 Redis key TTL（秒）
+    feedback_ttl: int = Field(default=86400, alias="RISK_SIGNAL_FEEDBACK_TTL")
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
 class Settings(BaseSettings):
     mysql: MySQLSettings = MySQLSettings()
     redis: RedisSettings = RedisSettings()
@@ -220,6 +239,7 @@ class Settings(BaseSettings):
     longcat: LongCatSettings = LongCatSettings()
     security: SecuritySettings = SecuritySettings()
     rule_loader: RuleLoaderSettings = RuleLoaderSettings()
+    risk_signal: RiskSignalSettings = RiskSignalSettings()
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
