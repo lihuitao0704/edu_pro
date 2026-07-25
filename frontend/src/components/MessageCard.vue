@@ -40,11 +40,8 @@
         @close="showTable = false"
       />
 
-      <!-- 风评失效/缺失提示入口 -->
-      <div v-if="message.role === 'assistant' && hasAssessmentPrompt" class="assessment-inline-cta">
-        <span>📋 你的风险评估可能已失效或不存在</span>
-        <button type="button" @click="emit('open-assessment')">前往风评问卷 →</button>
-      </div>
+      <!-- 风评失效：只有画像无法检索时后端才会返回 needs_assessment=true -->
+      <!-- 此处不在聊天消息中展示该提示，统一由 AppLayout 的全局弹窗处理 -->
       <div v-if="message.response?.suggestions.length" class="action-suggestions">
         <span>推荐操作</span>
         <button v-for="suggestion in message.response.suggestions" :key="suggestion" type="button">
@@ -76,13 +73,6 @@ const agentNames: Record<string, string> = {
 const agentName = computed(() => agentNames[props.message.response?.agent || ''] || '金融智能引擎')
 const confidence = computed(() => Math.round((props.message.response?.confidence || 0) * 100))
 const assistantHtml = computed(() => renderAssistantMarkdown(props.message.content))
-
-// 检测AI回复中是否提及风评失效/不存在/建议测评
-const hasAssessmentPrompt = computed(() => {
-  const text = props.message.content || ''
-  const keywords = ['风评', '风险评估', '测评', '风险测评', '风险问卷', '适当性评估', '评估已失效', '评估不存在', '及时评测', '完成风险']
-  return keywords.some(kw => text.includes(kw))
-})
 
 // 数据查询结果（从 normalizeStreamResponse 透传的 _queryResult / _sql）
 const showTable = ref(false)

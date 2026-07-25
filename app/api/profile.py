@@ -75,6 +75,26 @@ async def get_profile(
     先 Redis 缓存 → 后 MySQL → 回填缓存（Cache-Aside）。
     返回前端所需的全部画像字段：risk_level / risk_score / 四维度分 / total_assets 等。
     新增：aml_risk_level（AML风险等级，基于近30天预警记录计算）
+
+    ════════════ 评分数据链路说明 ════════════
+    此端点返回 fin_customer_profile 表中**存储的分数**，不做实时计算。
+
+    分数更新链路：
+      1. ProfileService.assess() 被调用时（注册/申购/手动测评/Agent查询）
+         → DimensionCalculator 四维度打分
+         → 写入 fin_customer_profile（basic/experience/risk_pref/behavior_score）
+         → 写入 risk_score_record（历史表）
+         → 失效 Redis 缓存
+      2. GET /{customer_id}（本端点）
+         → 读取 Redis 缓存（TTL=7天）或 MySQL → 返回存储分数
+         → 不会主动重新计算
+      3. GET /{customer_id}/score-history
+         → 读取 risk_score_record 表（历史评分记录）
+         → 两条数据线在同一个 assess() 中原子性写入，应始终一致
+
+    结论：雷达图展示的是**最近一次评估**的结果，非实时计算值。
+    如需最新分数，请先触发风评或业务操作触发 assess()。
+    ════════════════════════════════════════
     """
     # 客户只能查看自己的画像
     if user.get("role") == "客户" and int(user.get("user_id") or 0) != customer_id:

@@ -67,7 +67,11 @@ class RiskService:
         return [QuestionnaireItem(**item) for item in QUESTIONNAIRE]
 
     async def submit_assessment(self, customer_id: int, answers: List[AssessmentAnswer]) -> AssessmentResult:
-        """提交风评答卷 → 运行完整规则引擎（熔断+四维度+校准+特殊场景）"""
+        """提交风评答卷 → 运行完整规则引擎（熔断+四维度+校准+特殊场景）
+
+        所有操作在同一数据库事务内完成。引擎研判失败不会丢失基础问卷结果，
+        但会通过日志完整记录异常以便运维排查。
+        """
         # 验证客户存在
         profile_stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
         result = await self.db.execute(profile_stmt)
@@ -136,10 +140,10 @@ class RiskService:
         await self.db.flush()
         await self._upsert_questionnaire_risk_tag(customer_id, risk_level_name, valid_until)
         await self.db.flush()
-        await self.cache.invalidate(customer_id)
-        await self.db.commit()
 
         # ── 运行完整规则引擎：熔断 + 四维度 + 校准 + 特殊场景 ──
+        # 注意：不在此处手动 commit()，所有 flush 操作由外层 get_db() 统一提交，
+        # 确保问卷基础保存与引擎研判结果在同一事务内，避免部分写入丢失。
         engine_result = None
         try:
             from app.service.profile_service import ProfileService
@@ -156,8 +160,12 @@ class RiskService:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning(
-                "完整引擎研判失败 customer=%s (回退使用问卷得分): %s", customer_id, exc
+                "完整引擎研判失败 customer=%s (回退使用问卷得分): %s", customer_id, exc,
+                exc_info=True,
             )
+
+        # 失效缓存（Redis，在 DB 事务外；即使后续 DB 回滚，缓存清除也是安全的）
+        await self.cache.invalidate(customer_id)
 
         # Neo4j 同步
         final_level = engine_result.risk_level if engine_result else risk_level

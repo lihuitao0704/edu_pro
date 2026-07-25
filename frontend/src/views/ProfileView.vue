@@ -29,9 +29,10 @@
       </section>
       <section class="two-column">
         <div class="surface-card">
-          <div class="card-heading"><h3>四维度能力雷达</h3></div>
+          <div class="card-heading split"><h3>四维度能力雷达</h3><span v-if="profile?.update_time" class="stale-note">评估时间：{{ new Date(profile.update_time).toLocaleDateString('zh-CN') }}</span></div>
           <div v-if="hasRadarData" ref="radarChartEl" class="radar-chart" />
-          <div v-else class="radar-empty">暂无评估数据，请先完成风险测评</div>
+          <div v-if="hasRadarData && isProfileStale" class="stale-warning">⚠ 评估数据已超过30天，建议重新测评以确保画像准确</div>
+          <div v-else-if="!hasRadarData" class="radar-empty">暂无评估数据，请先完成风险测评</div>
         </div>
         <div class="surface-card">
           <div class="card-heading"><h3>关键研判标签</h3></div>
@@ -98,6 +99,13 @@ const hasRadarData = computed(() => {
   return dims.some(k => Number(currentProfile[k]) > 0)
 })
 
+const isProfileStale = computed(() => {
+  const updateTime = profile.value?.update_time
+  if (!updateTime) return false
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  return new Date(updateTime).getTime() < thirtyDaysAgo
+})
+
 const money = (value: unknown) => value ? `¥${(Number(value) / 10_000).toFixed(1)}万` : '—'
 const percent = (value: unknown) => value ? `${Math.round(Number(value) * 100)}%` : '—'
 
@@ -142,11 +150,12 @@ function resolveRadarTheme() {
 }
 
 function renderRadarChart() {
-  if (!radarChartEl.value || !profile.value) return
+  if (!radarChartEl.value || !profile.value || !hasRadarData.value) return
   if (radarChart && radarChart.getDom() !== radarChartEl.value) {
     radarChart.dispose()
     radarChart = undefined
   }
+  const isRefresh = !!radarChart
   if (!radarChart) {
     radarChart = echarts.init(radarChartEl.value)
   }
@@ -160,8 +169,8 @@ function renderRadarChart() {
   ]
 
   radarChart.setOption({
-    // ── 全局动画 ──
-    animationDuration: 900,
+    // ── 全局动画：首次渲染 900ms，后续刷新缩短至 200ms 避免动画叠加 ──
+    animationDuration: isRefresh ? 200 : 900,
     animationEasing: 'cubicOut' as const,
     backgroundColor: 'transparent',
 
@@ -307,6 +316,8 @@ async function load() {
 }
 
 let stopProfileUpdates = () => {}
+let renderDebounceTimer: ReturnType<typeof setTimeout> | undefined
+
 onMounted(() => {
   void load()
   window.addEventListener('resize', () => radarChart?.resize())
@@ -315,27 +326,30 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => {
+  if (renderDebounceTimer) clearTimeout(renderDebounceTimer)
   stopProfileUpdates()
   window.removeEventListener('resize', () => radarChart?.resize())
   radarChart?.dispose()
 })
+
+// 单一 watcher：profile 变化时尝试渲染雷达图
+// 使用带重试的 DOM 检测，避免 v-if 挂载时序导致的渲染失败
 watch(profile, async (newProfile) => {
-  if (newProfile) {
+  if (newProfile && hasRadarData.value) {
+    // 取消挂起的重复渲染，避免快速切换客户时多次触发
+    if (renderDebounceTimer) clearTimeout(renderDebounceTimer)
     await nextTick()
-    renderRadarChart()
-    // rAF 兜底：v-if 场景下 nextTick 可能不够，多等一帧确保 DOM 就绪
-    requestAnimationFrame(() => renderRadarChart())
+    const tryRender = (attempts: number) => {
+      if (radarChartEl.value) {
+        renderRadarChart()
+      } else if (attempts < 5) {
+        renderDebounceTimer = setTimeout(() => tryRender(attempts + 1), 50)
+      }
+    }
+    tryRender(0)
   } else {
     radarChart?.dispose()
     radarChart = undefined
-  }
-})
-
-watch(hasRadarData, async (visible) => {
-  if (visible) {
-    await nextTick()
-    renderRadarChart()
-    requestAnimationFrame(() => renderRadarChart())
   }
 })
 </script>
@@ -344,4 +358,6 @@ watch(hasRadarData, async (visible) => {
 .profile-hero h2 { font-size: 32px; }
 .radar-chart { width: 100%; height: 360px; }
 .radar-empty { display: grid; place-items: center; height: 360px; color: #8ca0b7; font-size: 14px; }
+.stale-note { font-size: 11px; color: #64748b; font-weight: 400; }
+.stale-warning { text-align: center; padding: 8px 12px; margin-top: -8px; font-size: 12px; color: #f59e0b; background: rgba(251, 191, 36, .08); border-radius: 6px; }
 </style>
