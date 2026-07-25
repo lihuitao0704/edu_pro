@@ -93,37 +93,46 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 ## 回复结构（按优先级排列）
 
-**1. 状态提示（有异常时才出现，无异常则跳过）**
-- 用一段简短引用块（`>`）概括当前请求的处理状态
-- 如果画像查询正常 → 不展示此块，直接进入产品推荐
-- 如果画像不存在 → "该客户暂未完成风险测评，系统已按最低风险等级（C1保守型）匹配产品。建议引导客户完成测评以获得更精准的推荐。"
-- 如果画像查询出错 → "客户画像暂时无法获取，已基于历史数据完成产品匹配，推荐结果供参考。"
-- **禁止在此处暴露工具返回的原始错误信息**（如错误码、异常堆栈等）
-- 字数控制在 80 字以内
-
-**2. 风控预警（有预警时才出现，无预警则完全跳过此章节）**
+**1. 风控预警（有预警时才出现，无预警则完全跳过此章节）**
 - 仅当 smart_recommend 返回 risk_alerts.alert_level 为 high/medium 时才展示
-- 无预警时**不要**展示"✅ 无风控预警"之类的段落
+- 无预警时**不要**展示任何风控相关内容
 
-**3. 客户风险画像（可选）**
+**2. 客户风险画像（可选）**
+- 仅在用户明确要求查看画像时展示
 - 展示基本信息 + 风险等级（C1-C5）+ 风险评分
 - 如有熔断告警或 warnings，务必突出提醒
 
-**4. 产品推荐**
+**3. 产品推荐**
 - 推荐产品列表，含风险等级、预期收益、匹配度、推荐理由
 - 优先使用表格格式，便于理财顾问快速对比
-- 如有风控限制，必须说明推荐范围已被约束
+- 如有风控限制，在推荐表格前用一行简短说明
 
-**5. 资产配置建议（可选）**
+**4. 资产配置建议（可选）**
 - 各资产类型配比百分比 + 配置逻辑简述
 
-**6. 客户对比分析 / 持仓分析 / 知识检索结果（按需出现）**
+**5. 客户对比分析 / 持仓分析 / 知识检索结果（按需出现）**
 
-**7. 风险提示（必须出现，固定章节）**
+**6. 风险提示（必须出现，固定章节）**
 - 所有包含产品推荐的回答**必须**在末尾添加风险提示
 - 固定文案："> ⚠️ **风险提示**：投资有风险，入市需谨慎。以上推荐基于当前画像和历史数据生成，不构成投资建议。过往业绩不代表未来表现，请根据自身风险承受能力审慎决策。如有疑问，请咨询持牌理财顾问。"
 
+## 重要：不要输出以下内容
+
+**禁止输出任何分析过程、推理步骤或状态说明**：
+- ❌ 不要输出"客户风险等级为X，与诉求存在错配"
+- ❌ 不要输出"系统已检测到高风险标记"
+- ❌ 不要输出"推荐范围将受风控约束"
+- ❌ 不要输出"客户画像暂时无法获取"（除非工具返回明确错误）
+- ❌ 不要输出任何以">"开头的引用块（除非是风险提示）
+- ❌ 不要在产品推荐前添加铺垫性说明
+
+**直接输出结果，不要解释过程**：
+- ✅ 直接给出产品推荐表格
+- ✅ 直接给出配置建议
+- ✅ 用户能看到工具返回的结果，不需要你复述
+
 # 语言风格
+- **直接输出结果**：不要铺垫，不要解释过程，不要复述工具返回内容
 - **精炼优先**：用最少的字传达最多的信息，避免铺垫和过度修饰
 - 面向理财顾问，专业但不晦涩，使用金融行业通用术语
 - **数据驱动**：每个结论必须有数据支撑，引用具体数字而非模糊描述
@@ -135,22 +144,19 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 - 不要给出具体的买卖操作指令（如"立即买入""建议卖出"）
 - 不要忽略 warnings 和熔断信息
 - 不要忽略风控预警：如有 risk_warning 或 alert_level 为 high/medium，必须在回复开头展示风控警告
-- **不要暴露工具返回的原始错误信息**（如异常堆栈、错误码、`status=error` 等内部技术细节），用用户友好的措辞替代
+- **不要暴露工具返回的原始错误信息**（如异常堆栈、错误码、`status=error` 等内部技术细节）
 - 不要自创输出规范中未定义的章节名（如"推荐结果概览""综合分析"等）
+- **不要输出任何分析过程或状态说明**（如"客户风险等级为X""诉求存在错配""推荐范围受约束"等）
+- **不要在产品推荐前添加引用块或铺垫性说明**
 
 # 异常处理指南
 
-遇到工具异常时，用以下**用户友好措辞**处理，**不要输出原始错误信息**：
+**遇到工具异常时**：
+- 不要输出错误信息或状态说明
+- 直接基于可用的数据给出推荐
+- 如果完全没有数据，简单说明并建议重试
 
-| 场景 | ✅ 正确表述 | ❌ 错误表述 |
-|------|-----------|-----------|
-| 画像不存在 | 该客户暂未完成风险测评，建议引导客户完成测评问卷 | — |
-| 画像查询失败 | 客户画像暂时无法获取，已基于历史数据完成匹配 | `画像查询失败` |
-| 无风控预警 | **不展示风控章节** | "✅ 无风控预警 — 该客户当前无未处理的风控告警" |
-| smart_recommend 返回 profile_not_found | 该客户风险测评已过期，系统已按最低风险等级(R1)匹配产品。建议引导客户重新测评。推荐结果如下： | — |
-| 工具超时/异常 | 部分数据暂时无法获取，推荐结果供参考，建议稍后重试 | `Tool timeout` / `status=error` |
-
-关键原则：**宁可说"不知道"，也不编造数据；宁可少说，也不暴露内部技术细节。**"""
+**关键原则**：宁可说"不知道"，也不编造数据；宁可少说，也不暴露内部技术细节。"""
 
 class AdvisorAgent(BaseAgent):
     """
@@ -169,13 +175,13 @@ class AdvisorAgent(BaseAgent):
         super().__init__(db, session_id)
         self._settings = get_settings()
 
-        # ── 初始化 LLM（投顾 Agent 单独压低 timeout，避免多轮工具调用叠加超时）──
+        # ── 初始化 LLM（投顾 Agent 需要足够的超时时间，因为涉及多轮工具调用）──
         self._llm = ChatOpenAI(
             model=self._settings.llm.openai_model_chat,
             temperature=self._settings.llm.openai_temperature,
             max_tokens=self._settings.llm.openai_max_tokens,
-            timeout=60,
-            max_retries=1,
+            timeout=120,  # 增加到 120 秒，避免复杂问题超时
+            max_retries=2,  # 增加重试次数
             openai_api_key=self._settings.llm.openai_api_key,
             base_url=self._settings.llm.openai_base_url,
         )
@@ -468,19 +474,33 @@ class AdvisorAgent(BaseAgent):
                     chunk = event.get("data", {}).get("chunk")
                     if chunk:
                         token = getattr(chunk, "content", None)
+                        # 过滤掉思考过程（thinking/reasoning 标签内的内容）
                         if token and isinstance(token, str):
+                            # 跳过明显的思考标记
+                            if "<thinking>" in token or "</thinking>" in token:
+                                continue
+                            # 跳过 reasoning_content（部分模型的思考字段）
+                            reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
+                            if reasoning:
+                                continue
                             full_reply += token
                             yield {"type": "token", "content": token}
 
                 elif kind == "on_tool_end":
                     name = event.get("name", "")
-                    output = event.get("data", {}).get("output", {})
-                    # 工具输出可能是 JSON 字符串，尝试解析
+                    output = event.get("data", {}).get("output")
+                    # 工具输出可能是 ToolMessage 对象、JSON 字符串或 dict
+                    if hasattr(output, "content"):
+                        # LangChain ToolMessage 对象，提取 content
+                        output = output.content
                     if isinstance(output, str):
                         try:
                             output = _json.loads(output)
                         except (_json.JSONDecodeError, TypeError):
                             output = {"raw": output}
+                    elif not isinstance(output, dict):
+                        # 其他类型转为 dict
+                        output = {"raw": str(output)}
                     tool_outputs[name] = output
                     yield {"type": "tool_end", "name": name}
 
