@@ -1540,7 +1540,7 @@ async def operator_chat(
                         confirm_value = shares_val * (float(rv) / float(_h["shares"]))
         else:
             confirm_value, amt_err = _safe_float(arguments.get("amount", 0), "金额")
-            if amt_err and needs_confirmation(action, 0):
+            if amt_err and action in CONFIRM_THRESHOLDS:
                 replies.append(f"⚠️ {amt_err}，无法执行 {action}")
                 actions_taken.append({"action": action, "status": "param_error"})
                 continue
