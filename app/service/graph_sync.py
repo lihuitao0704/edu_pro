@@ -65,7 +65,7 @@ async def _sync_new_transaction(action: str, arguments: dict, result: dict) -> N
     """
     同步新交易到 Neo4j
     触发条件：申购/赎回/转账成功后
-    同步内容：Transaction 节点 + MADE/ON_PRODUCT 关系
+    同步内容：Transaction 节点 + MADE 关系
     """
     customer_id = arguments.get("customer_id") or result.get("data", {}).get("customer_id")
     product_id = arguments.get("product_id") or result.get("data", {}).get("product_id")
@@ -129,26 +129,6 @@ async def _sync_new_transaction(action: str, arguments: dict, result: dict) -> N
             """,
             cid=tx_data["cid"], tx_no=tx_data["tx_no"],
         )
-
-        # 3. 创建 ON_PRODUCT 关系（Transaction → Product）
-        if tx_data.get("pid"):
-            await neo4j_session.run(
-                """
-                MATCH (t:Transaction {transaction_no: $tx_no}), (p:Product {id: $pid})
-                MERGE (t)-[:ON_PRODUCT]->(p)
-                """,
-                tx_no=tx_data["tx_no"], pid=tx_data["pid"],
-            )
-
-        # 4. 如果有经办人，创建 HANDLED_BY 关系
-        if tx_data.get("operator_id"):
-            await neo4j_session.run(
-                """
-                MATCH (t:Transaction {transaction_no: $tx_no}), (e:Employee {employee_id: $emp_id})
-                MERGE (t)-[:HANDLED_BY]->(e)
-                """,
-                tx_no=tx_data["tx_no"], emp_id=tx_data["operator_id"],
-            )
 
     logger.info(
         f"交易同步完成: tx_no={tx_data['tx_no']}, type={tx_data['tx_type']}, "
@@ -273,25 +253,3 @@ async def sync_holdings(customer_id: Optional[int] = None) -> None:
 
     logger.info(f"持仓同步完成: {len(holdings_data)} 条")
 
-
-async def sync_customer_relations() -> None:
-    """
-    重新计算 Customer 间 RELATED_TO 关系（补偿用）
-    基于共同持仓重新建立关联
-    """
-    async with await _get_neo4j_session() as neo4j_session:
-        # 先删除旧的 RELATED_TO 关系
-        await neo4j_session.run("MATCH ()-[r:RELATED_TO]->() DELETE r")
-        # 重新创建
-        await neo4j_session.run(
-            """
-            MATCH (c1:Customer)-[:INVESTS_IN]->(p:Product)<-[:INVESTS_IN]-(c2:Customer)
-            WHERE c1.id < c2.id
-            WITH c1, c2, COUNT(p) AS common_products, COLLECT(p.name) AS product_names
-            WHERE common_products >= 1
-            MERGE (c1)-[r:RELATED_TO]->(c2)
-            SET r.relation_type = '共同持仓', r.strength = common_products,
-                r.detected_at = datetime(), r.product_names = product_names
-            """
-        )
-    logger.info("Customer 间关联关系重新计算完成")

@@ -239,6 +239,118 @@ async def unified_chat_stream(
         return EventSourceResponse(error_stream())
 
 
+@router.post("/chat/stream/v2")
+async def unified_chat_stream_v2(
+    req: UnifiedChatRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(
+        require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
+    ),
+):
+    """
+    统一对话入口 SSE 真流式 v2
+
+    投顾意图走 AdvisorAgent.stream_execute() — LLM token 级实时流式。
+    其他意图回退到 ChatOrchestrator 阻塞后分块流式。
+
+    事件契约:
+      event: meta     → {agent, session_id}
+      event: token    → {content: "为"}          # LLM 逐 token
+      event: tool_end → {name: "smart_recommend"}
+      event: done     → {reply, recommendations, allocation, session_id}
+      event: error    → {message}
+    """
+    import json
+    actor_id = authenticated_actor_id(user)
+    session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
+
+    # ── 轻量意图分类（不阻塞，快速判断是否投顾）──
+    try:
+        from app.service.intent_service import get_intent_service
+        intent_svc = get_intent_service()
+        intent, confidence, _params = await intent_svc.classify_router(req.message)
+    except Exception:
+        intent = "unknown"
+
+    # ── 投顾意图 → 真流式 ──
+    if intent == "investment_recommendation":
+        safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+
+        async def advisor_event_stream():
+            from app.agent.advisor_agent import AdvisorAgent
+            agent = AdvisorAgent(db, session_id)
+            try:
+                async for evt in agent.stream_execute(
+                    req.message, customer_id=req.user_id
+                ):
+                    # 过滤掉 py 对象，确保 JSON 可序列化
+                    evt_type = evt.pop("type", "message")
+                    safe = _make_json_safe(evt)
+                    yield {
+                        "event": evt_type,
+                        "data": json.dumps(safe, ensure_ascii=False, default=str),
+                    }
+            except Exception as e:
+                logger.error(f"投顾流式异常: {e}", exc_info=True)
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": str(e)}, ensure_ascii=False),
+                }
+
+            # 归档记忆
+            try:
+                await MemoryService(db).archive_turn(
+                    session_id, actor_id, "advisor", safe_input, ""
+                )
+            except Exception:
+                pass
+
+        return EventSourceResponse(advisor_event_stream())
+
+    # ── 非投顾意图 → 回退到旧流式（ChatOrchestrator 阻塞后分块）──
+    try:
+        orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
+        result = await orchestrator.handle(
+            req.message, session_id, actor_id,
+            get_request_role_from_user(user), customer_id=req.user_id,
+        )
+        safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+        if result.agent != "safety_guard":
+            await MemoryService(db).archive_turn(
+                result.session_id, actor_id, result.agent, safe_input, result.reply
+            )
+        await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
+        payload = result.model_dump()
+        payload["agent_type"] = result.agent
+        return EventSourceResponse(
+            stream_chat_result(payload, chunk_size=_settings.sse.chunk_size)
+        )
+    except Exception as e:
+        logger.error(f"统一入口SSE v2异常: {e}", exc_info=True)
+        async def error_stream():
+            yield {"event": "meta", "data": json.dumps({"error": str(e)})}
+            yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
+            yield {"event": "done", "data": json.dumps({"session_id": req.session_id})}
+        return EventSourceResponse(error_stream())
+
+
+def _make_json_safe(obj: dict) -> dict:
+    """递归清理 dict，将 Pydantic 模型转为普通 dict"""
+    result = {}
+    for k, v in obj.items():
+        if hasattr(v, "model_dump"):
+            result[k] = v.model_dump()
+        elif isinstance(v, dict):
+            result[k] = _make_json_safe(v)
+        elif isinstance(v, list):
+            result[k] = [
+                x.model_dump() if hasattr(x, "model_dump") else x for x in v
+            ]
+        else:
+            result[k] = v
+    return result
+
+
 def get_request_role_from_user(user: dict) -> str:
     """Use the authenticated role, never a client-claimed chat role."""
     return str(user.get("role") or "")

@@ -114,9 +114,10 @@ ASSET_ALLOCATION_TEMPLATES = {
 
 # ==================== 推荐引擎权重 ====================
 RECOMMENDATION_WEIGHTS = {
-    "risk_match": 0.35,
-    "preference": 0.20,
-    "diversification": 0.15,
-    "return_term": 0.15,
-    "graph_signal": 0.15,
+    "risk_match": 0.30,
+    "graph_collab": 0.25,
+    "preference": 0.15,
+    "graph_diversify": 0.15,
+    "graph_peer": 0.10,
+    "return_term": 0.05,
 }

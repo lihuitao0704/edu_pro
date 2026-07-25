@@ -6,7 +6,7 @@
       <nav><router-link v-for="item in navigation" :key="item.path" :to="item.path" @click="mobileOpen = false"><span class="nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span></router-link></nav>
       <div class="sidebar-footer"><div class="service-state"><i /> 金融智能服务已连接</div><button class="quiet-button" @click="logout">退出当前会话</button></div>
     </aside>
-    <main class="main-area"><header class="topbar"><button class="mobile-menu" aria-label="打开菜单" @click="mobileOpen = !mobileOpen">☰</button><div class="topbar-right"><span class="topbar-date">{{ dateLabel }}</span><b>{{ auth.user?.real_name?.slice(0, 1) || '您' }}</b></div></header><section class="content-area"><router-view /></section></main>
+    <main class="main-area"><section class="content-area"><router-view /></section></main>
     <div v-if="mobileOpen" class="scrim" @click="mobileOpen = false" />
     <div v-if="showExpiryNotice" class="risk-expiry-overlay">
       <section class="risk-expiry-dialog"><span class="section-kicker">RISK ASSESSMENT REQUIRED</span><h2>您的风险评估已失效</h2><p>建议您及时完成风险评测；维持有效的风评状态，更方便购买适配的财富产品。</p><button class="finance-primary" @click="openAssessment">前往风评测试</button></section>
@@ -31,7 +31,6 @@ const mobileOpen = ref(false)
 const showExpiryNotice = ref(false)
 const assessmentVisible = ref(false)
 const navigation = computed(() => navigationForRole(auth.user?.role || ''))
-const dateLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date())
 function logout() { auth.logout(); router.push('/login') }
 function openAssessment() { showExpiryNotice.value = false; assessmentVisible.value = true }
 onMounted(async () => {

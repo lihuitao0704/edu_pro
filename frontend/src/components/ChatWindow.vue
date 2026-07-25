@@ -41,8 +41,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { createMockChatResponse, getChatHistory, sendChat } from '../api/chat'
+import { createMockChatResponse, getChatHistory } from '../api/chat'
 import MessageCard from './MessageCard.vue'
+import { streamChat } from '../utils/sse'
 import { useConversationStore } from '../stores/conversation'
 
 const props = withDefaults(defineProps<{ userId?: string | number; userRole?: string; customerName?: string }>(), { userId: 0, userRole: '客户', customerName: '' })
@@ -82,12 +83,48 @@ async function send() {
   error.value = ''
   await scrollToBottom()
 
+  // 流式消息：先追加空气泡，逐步填充 content
+  const assistantMsg: { role: 'assistant'; content: string; response?: any; isMock?: boolean } = {
+    role: 'assistant',
+    content: '',
+  }
+  conversations.appendMessage(userKey.value, assistantMsg)
+
   try {
-    const response = await sendChat({ user_id: props.userId, user_role: props.userRole, conversation_id: session.value.conversationId, message })
-    if (response.metadata.session_id) conversations.setSessionId(userKey.value, response.metadata.session_id)
-    conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response })
+    await streamChat('/chat/stream/v2', {
+      message,
+      session_id: session.value.conversationId,
+      user_id: Number(props.userId) || 0,
+      user_role: props.userRole || '客户',
+    }, ({ event, data }) => {
+      switch (event) {
+        case 'token':
+          assistantMsg.content += data.content || ''
+          scrollToBottom()
+          break
+        case 'done':
+          loading.value = false
+          if (data.session_id) conversations.setSessionId(userKey.value, data.session_id)
+          assistantMsg.response = data
+          scrollToBottom()
+          break
+        case 'error':
+          loading.value = false
+          error.value = data.message || '流式服务异常'
+          // 移除空消息
+          const msgs = session.value.messages
+          if (msgs[msgs.length - 1] === assistantMsg) msgs.pop()
+          break
+        case 'meta':
+          // 可用于显示 agent 名称
+          break
+      }
+    })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '金融服务暂时不可用'
+    // 流式失败，移除空消息并回退 mock
+    const msgs = session.value.messages
+    if (msgs[msgs.length - 1] === assistantMsg) msgs.pop()
     if (mockEnabled) {
       const response = createMockChatResponse(message)
       conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response, isMock: true })

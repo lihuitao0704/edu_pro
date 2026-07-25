@@ -42,36 +42,34 @@
           </div>
         </section>
         <section class="metric-grid compact">
-          <article><span>风险等级</span><strong>{{ formatRiskLevel(selected.risk_level) }}</strong><small>综合 {{ selected.risk_score || '—' }} 分</small></article>
-          <article><span>资产规模</span><strong>{{ money(selected.total_assets) }}</strong><small>{{ selected.customer_level || '零售' }}</small></article>
-          <article><span>画像置信度</span><strong>{{ selected.confidence_score ? `${Math.round(Number(selected.confidence_score) * 100)}%` : '—' }}</strong><small>持续校准</small></article>
-          <article><span>持仓市值</span><strong>{{ money(totalValue) }}</strong><small>{{ holdings.length }} 项持仓</small></article>
+          <article><span>综合风险分</span><strong>{{ selected.risk_score ?? '—' }}</strong><small>/ 100</small></article>
+          <article><span>画像置信度</span><strong>{{ selected.confidence_score ? `${Math.round(Number(selected.confidence_score) * 100)}%` : '—' }}</strong><small>证据融合</small></article>
+          <article><span>资产规模</span><strong>{{ money(selected.total_assets) }}</strong><small>总资产估值</small></article>
+          <article><span>适配等级</span><strong>{{ getProductRiskLevel(selected.risk_level) }}</strong><small>产品风险上限</small></article>
+          <article class="aml-risk-card" :data-aml-level="selected.aml_risk_level">
+            <span>AML风险等级</span>
+            <strong>{{ getAmlRiskLabel(selected.aml_risk_level) }}</strong>
+            <small>近30天预警: {{ selected.alert_count_30d ?? 0 }}条</small>
+          </article>
         </section>
 
         <!-- 投顾输出板块 -->
         <section class="advice-section">
           <LoadingPanel v-if="actionLoading" text="Agent 正在调用画像、推荐与图谱工具…" />
 
-          <!-- 资产配置饼图 -->
+          <!-- 资产配置饼图 — activeView 优先，避免回退到持仓 -->
           <AllocationPieChart
             v-else-if="activeView === 'allocation' && allocationData"
             :allocation="allocationData"
             :risk-level="allocationRiskLevel"
             :explanation="allocationExplanation"
           />
+          <div v-else-if="activeView === 'allocation'" class="surface-card recommendation-card">
+            <div class="card-heading"><h3>投顾输出</h3></div>
+            <EmptyState title="未获取到资产配置数据" description="请确认客户画像完整后重试" />
+          </div>
 
-          <!-- 持仓面板 -->
-          <HoldingPanel
-            v-else-if="activeView === 'holding' && holdings.length"
-            :holdings="holdings"
-            :total-value="totalValue"
-            :pl-summary="plSummary"
-            :concentration="concentration"
-            :industry-dist="industryDist"
-            :industry-warning="industryWarning"
-          />
-
-          <!-- 推荐方案卡片网格 -->
+          <!-- 推荐方案卡片网格 — activeView 优先 -->
           <RecommendationGrid
             v-else-if="activeView === 'recommend' && recommendations.length"
             :recommendations="recommendations"
@@ -80,6 +78,28 @@
             :nlp-insights="nlpInsights"
             @insight="onNlpInsight"
             @close-insight="onCloseNlpInsight"
+          />
+          <div v-else-if="activeView === 'recommend' && advice" class="surface-card recommendation-card">
+            <div class="card-heading"><h3>投顾输出</h3></div>
+            <div class="advice-content">
+              <div class="advice-mark">策</div>
+              <p>{{ advice }}</p>
+            </div>
+          </div>
+          <div v-else-if="activeView === 'recommend'" class="surface-card recommendation-card">
+            <div class="card-heading"><h3>投顾输出</h3></div>
+            <EmptyState title="未获取到推荐方案" description="请稍后重试" />
+          </div>
+
+          <!-- 持仓面板 — 默认显示（没有 activeView 时） -->
+          <HoldingPanel
+            v-else-if="holdings.length"
+            :holdings="holdings"
+            :total-value="totalValue"
+            :pl-summary="plSummary"
+            :concentration="concentration"
+            :industry-dist="industryDist"
+            :industry-warning="industryWarning"
           />
 
           <!-- 纯文本建议（回退） -->
@@ -94,7 +114,7 @@
           <!-- 空状态 -->
           <div v-else class="surface-card recommendation-card">
             <div class="card-heading"><h3>投顾输出</h3></div>
-            <EmptyState title="等待生成方案" description="点击上方按钮：资产配置 / 持仓分析 / 生成推荐方案" />
+            <EmptyState title="暂无持仓数据" description="该客户当前没有任何持仓记录" />
           </div>
         </section>
       </template>
@@ -259,6 +279,20 @@ function formatRiskLevel(level: unknown): string {
   return RISK_LEVEL_DISPLAY[String(level)] || String(level)
 }
 
+function getProductRiskLevel(level: unknown): string {
+  const map: Record<string, string> = {
+    c1: 'R1', C1: 'R1', c2: 'R2', C2: 'R2',
+    c3: 'R3', C3: 'R3', c4: 'R4', C4: 'R4',
+    c5: 'R5', C5: 'R5',
+  }
+  return map[String(level)] || '—'
+}
+
+function getAmlRiskLabel(level?: string): string {
+  const map: Record<string, string> = { high: '高', medium: '中', low: '低' }
+  return map[level || ''] || '低'
+}
+
 function getHoldingCount(customerId: number): number {
   return holdingCounts.value[customerId] || 0
 }
@@ -311,6 +345,32 @@ async function selectCustomer(customer: Customer) {
     holdings.value = data.items
     totalValue.value = data.total_value
     holdingCounts.value[customer.customer_id] = data.items.length
+
+    // 从原始持仓数据直接推算盈亏汇总 & 集中度（无需等待 /chat API）
+    if (data.items.length > 0) {
+      const totalPL = data.items.reduce((s, h) => s + (Number(h.profit_loss) || 0), 0)
+      const profits = data.items.filter(h => (Number(h.profit_loss) || 0) > 0).length
+      const losses = data.items.filter(h => (Number(h.profit_loss) || 0) < 0).length
+      const avgRatio = data.items.length > 0
+        ? data.items.reduce((s, h) => s + (Number(h.profit_ratio) || 0), 0) / data.items.length
+        : 0
+      plSummary.value = {
+        total_value: data.total_value,
+        total_profit_loss: Math.round(totalPL * 100) / 100,
+        profit_count: profits,
+        loss_count: losses,
+        flat_count: data.items.length - profits - losses,
+        avg_profit_ratio: Math.round(avgRatio * 10000) / 10000,
+      }
+      const maxSingle = Math.max(...data.items.map(h => Number(h.current_value) || 0))
+      concentration.value = {
+        total_value: data.total_value,
+        product_count: data.items.length,
+        max_single_ratio: data.total_value > 0 ? Math.round((maxSingle / data.total_value) * 100) / 100 : 0,
+        warning: data.total_value > 0 && maxSingle / data.total_value > 0.5 ? '单产品持仓过于集中' : null,
+      }
+    }
+
     restoreAdviceFromCache(customer.customer_id)
     try { sessionStorage.setItem('advisor:selectedCustomerId', String(customer.customer_id)) } catch {}
   } catch (reason) {
@@ -335,11 +395,25 @@ async function runAllocation() {
     const inner = extractApiData(result)
 
     // 提取 allocation 数据（用于饼图）
+    // 兼容两种结构：
+    //   嵌套：{customer_id, risk_level, allocation: {"货币类": 20, ...}, explanation}
+    //   扁平：{"货币类": 20, "债券类": 50, ...}
     const alloc = inner?.allocation
-    if (alloc && typeof alloc === 'object' && Object.keys(alloc).length > 0) {
-      allocationData.value = alloc
-      allocationRiskLevel.value = inner?.customer_profile?.risk_level || alloc.risk_level || ''
-      allocationExplanation.value = inner?.reasoning || ''
+    if (alloc && typeof alloc === 'object') {
+      if (alloc.allocation && typeof alloc.allocation === 'object' && Object.keys(alloc.allocation).length > 0) {
+        // 嵌套结构 → 提取内层 allocation map
+        allocationData.value = alloc.allocation
+        allocationRiskLevel.value = alloc.risk_level || inner?.customer_profile?.risk_level || ''
+        allocationExplanation.value = alloc.explanation || inner?.reasoning || ''
+      } else {
+        // 扁平结构 → 验证值是数值类型
+        const entries = Object.entries(alloc).filter(([, v]) => typeof v === 'number' && v > 0)
+        if (entries.length > 0) {
+          allocationData.value = alloc
+          allocationRiskLevel.value = inner?.customer_profile?.risk_level || ''
+          allocationExplanation.value = inner?.reasoning || ''
+        }
+      }
     }
 
     // 同时提取推荐产品（如果有）
@@ -355,13 +429,6 @@ async function runAllocation() {
         allocation: r.allocation || '',
       }))
       adviceReasoning.value = inner?.reasoning || ''
-    }
-
-    // 如果 allocation 数据是从 smart_recommend 的 allocation 对象获取
-    if (!allocationData.value && inner?.allocation?.allocation) {
-      allocationData.value = inner.allocation.allocation
-      allocationRiskLevel.value = inner.allocation.risk_level || ''
-      allocationExplanation.value = inner.allocation.explanation || ''
     }
 
     if (!allocationData.value && !recommendations.value.length) {
@@ -490,6 +557,20 @@ onBeforeUnmount(() => stopProfileUpdates())
 </script>
 
 <style scoped>
+/* 五指标同行 */
+.metric-grid.compact {
+  grid-template-columns: repeat(5, 1fr);
+}
+.aml-risk-card[data-aml-level='high'] {
+  border-left: 3px solid #fb7185;
+}
+.aml-risk-card[data-aml-level='medium'] {
+  border-left: 3px solid #f59e0b;
+}
+.aml-risk-card[data-aml-level='low'] {
+  border-left: 3px solid #34d399;
+}
+
 /* 客户列表缩小 */
 .customer-list > button {
   padding: 8px 7px;

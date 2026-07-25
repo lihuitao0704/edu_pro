@@ -75,36 +75,80 @@ class AdvisorService:
         # 筛选
         candidates = [p for p in MOCK_PRODUCTS if p["risk_level"] in allowed_levels]
 
-        # ── 图谱增强：获取客户当前持仓行业分布 ──
-        customer_industries = await self._get_customer_industry_counts(customer_id)
-
         # ── 风控检查：高风险标记客户限制 R3+ 产品 ──
         is_high_risk = await self._check_risk_flag(customer_id)
+
+        # ── 图谱增强：并行查询 3 路多跳图信号 ──
+        graph_collab_map: dict[str, float] = {}      # product_code → 协同过滤分
+        graph_diversify_set: set[str] = set()         # 行业分散产品
+        graph_peer_map: dict[str, float] = {}         # product_code → 同风险偏好分
+        graph_ok = True   # 降级标记
+
+        try:
+            collab_recs = await self._graph_tool.get_collaborative_recommendations(customer_id)
+            if collab_recs:
+                max_peer = max(r.get("peer_count", 1) for r in collab_recs)
+                for r in collab_recs:
+                    graph_collab_map[r["product_code"]] = r["peer_count"] / max_peer
+        except Exception:
+            logger.warning(f"协同过滤图查询失败 customer={customer_id}，降级")
+
+        try:
+            diversify_recs = await self._graph_tool.get_industry_diversify(customer_id)
+            graph_diversify_set = {r["product_code"] for r in diversify_recs if r.get("product_code")}
+        except Exception:
+            logger.warning(f"行业分散图查询失败 customer={customer_id}，降级")
+
+        try:
+            peer_recs = await self._graph_tool.get_peer_purchases(customer_id)
+            if peer_recs:
+                max_buyer = max(r.get("buyer_count", 1) for r in peer_recs)
+                for r in peer_recs:
+                    graph_peer_map[r["product_code"]] = r["buyer_count"] / max_buyer
+        except Exception:
+            logger.warning(f"同风险偏好图查询失败 customer={customer_id}，降级")
+
+        # 如果三路查询全部失败，标记降级
+        if not graph_collab_map and not graph_diversify_set and not graph_peer_map:
+            graph_ok = False
+
+        # ── 动态计算有效权重（图查询失败时等比放大其他权重）──
+        weights = dict(RECOMMENDATION_WEIGHTS)
+        if not graph_ok:
+            # 降级：图信号权重归零，其他权重等比放大
+            active_weight = sum(
+                v for k, v in weights.items() if k not in ("graph_collab", "graph_diversify", "graph_peer")
+            )
+            scale = 1.0 / active_weight if active_weight > 0 else 1.0
+            for k in ("graph_collab", "graph_diversify", "graph_peer"):
+                weights[k] = 0.0
+            for k, v in weights.items():
+                if v > 0:
+                    weights[k] = v * scale
 
         # 打分排序
         for p in candidates:
             risk_match = 1.0 if p["risk_level"] in allowed_levels[:2] else 0.6
-            pref_match = 0.7  # 简化
-            diversity = 0.8
-            return_term = p["expected_return"] / 15.0  # 归一化
+            pref_match = 0.7
+            return_term = min(p["expected_return"] / 15.0, 1.0)
 
-            # ── 图谱增强：行业集中度惩罚 ──
-            graph_signal = await self._calc_graph_signal(
-                product_code=p["product_code"],
-                customer_industries=customer_industries,
-            )
+            # 图信号：取三路中的最高分
+            graph_collab = graph_collab_map.get(p["product_code"], 0.5)
+            graph_diversify = 1.0 if p["product_code"] in graph_diversify_set else 0.3
+            graph_peer = graph_peer_map.get(p["product_code"], 0.5)
 
-            # ── 风控惩罚：高风险标记客户 → R3+ 产品降权 ──
+            # ── 风控惩罚 ──
             risk_penalty = 1.0
             if is_high_risk and p["risk_level"] in ("R3", "R4", "R5"):
-                risk_penalty = 0.3  # 高风险客户 R3+ 产品匹配分降至 30%
+                risk_penalty = 0.3
 
             p["match_score"] = (
-                RECOMMENDATION_WEIGHTS["risk_match"] * risk_match
-                + RECOMMENDATION_WEIGHTS["preference"] * pref_match
-                + RECOMMENDATION_WEIGHTS["diversification"] * diversity
-                + RECOMMENDATION_WEIGHTS["return_term"] * return_term
-                + RECOMMENDATION_WEIGHTS["graph_signal"] * graph_signal
+                weights["risk_match"] * risk_match
+                + weights["graph_collab"] * graph_collab
+                + weights["preference"] * pref_match
+                + weights["graph_diversify"] * graph_diversify
+                + weights["graph_peer"] * graph_peer
+                + weights["return_term"] * return_term
             ) * risk_penalty
 
         candidates.sort(key=lambda x: x["match_score"], reverse=True)
@@ -118,7 +162,7 @@ class AdvisorService:
                 expected_return=p["expected_return"],
                 match_score=round(p["match_score"], 2),
                 reason=await self._generate_reason(p, customer_risk, profile),
-            )
+            ).model_dump()
             for p in top
         ]
 
@@ -161,20 +205,20 @@ class AdvisorService:
             risk_level=risk_level,
             allocation={k: round(v * 100, 0) for k, v in template.items()},
             explanation=explanations.get(risk_level, "标准配置"),
-        )
+        ).model_dump()
 
     async def _persist_recommendations(self, customer_id: int, recommendations: list) -> None:
         """将推荐结果持久化到 product_recommendation 表"""
         for rec in recommendations:
             record = ProductRecommendation(
                 customer_id=customer_id,
-                product_code=rec.product_code,
-                match_score=rec.match_score,
+                product_code=rec["product_code"],
+                match_score=rec["match_score"],
                 score_detail={
-                    "risk_level": rec.risk_level,
-                    "expected_return": rec.expected_return,
+                    "risk_level": rec["risk_level"],
+                    "expected_return": rec["expected_return"],
                 },
-                reasoning=rec.reason,
+                reasoning=rec["reason"],
             )
             self.db.add(record)
         await self.db.flush()

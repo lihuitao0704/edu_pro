@@ -37,6 +37,18 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # ══════════════════════════════════════════════════════════════════
+# JSON 序列化辅助
+# ══════════════════════════════════════════════════════════════════
+
+
+def _json_default(obj):
+    """JSON 序列化辅助：正确处理 Pydantic 模型"""
+    if hasattr(obj, 'model_dump'):
+        return obj.model_dump()
+    return str(obj)
+
+
+# ══════════════════════════════════════════════════════════════════
 # System Prompt — 投顾分析师的"人设"
 # ══════════════════════════════════════════════════════════════════
 
@@ -77,59 +89,64 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 # 输出规范
 
-回答时请使用 Markdown 格式，包含以下结构（按需裁剪，不必全部都有）：
+回答时请使用 Markdown 格式。严格遵循以下结构，**不要自创章节名称**：
 
-```
-## 🚨 风控预警
-（如果 smart_recommend 返回了 risk_alerts 且 alert_level 为 high/medium，
-  必须首先展示风控预警状态，说明哪些推荐已受限）
+## 回复结构（按优先级排列）
 
-## 📊 客户风险画像
-（如果调了 profile_tool 或 smart_recommend，展示基本信息 + 四维度得分 + 风险等级 + 熔断告警）
+**1. 状态提示（有异常时才出现，无异常则跳过）**
+- 用一段简短引用块（`>`）概括当前请求的处理状态
+- 如果画像查询正常 → 不展示此块，直接进入产品推荐
+- 如果画像不存在 → "该客户暂未完成风险测评，系统已按最低风险等级（C1保守型）匹配产品。建议引导客户完成测评以获得更精准的推荐。"
+- 如果画像查询出错 → "客户画像暂时无法获取，已基于历史数据完成产品匹配，推荐结果供参考。"
+- **禁止在此处暴露工具返回的原始错误信息**（如错误码、异常堆栈等）
+- 字数控制在 80 字以内
 
-## 🎯 产品推荐
-（如果调了 smart_recommend 或 recommend_products，列出推荐产品，含风险等级、预期收益、匹配度、推荐理由）
-（如果客户有风控预警，必须说明产品推荐已被限制在安全范围内）
+**2. 风控预警（有预警时才出现，无预警则完全跳过此章节）**
+- 仅当 smart_recommend 返回 risk_alerts.alert_level 为 high/medium 时才展示
+- 无预警时**不要**展示"✅ 无风控预警"之类的段落
 
-## 📐 资产配置建议
-（如果调了 smart_recommend 或 asset_allocation，展示各资产类型配比和说明）
+**3. 客户风险画像（可选）**
+- 展示基本信息 + 风险等级（C1-C5）+ 风险评分
+- 如有熔断告警或 warnings，务必突出提醒
 
-## 🔄 客户对比分析
-（如果调了 compare_customers，展示两客户画像差异 + 共同持仓 + 行业重叠度 + 对比摘要）
+**4. 产品推荐**
+- 推荐产品列表，含风险等级、预期收益、匹配度、推荐理由
+- 优先使用表格格式，便于理财顾问快速对比
+- 如有风控限制，必须说明推荐范围已被约束
 
-## 💼 持仓分析
-（如果调了 analysis_holdings，展示持仓明细 + 行业分布 + 集中度 + 盈亏状态）
+**5. 资产配置建议（可选）**
+- 各资产类型配比百分比 + 配置逻辑简述
 
-## 🔍 知识检索结果
-（如果调了 graphrag_search，展示检索到的行业/产品/文档信息）
-```
+**6. 客户对比分析 / 持仓分析 / 知识检索结果（按需出现）**
 
 # 语言风格
-- 专业但不晦涩，面向理财顾问而非终端客户
-- 数据驱动：每个结论都要引用具体数据
-- 风险意识：如有熔断告警或 warnings，务必在回复中突出提醒
-- 温度适中：不要过度热情，也不要冷冰冰
+- **精炼优先**：用最少的字传达最多的信息，避免铺垫和过度修饰
+- 面向理财顾问，专业但不晦涩，使用金融行业通用术语
+- **数据驱动**：每个结论必须有数据支撑，引用具体数字而非模糊描述
+- 风险意识：熔断告警和风控预警信息必须置于推荐内容之前
+- 语气专业、冷静、客观，不使用感叹号或过度情绪化表达
 
 # 禁止事项
 - 不要编造数据，所有信息必须来自工具返回结果
-- 不要给出具体的买卖操作指令（如"立即买入"）
+- 不要给出具体的买卖操作指令（如"立即买入""建议卖出"）
 - 不要忽略 warnings 和熔断信息
-- **不要忽略风控预警**：如果 smart_recommend 返回了 risk_warning 或 risk_alerts.alert_level 为 high/medium，必须在回复中突出展示风控警告，并说明产品推荐已受限制
-- 如果工具返回了错误，诚实告知用户并说明原因
+- 不要忽略风控预警：如有 risk_warning 或 alert_level 为 high/medium，必须在回复开头展示风控警告
+- **不要暴露工具返回的原始错误信息**（如异常堆栈、错误码、`status=error` 等内部技术细节），用用户友好的措辞替代
+- 不要自创输出规范中未定义的章节名（如"推荐结果概览""综合分析"等）
 
 # 异常处理指南
 
-当工具返回特定状态时，你必须按以下方式处理，不得自行编造数据：
+遇到工具异常时，用以下**用户友好措辞**处理，**不要输出原始错误信息**：
 
-| 工具 | 返回状态 | 处理方式 |
-|------|---------|----------|
-| `profile_tool` | `status=not_found` | 直接回复理财顾问："该客户暂无风险画像，建议先引导客户完成风险测评问卷。" 不要尝试编造画像数据。 |
-| `smart_recommend` | `status=profile_not_found` | **重要！** 此时推荐列表中已包含R1级（最低风险）产品作为兜底推荐。你的回复必须：1) 先告知"当前您的风险评估已失效或不存在，建议您及时评测，维持有效的风评状态更方便购买财富产品"；2) 紧接着展示R1兜底推荐产品；3) 在回复末尾附加风评问卷入口：【📋 开始风评测评】(让用户点击即可进入问卷)。 |
-| `profile_tool` | `status=error` | 如实告知查询失败及具体错误原因，不要猜测或编造客户信息。 |
-| 任何工具 | 返回空或异常 | 诚实说明该工具暂时不可用，建议稍后重试或联系技术支持。 |
+| 场景 | ✅ 正确表述 | ❌ 错误表述 |
+|------|-----------|-----------|
+| 画像不存在 | 该客户暂未完成风险测评，建议引导客户完成测评问卷 | — |
+| 画像查询失败 | 客户画像暂时无法获取，已基于历史数据完成匹配 | `画像查询失败` |
+| 无风控预警 | **不展示风控章节** | "✅ 无风控预警 — 该客户当前无未处理的风控告警" |
+| smart_recommend 返回 profile_not_found | 该客户风险测评已过期，系统已按最低风险等级(R1)匹配产品。建议引导客户重新测评。推荐结果如下： | — |
+| 工具超时/异常 | 部分数据暂时无法获取，推荐结果供参考，建议稍后重试 | `Tool timeout` / `status=error` |
 
-关键原则：**宁可说"不知道"，也不编造数据。** 金融场景下的错误信息可能导致合规风险。"""
-
+关键原则：**宁可说"不知道"，也不编造数据；宁可少说，也不暴露内部技术细节。**"""
 
 class AdvisorAgent(BaseAgent):
     """
@@ -356,6 +373,154 @@ class AdvisorAgent(BaseAgent):
             "session_id": self.session_id,
         }
 
+    async def stream_execute(self, message: str, **kwargs):
+        """
+        流式执行 Agent，逐 token yield 事件字典。
+
+        事件类型:
+          {"type": "meta", "agent": "advisor", "session_id": "..."}
+          {"type": "token", "content": "为"}        # LLM 逐 token
+          {"type": "tool_end", "name": "smart_recommend"}
+          {"type": "done", "reply": "...", "recommendations": [...], ...}
+          {"type": "error", "message": "..."}
+        """
+        import json as _json
+        import asyncio
+
+        customer_id = kwargs.get("customer_id")
+
+        # ── 预处理：意图分类 + 记忆召回 + 消息构造（同 execute）──
+        cross_session_context = ""
+        if customer_id:
+            try:
+                from app.service.memory_recall_service import get_memory_recall_service
+                memory_recall = get_memory_recall_service()
+                user_profile = await memory_recall.build_user_profile_summary(self.db, customer_id)
+                historical_prefs = await memory_recall.recall_historical_preferences(self.db, customer_id)
+                if user_profile:
+                    cross_session_context += f"\n\n[客户画像]\n{user_profile}"
+                if historical_prefs:
+                    cross_session_context += f"\n\n[历史偏好]\n{historical_prefs}"
+            except Exception:
+                pass
+
+        history_messages: list[HumanMessage] = []
+        if self.memory:
+            try:
+                from langchain_core.messages import AIMessage
+                history = await self.memory.get_messages(max_tokens=4096)
+                estimated_tokens = 0
+                selected = []
+                for msg in reversed(history):
+                    content = msg.get("content", "")
+                    if not content:
+                        continue
+                    if estimated_tokens + len(content) // 2 > 3000:
+                        break
+                    estimated_tokens += len(content) // 2
+                    selected.append(msg)
+                selected.reverse()
+                for msg in selected:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        history_messages.append(HumanMessage(content=content))
+                    else:
+                        history_messages.append(AIMessage(content=content))
+            except Exception:
+                pass
+
+        user_message = self._build_user_message(message, customer_id)
+        if cross_session_context:
+            user_message = user_message + cross_session_context
+        all_messages = history_messages + [HumanMessage(content=user_message)]
+
+        yield {"type": "meta", "agent": "advisor", "session_id": self.session_id}
+
+        # ── 流式执行 LangChain Agent ──
+        full_reply = ""
+        tool_outputs: dict[str, dict] = {}
+
+        try:
+            async def _stream_agent():
+                async for event in self._agent.astream_events(
+                    {"messages": all_messages},
+                    config={"recursion_limit": 6},
+                    version="v2",
+                ):
+                    yield event
+
+            stream = _stream_agent()
+            while True:
+                try:
+                    event = await asyncio.wait_for(stream.__anext__(), timeout=180)
+                except asyncio.TimeoutError:
+                    yield {"type": "error", "message": "投顾分析超时，请尝试简化问题或稍后重试。"}
+                    break
+
+                kind = event.get("event", "")
+
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk:
+                        token = getattr(chunk, "content", None)
+                        if token and isinstance(token, str):
+                            full_reply += token
+                            yield {"type": "token", "content": token}
+
+                elif kind == "on_tool_end":
+                    name = event.get("name", "")
+                    output = event.get("data", {}).get("output", {})
+                    # 工具输出可能是 JSON 字符串，尝试解析
+                    if isinstance(output, str):
+                        try:
+                            output = _json.loads(output)
+                        except (_json.JSONDecodeError, TypeError):
+                            output = {"raw": output}
+                    tool_outputs[name] = output
+                    yield {"type": "tool_end", "name": name}
+
+                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    break
+
+        except StopAsyncIteration:
+            pass
+        except Exception as e:
+            logger.error(f"AdvisorAgent 流式执行失败: {e}", exc_info=True)
+            yield {"type": "error", "message": f"投顾服务暂时不可用：{str(e)}"}
+            return
+
+        # ── 从工具输出提取结构化数据（同 execute 逻辑）──
+        smart_rec = tool_outputs.get("smart_recommend")
+        recommendations = smart_rec.get("recommendations", []) if smart_rec else []
+        customer_profile = smart_rec.get("customer_profile") if smart_rec else None
+        allocation = smart_rec.get("allocation") if smart_rec else None
+        if not smart_rec:
+            rec_result = tool_outputs.get("recommend_products")
+            recommendations = rec_result if rec_result else []
+            profile_result = tool_outputs.get("profile_tool")
+            customer_profile = profile_result if profile_result else None
+
+        holdings_analysis = tool_outputs.get("analysis_holdings")
+
+        # ── 记忆写入 ──
+        if self.memory and full_reply:
+            try:
+                await self.memory.add_message("user", message)
+                await self.memory.add_message("assistant", full_reply)
+            except Exception:
+                pass
+
+        yield {
+            "type": "done",
+            "reply": full_reply,
+            "recommendations": recommendations,
+            "customer_profile": customer_profile,
+            "allocation": allocation,
+            "holdings_analysis": holdings_analysis,
+            "session_id": self.session_id,
+        }
+
     async def run(self, message: str, customer_id: Optional[int] = None) -> dict:
         """便捷方法"""
         return await self.execute(message, customer_id=customer_id)
@@ -546,7 +711,7 @@ class AdvisorAgent(BaseAgent):
                         "⚠️ 该客户存在中风险预警，系统已将产品推荐限制为 R1-R3 中低风险产品。"
                     )
 
-            return json.dumps(result, ensure_ascii=False, default=str)
+            return json.dumps(result, ensure_ascii=False, default=_json_default)
 
         return smart_recommend
 
@@ -586,7 +751,7 @@ class AdvisorAgent(BaseAgent):
             """
             result = await rec_tool.recommend(customer_id, top_n)
             import json
-            return json.dumps(result, ensure_ascii=False, default=str)
+            return json.dumps(result, ensure_ascii=False, default=_json_default)
 
         return recommend_products
 
@@ -609,7 +774,7 @@ class AdvisorAgent(BaseAgent):
             """
             result = await alloc_tool.get_allocation(customer_id)
             import json
-            return json.dumps(result, ensure_ascii=False, default=str)
+            return json.dumps(result, ensure_ascii=False, default=_json_default)
 
         return asset_allocation
 
@@ -637,7 +802,7 @@ class AdvisorAgent(BaseAgent):
             """
             result = await holding_tool.analyze(customer_id)
             import json
-            return json.dumps(result, ensure_ascii=False, default=str)
+            return json.dumps(result, ensure_ascii=False, default=_json_default)
 
         return analysis_holdings
 

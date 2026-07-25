@@ -13,7 +13,7 @@
     <template v-else-if="profile">
       <section class="profile-hero">
         <div class="avatar-orbit"><span>{{ String(profile.customer_id).padStart(2, '0') }}</span></div>
-        <div><h2>{{ formatRiskLevel(profile.risk_level) }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
+        <div><h2>{{ formatRiskLevelPure(profile.risk_level) }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
         <div class="risk-seal" :data-level="profile.risk_flag"><span>风险标记</span><strong>{{ riskFlagLabel }}</strong></div>
       </section>
       <section class="metric-grid profile-metric-grid">
@@ -30,12 +30,13 @@
       <section class="two-column">
         <div class="surface-card">
           <div class="card-heading"><h3>四维度能力雷达</h3></div>
-          <div ref="radarChartEl" class="radar-chart" />
+          <div v-if="hasRadarData" ref="radarChartEl" class="radar-chart" />
+          <div v-else class="radar-empty">暂无评估数据，请先完成风险测评</div>
         </div>
         <div class="surface-card">
           <div class="card-heading"><h3>关键研判标签</h3></div>
           <div class="tag-cloud">
-            <span>{{ formatRiskLevel(profile.risk_level) }}</span>
+            <span>{{ formatRiskLevelPure(profile.risk_level) }}</span>
             <span>{{ profile.investment_experience || '经验待补充' }}</span>
             <span>{{ profile.annual_income_range || '收入待补充' }}</span>
             <span>{{ Number(profile.total_assets || 0) >= 6_000_000 ? '高净值客户' : '零售客户' }}</span>
@@ -90,6 +91,12 @@ const riskProductLevel = computed(() => {
   return levels[String(profile.value?.risk_level || '')] || '—'
 })
 
+const hasRadarData = computed(() => {
+  if (!profile.value) return false
+  const dims = ['basic_score', 'experience_score', 'risk_pref_score', 'behavior_score']
+  return dims.some(k => Number(profile.value[k]) > 0)
+})
+
 const money = (value: unknown) => value ? `¥${(Number(value) / 10_000).toFixed(1)}万` : '—'
 const percent = (value: unknown) => value ? `${Math.round(Number(value) * 100)}%` : '—'
 
@@ -106,53 +113,174 @@ function formatRiskLevel(level: unknown): string {
   return RISK_LEVEL_DISPLAY[String(level)] || String(level)
 }
 
+const RISK_LEVEL_PURE: Record<string, string> = {
+  c1: '保守型', C1: '保守型', 保守型: '保守型',
+  c2: '稳健型', C2: '稳健型', 稳健型: '稳健型',
+  c3: '平衡型', C3: '平衡型', 平衡型: '平衡型',
+  c4: '进取型', C4: '进取型', 进取型: '进取型',
+  c5: '激进型', C5: '激进型', 激进型: '激进型',
+}
+function formatRiskLevelPure(level: unknown): string {
+  if (!level) return '待评估'
+  return RISK_LEVEL_PURE[String(level)] || String(level)
+}
+
+// ── 雷达图配色：按风险等级映射主色 ──
+const RADAR_THEMES: Record<string, { stroke: string; glow: string; fill: [string, string]; dot: string }> = {
+  C1: { stroke: '#34d399', glow: 'rgba(52,211,153,.40)', fill: ['rgba(52,211,153,.20)', 'rgba(52,211,153,.04)'], dot: '#6ee7b7' },
+  C2: { stroke: '#2dd4bf', glow: 'rgba(45,212,191,.40)', fill: ['rgba(45,212,191,.20)', 'rgba(45,212,191,.04)'], dot: '#5eead4' },
+  C3: { stroke: '#38bdf8', glow: 'rgba(56,189,248,.40)', fill: ['rgba(56,189,248,.20)', 'rgba(56,189,248,.04)'], dot: '#7dd3fc' },
+  C4: { stroke: '#fbbf24', glow: 'rgba(251,191,36,.40)', fill: ['rgba(251,191,36,.20)', 'rgba(251,191,36,.04)'], dot: '#fcd34d' },
+  C5: { stroke: '#f87171', glow: 'rgba(248,113,113,.40)', fill: ['rgba(248,113,113,.20)', 'rgba(248,113,113,.04)'], dot: '#fca5a5' },
+}
+const FALLBACK_THEME = RADAR_THEMES.C3
+
+function resolveRadarTheme() {
+  const level = String(profile.value?.risk_level || '').toUpperCase()
+  return RADAR_THEMES[level] ?? FALLBACK_THEME
+}
+
 function renderRadarChart() {
   if (!radarChartEl.value || !profile.value) return
+  if (radarChart && radarChart.getDom() !== radarChartEl.value) {
+    radarChart.dispose()
+    radarChart = undefined
+  }
   if (!radarChart) {
     radarChart = echarts.init(radarChartEl.value)
   }
-  // 容器可能被 v-if/v-else 重建，需检查尺寸
-  if (!radarChartEl.value.offsetWidth) return
+
+  const theme = resolveRadarTheme()
   const dims = [
-    { label: '基础属性', value: Number(profile.value.basic_score || 0) },
-    { label: '投资经验', value: Number(profile.value.experience_score || 0) },
-    { label: '风险偏好', value: Number(profile.value.risk_pref_score || 0) },
-    { label: '行为稳定', value: Number(profile.value.behavior_score || 0) },
+    { label: '基础属性', value: Number(profile.value.basic_score || 0), max: 25 },
+    { label: '投资经验', value: Number(profile.value.experience_score || 0), max: 25 },
+    { label: '风险偏好', value: Number(profile.value.risk_pref_score || 0), max: 30 },
+    { label: '行为稳定', value: Number(profile.value.behavior_score || 0), max: 20 },
   ]
-  // 各维度满分不同：基础属性25、投资经验25、风险偏好30、行为稳定20
-  const maxScores = [25, 25, 30, 20]
+
   radarChart.setOption({
+    // ── 全局动画 ──
+    animationDuration: 900,
+    animationEasing: 'cubicOut' as const,
     backgroundColor: 'transparent',
+
+    // ── 提示框：卡片式，各维度带进度条 ──
     tooltip: {
-      backgroundColor: '#111827', borderColor: '#30415a', textStyle: { color: '#e5edf9' },
-      formatter: () => dims.map(d => `${d.label}：${d.value}`).join('<br/>'),
+      backgroundColor: 'rgba(15,23,42,.96)',
+      borderColor: theme.stroke,
+      borderWidth: 1,
+      padding: [14, 18],
+      textStyle: { color: '#e2e8f0', fontSize: 13 },
+      extraCssText: 'border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.55);backdrop-filter:blur(12px);',
+      formatter: () => {
+        const rows = dims.map(d => {
+          const pct = Math.round((d.value / d.max) * 100)
+          const filled = Math.round(pct / 10)
+          const bar = '<span style="color:' + theme.stroke + '">' + '▮'.repeat(filled) + '</span>'
+            + '<span style="color:rgba(148,163,184,.20)">' + '▮'.repeat(10 - filled) + '</span>'
+          return '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:5px 0;font-size:12px;">'
+            + '<span style="color:#94a3b8;min-width:56px;">' + d.label + '</span>'
+            + '<span style="font-family:monospace;">' + bar + '</span>'
+            + '<span style="color:#e2e8f0;font-weight:700;min-width:52px;text-align:right;">'
+            + d.value + ' <span style="color:#64748b;font-weight:400;">/ ' + d.max + '</span></span>'
+            + '</div>'
+        })
+        return '<div style="font-size:11px;color:#64748b;margin-bottom:8px;letter-spacing:.5px;">四维度能力评估</div>'
+          + rows.join('')
+      },
     },
+
+    // ── 雷达坐标系 ──
     radar: {
-      indicator: dims.map((d, i) => ({ name: d.label, max: maxScores[i] })),
-      shape: 'polygon',
+      center: ['50%', '52%'],
+      radius: '60%',
       splitNumber: 4,
-      radius: '65%',
-      axisName: { color: '#aebed2', fontSize: 12 },
-      splitLine: { lineStyle: { color: '#223047' } },
-      splitArea: { show: true, areaStyle: { color: ['rgba(56,189,248,0.02)', 'rgba(56,189,248,0.05)'] } },
-      axisLine: { lineStyle: { color: '#31445d' } },
+      shape: 'polygon',
+      splitLine: {
+        lineStyle: { color: 'rgba(148,163,184,.10)', width: 1, type: 'dashed' as const },
+      },
+      splitArea: {
+        show: true,
+        areaStyle: {
+          color: [
+            'rgba(148,163,184,.015)',
+            'rgba(148,163,184,.045)',
+            'rgba(148,163,184,.015)',
+            'rgba(148,163,184,.045)',
+          ],
+        },
+      },
+      axisLine: {
+        lineStyle: { color: 'rgba(148,163,184,.15)', width: 1.5 },
+      },
+      axisName: {
+        rich: {
+          label: { color: '#cbd5e1', fontSize: 13, fontWeight: 500, padding: [0, 0, 2, 0] },
+          score: { color: '#e2e8f0', fontSize: 20, fontFamily: 'Georgia,serif', fontWeight: 700, padding: [4, 0, 0, 0] },
+          unit: { color: '#64748b', fontSize: 10, padding: [0, 0, 0, 2] },
+        },
+      },
+      indicator: dims.map(d => ({
+        name: '{label|' + d.label + '}\n{score|' + d.value + '}{unit| /' + d.max + '}',
+        max: d.max,
+      })),
     },
-    series: [{
-      type: 'radar',
-      data: [{
-        value: dims.map(d => d.value),
-        name: '四维度能力',
-        areaStyle: { color: 'rgba(56,189,248,0.25)' },
-        lineStyle: { color: '#38bdf8', width: 2 },
-        itemStyle: { color: '#7dd3fc' },
+
+    // ── 数据系列 ──
+    series: [
+      {
+        type: 'radar',
+        symbol: 'none',
+        silent: true,
+        z: 0,
+        data: [{
+          value: dims.map(d => d.max),
+          name: '满分参照',
+          lineStyle: { color: 'rgba(148,163,184,.12)', width: 1, type: 'dashed' as const },
+          areaStyle: { color: 'transparent' },
+        }],
+      },
+      {
+        type: 'radar',
         symbol: 'circle',
-        symbolSize: 6,
-      }],
-    }],
+        symbolSize: 9,
+        z: 1,
+        emphasis: { symbolSize: 13, scale: true },
+        data: [{
+          value: dims.map(d => d.value),
+          name: '四维度能力',
+          areaStyle: {
+            color: theme.fill[0],
+            shadowColor: theme.glow,
+            shadowBlur: 24,
+          },
+          lineStyle: { color: theme.stroke, width: 2.5, cap: 'round' as const, join: 'round' as const },
+          itemStyle: {
+            color: theme.dot,
+            borderColor: theme.stroke,
+            borderWidth: 2,
+            shadowColor: theme.glow,
+            shadowBlur: 10,
+          },
+          label: {
+            show: true,
+            color: '#f1f5f9',
+            fontSize: 11,
+            fontWeight: 600,
+            offset: [0, 10],
+            backgroundColor: 'rgba(15,23,42,.88)',
+            borderColor: theme.stroke,
+            borderWidth: 1,
+            padding: [2, 6],
+            borderRadius: 4,
+          },
+        }],
+      },
+    ],
   }, true)
+
   radarChart.resize()
 }
-
 async function load() {
   if (isCustomer.value && auth.user?.user_id) customerId.value = auth.user.user_id
   if (!customerId.value) {
@@ -192,19 +320,27 @@ onBeforeUnmount(() => {
 })
 watch(profile, async (newProfile) => {
   if (newProfile) {
-    // 等待 DOM 更新（v-else-if="profile" 切换后 radarChartEl 才可用）
     await nextTick()
     renderRadarChart()
-    // 兜底：若首次渲染时容器尺寸还未就绪，再尝试一次
-    setTimeout(() => renderRadarChart(), 80)
+    // rAF 兜底：v-if 场景下 nextTick 可能不够，多等一帧确保 DOM 就绪
+    requestAnimationFrame(() => renderRadarChart())
   } else {
     radarChart?.dispose()
     radarChart = undefined
+  }
+})
+
+watch(hasRadarData, async (visible) => {
+  if (visible) {
+    await nextTick()
+    renderRadarChart()
+    requestAnimationFrame(() => renderRadarChart())
   }
 })
 </script>
 
 <style scoped>
 .profile-hero h2 { font-size: 32px; }
-.radar-chart { width: 100%; height: 300px; }
+.radar-chart { width: 100%; height: 360px; }
+.radar-empty { display: grid; place-items: center; height: 360px; color: #8ca0b7; font-size: 14px; }
 </style>
