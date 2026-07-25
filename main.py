@@ -135,7 +135,7 @@ register_exception_handlers(app)
 
 # ---- 静态文件（测试前端） ----
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import os
 
 project_dir = os.path.dirname(__file__)
@@ -153,7 +153,13 @@ if os.path.isdir(frontend_assets_dir):
 
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(frontend_dir, "index.html"))
+    html_path = os.path.join(frontend_dir, "index.html")
+    with open(html_path, encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(
+        content,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
+    )
 
 # ---- 注册路由 ----
 # 认证路由（公开，无需 Token）
@@ -328,8 +334,18 @@ async def frontend_fallback(frontend_path: str):
         os.path.commonpath([frontend_root, requested_path]) == frontend_root
         and os.path.isfile(requested_path)
     ):
+        if requested_path.endswith(".html"):
+            with open(requested_path, encoding="utf-8") as f:
+                return HTMLResponse(
+                    f.read(),
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
         return FileResponse(requested_path)
-    return FileResponse(os.path.join(frontend_dir, "index.html"))
+    with open(os.path.join(frontend_dir, "index.html"), encoding="utf-8") as f:
+        return HTMLResponse(
+            f.read(),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
+        )
 
 
 def is_port_available(port: int) -> bool:
