@@ -179,18 +179,11 @@ async def recalculate_confidence(
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(require_roles("风控专员", "管理员")),
 ):
-    """手动触发置信度重算"""
-    logger.info(f"置信度重算触发: customer_id={customer_id or '全量'}")
-    from app.service.risk_confidence_rank import FinalConfidenceRankTool
-    ranker = FinalConfidenceRankTool()
-    _, alerts = await _monitor.get_alerts(db, customer_id=customer_id)
-    units = [{"confidence_score": a.get("confidence", 0.5), "age_days": 0,
-              "semantic_similarity": 0.5, "historical_accuracy": 0.5,
-              "conflict_count": 0} for a in alerts]
-    if units:
-        ranked = ranker.rank(units, "风险研判")
-        logger.info(f"重算完成: {len(ranked)}条")
-    return success(data={"processed": len(units)}, message="置信度重算完成")
+    """手动触发周期校准（置信度重算+SLA超时升级+累计升级+过期淘汰）"""
+    logger.info(f"周期校准手动触发: customer_id={customer_id or '全量'}")
+    from app.service.risk_scheduler import _run_calibration
+    await _run_calibration()
+    return success(data={"message": "校准完成"}, message="周期校准已执行")
 
 
 @router.post("/monitor/batch", summary="批量交易风控扫描")
