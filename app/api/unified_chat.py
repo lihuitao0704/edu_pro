@@ -42,6 +42,10 @@ async def resolve_owned_session_id(db: AsyncSession, session_id: str, actor_id: 
 
     A client-provided, unknown id is discarded so it cannot select an old
     short-term-memory key. The router creates a new opaque id for fresh chats.
+
+    运营商确认流程依赖此机制:
+      第一次请求: session_id="" → 生成新 UUID → persist_turn 持久化到 DB → 返回前端
+      第二次请求: session_id=UUID → DB 找到 → 所有权校验通过 → 同一 session_id → Redis pending 命中
     """
     if not session_id:
         return ""

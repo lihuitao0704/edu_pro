@@ -78,6 +78,20 @@ class NL2SQLService:
             "归档": "conversation_archive",
             "知识": "fin_knowledge_meta",
             "文档": "fin_knowledge_meta",
+            # ── Bug-fix (2026-07-25)：补充缺失关键词，避免查询走默认表 ──
+            "风险等级": "fin_risk_assessment",   # C1/C2/C3/C4/C5 查询
+            "等级": "fin_risk_assessment",
+            "C1": "fin_risk_assessment",
+            "C2": "fin_risk_assessment",
+            "C3": "fin_risk_assessment",
+            "C4": "fin_risk_assessment",
+            "C5": "fin_risk_assessment",
+            "评分": "fin_risk_assessment",
+            "过期": "fin_risk_assessment",
+            "有效期": "fin_risk_assessment",
+            "占比": "sys_user",                   # 客户占比统计
+            "总资产": "fin_customer_profile",
+            "AUM": "fin_customer_profile",
         }
         self._schema_cache: Optional[str] = None
         logger.info("NL2SQLService 初始化完成")

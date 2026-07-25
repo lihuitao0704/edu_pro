@@ -317,7 +317,7 @@ class AdvisorAgent(BaseAgent):
             result = await asyncio.wait_for(
                 self._agent.ainvoke(
                     {"messages": all_messages},
-                    config={"recursion_limit": 6},
+                    config={"recursion_limit": 15},
                 ),
                 timeout=180,
             )
@@ -457,7 +457,7 @@ class AdvisorAgent(BaseAgent):
             async def _stream_agent():
                 async for event in self._agent.astream_events(
                     {"messages": all_messages},
-                    config={"recursion_limit": 6},
+                    config={"recursion_limit": 15},
                     version="v2",
                 ):
                     yield event
@@ -482,23 +482,30 @@ class AdvisorAgent(BaseAgent):
 
                 elif kind == "on_tool_end":
                     name = event.get("name", "")
-                    output = event.get("data", {}).get("output", {})
-                    # 工具输出可能是 ToolMessage / JSON 字符串 / dict，统一提取
-                    if hasattr(output, "content"):
-                        # LangChain ToolMessage / AIMessage 等消息对象
-                        raw_content = getattr(output, "content", "")
-                        if isinstance(raw_content, str):
-                            try:
-                                output = _json.loads(raw_content)
-                            except (_json.JSONDecodeError, TypeError):
-                                output = {"raw": raw_content}
-                        else:
-                            output = {"raw": str(raw_content)}
-                    elif isinstance(output, str):
+                    output = event.get("data", {}).get("output")
+                    # 工具输出可能是 ToolMessage / Pydantic 模型 / JSON 字符串 / dict，统一提取
+                    if output is not None:
+                        if hasattr(output, "content"):
+                            # LangChain ToolMessage / AIMessage 等消息对象
+                            raw_content = getattr(output, "content", "")
+                            if isinstance(raw_content, str):
+                                try:
+                                    output = _json.loads(raw_content)
+                                except (_json.JSONDecodeError, TypeError):
+                                    output = {"raw": raw_content}
+                            else:
+                                output = {"raw": str(raw_content)}
+                        elif hasattr(output, "model_dump"):
+                            # 非 ToolMessage 的 Pydantic 模型，保留结构化
+                            output = output.model_dump()
+                    if isinstance(output, str):
                         try:
                             output = _json.loads(output)
                         except (_json.JSONDecodeError, TypeError):
                             output = {"raw": output}
+                    elif output is not None and not isinstance(output, dict):
+                        # 其他类型兜底，不丢失信息
+                        output = {"raw": str(output)}
                     tool_outputs[name] = output
                     yield {"type": "tool_end", "name": name}
 
@@ -513,17 +520,32 @@ class AdvisorAgent(BaseAgent):
             return
 
         # ── 从工具输出提取结构化数据（同 execute 逻辑）──
-        smart_rec = tool_outputs.get("smart_recommend")
+        # 防御：tool_outputs 中的值应该已经是 dict，但 Pydantic 对象漏网时降级处理
+        def _safe_dict(v):
+            if v is None:
+                return None
+            if isinstance(v, dict):
+                return v
+            if hasattr(v, "model_dump"):
+                return v.model_dump()
+            if hasattr(v, "content") and isinstance(getattr(v, "content", None), str):
+                try:
+                    return _json.loads(v.content)
+                except Exception:
+                    return None
+            return None
+
+        smart_rec = _safe_dict(tool_outputs.get("smart_recommend"))
         recommendations = smart_rec.get("recommendations", []) if smart_rec else []
         customer_profile = smart_rec.get("customer_profile") if smart_rec else None
         allocation = smart_rec.get("allocation") if smart_rec else None
         if not smart_rec:
-            rec_result = tool_outputs.get("recommend_products")
-            recommendations = rec_result if rec_result else []
-            profile_result = tool_outputs.get("profile_tool")
+            rec_result = _safe_dict(tool_outputs.get("recommend_products"))
+            recommendations = rec_result.get("recommendations", []) if rec_result else []
+            profile_result = _safe_dict(tool_outputs.get("profile_tool"))
             customer_profile = profile_result if profile_result else None
 
-        holdings_analysis = tool_outputs.get("analysis_holdings")
+        holdings_analysis = _safe_dict(tool_outputs.get("analysis_holdings"))
 
         # ── 记忆写入 ──
         if self.memory and full_reply:

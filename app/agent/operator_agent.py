@@ -156,7 +156,8 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
             _CONFIRM_TTL,
             json.dumps({"action": action, "arguments": arguments,
                         "user_id": user_id, "user_role": user_role,
-                        "summary": summary, "note_required": note_required}),
+                        "summary": summary, "note_required": note_required,
+                        "session_id": session_id}),
         )
         return True
     except Exception:
@@ -604,15 +605,28 @@ async def _check_daily_redeem_count(customer_id: int, product_id: int, db) -> Op
     return None
 
 
-def _check_contact_format(field: str, value: str) -> Optional[str]:
+def _check_contact_format(field: str, value: str) -> tuple[Optional[str], str]:
+    """校验联系方式格式。返回 (error_msg, normalized_value)。
+    error_msg 为 None 表示校验通过，normalized_value 为归一化后的值（手机号去格式符）。
+    """
     if not value or not value.strip():
-        return "联系方式不能为空"
+        return "联系方式不能为空", value
     value = value.strip()
-    if field == "phone" and not _PHONE_RE.match(value):
-        return f"手机号格式错误：{value}，应为11位大陆手机号"
-    if field == "email" and not _EMAIL_RE.match(value):
-        return f"邮箱格式错误：{value}"
-    return None
+    if field == "phone":
+        # 容错处理：LLM 可能传入带格式字符的手机号（如 "86-138-1234-5678" 或 "+8613812345678"）
+        # 先提取纯数字，再去掉中国大陆国际区号前缀（86/086），最后校验 11 位
+        digits = re.sub(r"\D", "", value)
+        if digits.startswith("086"):
+            digits = digits[3:]
+        elif digits.startswith("86") and len(digits) == 13:
+            digits = digits[2:]
+        if not _PHONE_RE.match(digits):
+            return f"手机号格式错误：{value}，应为11位大陆手机号（如 13812345678）", value
+        return None, digits  # 归一化后的纯数字
+    elif field == "email":
+        if not _EMAIL_RE.match(value):
+            return f"邮箱格式错误：{value}", value
+    return None, value
 
 
 async def _check_transfer_eligibility(to_id: int, db) -> Optional[str]:
@@ -1061,15 +1075,16 @@ async def _tool_update_contact(arguments: dict, _operator_id: int | None) -> dic
         return {"success": False, "message": err}
     field = arguments.get("field", "")
     value = arguments.get("value", "")
-    if e := _check_contact_format(field, value):
-        return {"success": False, "message": e}
-    if len(value.strip()) > 128:
+    fmt_err, normalized_value = _check_contact_format(field, value)
+    if fmt_err:
+        return {"success": False, "message": fmt_err}
+    if len(normalized_value.strip()) > 128:
         return {"success": False, "message": "联系方式长度超限（最大128字符）"}
 
     async with async_session_factory() as db:
         if e := await _check_customer_status(cid, db):
             return {"success": False, "message": e}
-        result = await update_contact(body={"customer_id": cid, "field": field, "value": value}, db=db)
+        result = await update_contact(body={"customer_id": cid, "field": field, "value": normalized_value}, db=db)
         return {"success": result.code == 200, "message": result.message, "data": result.data}
 
 
