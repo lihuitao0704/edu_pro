@@ -108,7 +108,7 @@ async def recommend_products(
     return success(data=result)
 
 
-@router.put("/recommendations/{recommendation_id}/feedback")
+@router.put("/advisor/recommendations/{recommendation_id}/feedback")
 async def recommendation_feedback(
     recommendation_id: int,
     body: dict,
@@ -137,7 +137,7 @@ async def recommendation_feedback(
         return error(500, "推荐反馈保存失败")
 
 
-@router.post("/allocation")
+@router.post("/advisor/allocation")
 async def asset_allocation(
     req: AllocationRequest,
     db: AsyncSession = Depends(get_db),
@@ -150,7 +150,7 @@ async def asset_allocation(
     return success(data=result)
 
 
-@router.post("/holdings-analysis")
+@router.post("/advisor/holdings-analysis")
 async def holdings_analysis(
     req: AllocationRequest,
     db: AsyncSession = Depends(get_db),

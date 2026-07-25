@@ -37,3 +37,10 @@ def test_frontend_build_is_skipped_when_dist_exists(monkeypatch, tmp_path: Path)
     main.ensure_frontend_build(tmp_path)
 
     assert invoked == []
+
+
+def test_advisor_workspace_routes_match_the_frontend_api_contract():
+    assert str(main.app.url_path_for("advisor_chat")) == "/api/advisor"
+    assert str(main.app.url_path_for("asset_allocation")) == "/api/advisor/allocation"
+    assert str(main.app.url_path_for("holdings_analysis")) == "/api/advisor/holdings-analysis"
+    assert str(main.app.url_path_for("recommendation_feedback", recommendation_id="1")) == "/api/advisor/recommendations/1/feedback"
