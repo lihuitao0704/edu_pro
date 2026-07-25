@@ -163,12 +163,20 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
         return False
 
 
-async def _load_pending_confirm(session_id: str) -> Optional[dict]:
+async def _load_pending_confirm(session_id: str, user_id: int = 0) -> Optional[dict]:
     try:
         r = await get_redis()
         data = await r.get(f"{_CONFIRM_PREFIX}{session_id}")
         if data:
             return json.loads(data)
+        if user_id:
+            keys = await r.keys(f"{_CONFIRM_PREFIX}*")
+            for key in keys:
+                d = await r.get(key)
+                if d:
+                    p = json.loads(d)
+                    if p.get("user_id") == user_id:
+                        return p
     except Exception:
         pass
     return None
@@ -1429,7 +1437,7 @@ async def operator_chat(
     _parsed_note = _note_match.group("note").strip() if _note_match and _note_match.group("note") else ""
 
     if _is_confirm:
-        pending = await _load_pending_confirm(session_id)
+        pending = await _load_pending_confirm(session_id, user_id)
         if pending:
             note_required = pending.get("note_required", False)
             if note_required and not _parsed_note:
@@ -1466,7 +1474,7 @@ async def operator_chat(
             return {"reply": reply, "action": None, "params": {}, "status": "ok", "session_id": session_id}
 
     if msg_stripped in ("取消", "不", "否", "n", "no"):
-        pending = await _load_pending_confirm(session_id)
+        pending = await _load_pending_confirm(session_id, user_id)
         if pending:
             await _delete_pending_confirm(session_id)
             reply = f"已取消 {pending['action']} 操作。"
