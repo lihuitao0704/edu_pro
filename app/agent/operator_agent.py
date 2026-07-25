@@ -6,14 +6,13 @@
 校验: P0~P5 全量业务校验（适当性/持仓/余额/风控/反洗钱/审计）
 """
 
-import os
 import re
 import uuid
 import json
 import httpx
 import logging
 from typing import Optional
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
 from openai import AsyncOpenAI
@@ -39,6 +38,7 @@ from app.tool.graph_query_tool import (
 from app.service.event_bus import publish_operation_event
 from app.memory.session_memory import SessionMemory
 from app.utils.data_masking import mask_text
+from app.config.database import async_session_factory, get_redis
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -145,12 +145,12 @@ _CONFIRM_TTL = 120
 
 async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
                                  user_id: int, user_role: str,
-                                 note_required: bool = False) -> bool:
+                                 note_required: bool = False,
+                                 estimated_amount: float = 0) -> bool:
     """将待确认操作存入 Redis。note_required: 大额(>=50万)是否强制要求备注。"""
     try:
-        from app.config.database import get_redis
         r = await get_redis()
-        summary = _build_confirmation_summary(action, arguments)
+        summary = _build_confirmation_summary(action, arguments, estimated_amount=estimated_amount)
         await r.setex(
             f"{_CONFIRM_PREFIX}{session_id}",
             _CONFIRM_TTL,
@@ -165,7 +165,6 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
 
 async def _load_pending_confirm(session_id: str) -> Optional[dict]:
     try:
-        from app.config.database import get_redis
         r = await get_redis()
         data = await r.get(f"{_CONFIRM_PREFIX}{session_id}")
         if data:
@@ -177,13 +176,14 @@ async def _load_pending_confirm(session_id: str) -> Optional[dict]:
 
 async def _delete_pending_confirm(session_id: str):
     try:
-        from app.config.database import get_redis
-        await (await get_redis()).delete(f"{_CONFIRM_PREFIX}{session_id}")
+        r = await get_redis()
+        await r.delete(f"{_CONFIRM_PREFIX}{session_id}")
     except Exception:
         pass
 
 
-def _build_confirmation_summary(action: str, arguments: dict) -> str:
+def _build_confirmation_summary(action: str, arguments: dict,
+                                estimated_amount: float = 0) -> str:
     if action == "purchase_product":
         amount = arguments.get('amount', 0)
         summary = (f"申购：客户 {arguments.get('customer_name','')} "
@@ -192,8 +192,11 @@ def _build_confirmation_summary(action: str, arguments: dict) -> str:
             summary += "\n⚠️ 大额操作，请回复'确认 备注：<原因>'（如：确认 备注：客户主动要求）"
         return summary
     if action == "redeem_product":
-        return (f"赎回：客户 {arguments.get('customer_name','')} "
-                f"赎回 {arguments.get('product_name','')}，份额 {arguments.get('shares', 0)}")
+        summary = (f"赎回：客户 {arguments.get('customer_name','')} "
+                   f"赎回 {arguments.get('product_name','')}，份额 {arguments.get('shares', 0)}")
+        if estimated_amount >= _LARGE_AMOUNT_NOTE_THRESHOLD:
+            summary += f"\n⚠️ 大额操作（预估金额 {estimated_amount:,.2f} 元），请回复'确认 备注：<原因>'"
+        return summary
     if action == "transfer_funds":
         amount = arguments.get('amount', 0)
         summary = (f"转账：{arguments.get('from_customer_name','')} → "
@@ -736,7 +739,6 @@ async def _create_audit_work_order(action: str, arguments: dict, data: dict,
     if action not in _AUDIT_OPS:
         return
     try:
-        from app.config.database import async_session_factory
         customer_id = arguments.get("customer_id") or arguments.get("customer_name", "")
         if isinstance(customer_id, str):
             cid = await resolve_customer_id(customer_id)
@@ -786,7 +788,6 @@ async def _create_audit_work_order(action: str, arguments: dict, data: dict,
 
 async def _archive_memory(memory: "SessionMemory", user_id: int) -> None:
     try:
-        from app.config.database import async_session_factory
         async with async_session_factory() as db:
             await memory.archive(db, user_id, agent_type="operator")
     except Exception:
@@ -797,12 +798,11 @@ async def _recall_recent_operations(user_id: int) -> str:
     if not user_id:
         return ""
     try:
-        from app.config.database import async_session_factory
         async with async_session_factory() as db:
             result = await db.execute(text("""
                 SELECT content, create_time FROM conversation_archive
                 WHERE user_id = :uid AND agent_type = 'operator' AND role = 'assistant'
-                  AND (content LIKE '%%✅%%' OR content LIKE '%%操作%%' OR content LIKE '%%成功%%')
+                  AND (content LIKE '%✅%' OR content LIKE '%操作%' OR content LIKE '%成功%')
                 ORDER BY create_time DESC LIMIT 10
             """), {"uid": user_id})
             rows = result.mappings().all()
@@ -860,7 +860,8 @@ async def _tool_purchase(arguments: dict, operator_id: int | None) -> dict:
     if err:
         return {"success": False, "message": err}
 
-    from app.config.database import async_session_factory
+    trading_warn = _check_trading_hours()
+
     async with async_session_factory() as db:
         if e := _check_purchase_amount_multiple(amount):
             return {"success": False, "message": e}
@@ -887,10 +888,6 @@ async def _tool_purchase(arguments: dict, operator_id: int | None) -> dict:
         if w := await _check_pending_risk_alerts(cid, db, "客户"):
             risk_warnings.append(w)
 
-    trading_warn = _check_trading_hours()
-
-    from app.config.database import async_session_factory
-    async with async_session_factory() as db:
         result = await purchase_product(
             body={"customer_id": cid, "product_id": pid, "amount": amount, "operator_id": operator_id}, db=db)
         msg = result.message
@@ -921,7 +918,6 @@ async def _tool_redeem(arguments: dict, operator_id: int | None) -> dict:
 
     trading_warn = _check_trading_hours()
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if e := await _check_product_status(pid, "redeem", db):
             return {"success": False, "message": e}
@@ -951,8 +947,6 @@ async def _tool_redeem(arguments: dict, operator_id: int | None) -> dict:
         if w := await _check_pending_risk_alerts(cid, db, "客户"):
             risk_warnings.append(w)
 
-    from app.config.database import async_session_factory
-    async with async_session_factory() as db:
         result = await redeem_product(body={
             "customer_id": cid, "product_id": pid, "shares": shares, "operator_id": operator_id,
         }, db=db)
@@ -988,7 +982,6 @@ async def _tool_transfer(arguments: dict, operator_id: int | None) -> dict:
 
     trading_warn = _check_trading_hours()
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if e := await _check_customer_status(from_id, db):
             return {"success": False, "message": f"转出方{e}"}
@@ -1005,8 +998,6 @@ async def _tool_transfer(arguments: dict, operator_id: int | None) -> dict:
             if w := await _check_pending_risk_alerts(sid, db, label):
                 risk_warnings.append(w)
 
-    from app.config.database import async_session_factory
-    async with async_session_factory() as db:
         result = await transfer_funds(body={
             "from_customer_id": from_id, "to_customer_id": to_id,
             "amount": amount, "operator_id": operator_id,
@@ -1041,7 +1032,6 @@ async def _tool_redo_assessment(arguments: dict, operator_id: int | None) -> dic
         except (ValueError, TypeError):
             return {"success": False, "message": f"第{i+1}题答案 {ans} 格式错误（应为整数）"}
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if e := await _check_customer_status(cid, db):
             return {"success": False, "message": e}
@@ -1051,8 +1041,6 @@ async def _tool_redo_assessment(arguments: dict, operator_id: int | None) -> dic
             {"cid": cid})
         recent = recent_row.mappings().first()
 
-    from app.config.database import async_session_factory
-    async with async_session_factory() as db:
         result = await redo_assessment(body={
             "customer_id": cid, "answers": answers, "operator_id": operator_id,
         }, db=db)
@@ -1076,7 +1064,6 @@ async def _tool_update_contact(arguments: dict, _operator_id: int | None) -> dic
     if len(value.strip()) > 128:
         return {"success": False, "message": "联系方式长度超限（最大128字符）"}
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if e := await _check_customer_status(cid, db):
             return {"success": False, "message": e}
@@ -1099,7 +1086,6 @@ async def _tool_report_suspicious(arguments: dict, operator_id: int | None) -> d
     if len(reason) > 2000:
         return {"success": False, "message": "上报原因长度超限（最大2000字符）"}
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         repeat_warn = await _check_suspicious_repeat(cid, reason, db)
         if e := await _check_customer_status(cid, db):
@@ -1132,7 +1118,6 @@ async def _tool_create_work_order(arguments: dict, operator_id: int | None) -> d
     if order_type not in _VALID_ORDER_TYPES:
         return {"success": False, "message": f"工单类型无效: {order_type}，可选: {', '.join(_VALID_ORDER_TYPES)}"}
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if e := await _check_customer_status(cid, db):
             return {"success": False, "message": e}
@@ -1148,14 +1133,12 @@ async def _tool_query_product(arguments: dict, _op) -> dict:
     pid, err = await _resolve_product(arguments)
     if err:
         return {"success": False, "message": err}
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         result = await query_product(product_id=pid, db=db)
         return {"success": result.code == 200, "message": result.message, "data": result.data}
 
 
 async def _tool_query_product_list(arguments: dict, _op) -> dict:
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         result = await list_products(
             risk_level=arguments.get("risk_level"),
@@ -1216,7 +1199,6 @@ async def _tool_query_audit_log(arguments: dict, _op) -> dict:
         conditions.append("t.amount >= :min_amt")
         params["min_amt"] = min_amount
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         result = await db.execute(text(f"""
             SELECT t.transaction_no, t.customer_id, t.product_id,
@@ -1260,7 +1242,6 @@ async def _tool_query_customer_panoramic(arguments: dict, _op) -> dict:
     if not cid:
         return {"success": False, "message": f"未找到客户: {customer_name}"}
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         user = (await db.execute(
             text("SELECT id, real_name, phone, email, balance, status, create_time FROM sys_user WHERE id = :cid"),
@@ -1348,7 +1329,6 @@ async def _tool_query_customer_list(arguments: dict, _op) -> dict:
         conditions.append("u.status = :status")
         params["status"] = status
 
-    from app.config.database import async_session_factory
     async with async_session_factory() as db:
         if risk_level:
             base_query = f"""
@@ -1548,7 +1528,6 @@ async def operator_chat(
             _pid = await resolve_product_id(arguments.get("product_name", ""))
             confirm_value = 0.0
             if _cid and _pid:
-                from app.config.database import async_session_factory
                 async with async_session_factory() as _db:
                     _h = (await _db.execute(
                         text("SELECT shares, current_value, cost_amount FROM fin_holdings "
@@ -1568,13 +1547,16 @@ async def operator_chat(
 
         if needs_confirmation(action, confirm_value):
             note_required = confirm_value >= _LARGE_AMOUNT_NOTE_THRESHOLD
+            # 赎回的 confirm_value 是估算金额，传入 summary 生成大额备注提示
+            est_amt = confirm_value if action == "redeem_product" else 0
             saved = await _save_pending_confirm(
-                session_id, action, arguments, user_id, user_role, note_required=note_required)
+                session_id, action, arguments, user_id, user_role,
+                note_required=note_required, estimated_amount=est_amt)
             if not saved:
                 replies.append(f"系统暂忙，无法处理大额 {action} 操作，请稍后再试")
                 actions_taken.append({"action": action, "status": "system_error"})
                 continue
-            summary = _build_confirmation_summary(action, arguments)
+            summary = _build_confirmation_summary(action, arguments, estimated_amount=est_amt)
             pending_count = len(msg.tool_calls) - len(actions_taken) - 1
             reply = f"⚠️ 大额操作需确认：{summary}\n\n请回复 '确认' 执行，或 '取消' 放弃。"
             if replies:
