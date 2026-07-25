@@ -125,16 +125,10 @@ async def redeem_product(
         await db.execute(text("UPDATE fin_holdings SET shares=:s, cost_amount=:cost, current_value=:v, update_time=NOW() WHERE id=:id"),
                          {"s": float(remaining), "cost": float(new_cost), "v": float(remaining * nav), "id": holding["id"]})
 
-    risk_monitor = await _transaction_flow.monitor(
-        db,
-        {
-            "customer_id": customer_id,
-            "transaction_id": txn_no,
-            "amount": float(amount),
-            "transaction_type": "redeem",
-            "timestamp": datetime.now().isoformat(),
-        },
-    )
+    risk_monitor = {
+        "alert": preflight["alert"],
+        "triggered_count": preflight["triggered_count"],
+    }
     await db.commit()
     sync_type = "remove_holding" if remaining <= 0 else "holding"
     sync_payload = {"customer_id": customer_id, "product_id": product_id}

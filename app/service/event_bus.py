@@ -134,7 +134,7 @@ async def _save_failed_event(event_type: str, payload: dict, trace_id: str, erro
         logger.error(f"持久化失败事件异常: {e}")
 
 
-async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> None:
+async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> bool:
     """
     发布事件到 Redis Pub/Sub 频道
     修复 3.10：添加重试机制（最多 3 次，指数退避）+ 熔断机制
@@ -166,12 +166,12 @@ async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> N
         for attempt in range(max_retries + 1):
             try:
                 await _event_breaker.call(_do_publish)
-                return  # 发布成功，退出重试循环
+                return True
             except CircuitBreakerError:
                 # 熔断器打开，快速失败，持久化事件
                 logger.warning(f"事件发布被熔断: {event_type}, trace_id={trace_id}")
                 await _save_failed_event(event_type, payload, trace_id, "熔断器打开")
-                return
+                return False
             except Exception as e:
                 if attempt < max_retries:
                     # 重试前等待（指数退避）
@@ -187,11 +187,22 @@ async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> N
     except Exception as e:
         logger.error(f"事件发布异常: {e}")
         await _save_failed_event(event_type, payload, trace_id, str(e))
+    return False
 
 
-async def publish_domain_event(event) -> None:
+async def publish_domain_event(event) -> bool:
     """Publish one canonical AgentDomainEvent on the sole six-Agent channel."""
-    await publish_event(EVENT_AGENT_DOMAIN, event.to_dict(), event.correlation_id)
+    return await publish_event(EVENT_AGENT_DOMAIN, event.to_dict(), event.correlation_id)
+
+
+async def queue_domain_event(event) -> None:
+    """Append a derived event to the transactional outbox for relay delivery."""
+    from app.config.database import async_session_factory
+    from app.service.agent_event_service import EventDispatcher
+
+    async with async_session_factory() as db:
+        await EventDispatcher.enqueue(db, event)
+        await db.commit()
 
 
 async def handle_domain_event(event) -> None:
@@ -210,7 +221,7 @@ async def handle_domain_event(event) -> None:
         # into the canonical risk fact so every downstream Agent shares one path.
         from app.service.agent_event_service import AgentDomainEvent
 
-        await publish_domain_event(
+        await queue_domain_event(
             AgentDomainEvent.create(
                 event_type="risk_alert_created",
                 source_agent="risk",
@@ -268,6 +279,29 @@ async def handle_domain_event(event) -> None:
         async with async_session_factory() as db:
             await ProfileService(db).apply_customer_sentiment(event.payload, event.customer_id)
             await db.commit()
+    elif event.event_type == "recommendation_feedback":
+        from app.config.database import async_session_factory
+        from app.service.profile_service import ProfileService
+
+        async with async_session_factory() as db:
+            await ProfileService(db).apply_recommendation_feedback(event.payload, event.customer_id)
+            await db.commit()
+
+
+async def claim_domain_event_consumption(event_id: str, consumer: str = "six_agent_router") -> bool:
+    """Persistently claim an event before the shared six-Agent consumer handles it."""
+    from sqlalchemy.exc import IntegrityError
+    from app.config.database import async_session_factory
+    from app.model.entities import AgentEventConsumption
+
+    async with async_session_factory() as db:
+        try:
+            db.add(AgentEventConsumption(event_id=event_id, consumer=consumer))
+            await db.commit()
+            return True
+        except IntegrityError:
+            await db.rollback()
+            return False
 
 
 async def publish_operation_event(action: str, arguments: dict, data: dict,
@@ -283,7 +317,7 @@ async def publish_operation_event(action: str, arguments: dict, data: dict,
     - 向后兼容：同时发布到 event:risk_alert (legacy)
     """
     if action in {"purchase_product", "redeem_product", "transfer_funds"}:
-        await publish_domain_event(
+        await queue_domain_event(
             build_transaction_completed_event(
                 action=action,
                 arguments=arguments,
@@ -387,7 +421,9 @@ async def _handle_event(event: dict, channel: str = "") -> None:
 
     if channel == EVENT_AGENT_DOMAIN:
         from app.service.agent_event_service import AgentDomainEvent
-        await handle_domain_event(AgentDomainEvent.from_dict(payload))
+        domain_event = AgentDomainEvent.from_dict(payload)
+        if await claim_domain_event_consumption(domain_event.event_id):
+            await handle_domain_event(domain_event)
         return
 
     # 根据频道路由（优先使用频道名，因为同一个 event_type 可能出现在多个频道）
@@ -469,6 +505,8 @@ async def _handle_c4_customer_context(payload: dict) -> None:
             risk_data = {
                 "has_alert": True,
                 "last_action": payload.get("action", ""),
+                "alert_level": result.get("alert_level", "medium"),
+                "valid_until": result.get("valid_until"),
                 "amount": args.get("amount", 0),
                 "updated_at": datetime.now().isoformat(),
                 "source": "c4_event",

@@ -64,10 +64,13 @@ async def lifespan(app: FastAPI):
     # 启动事件总线订阅消费者（多 Agent 协作闭环）
     # 统一订阅者：同时处理 risk_alert → risk_flag(MySQL+Redis) + cache clear + profile_update + work_order_change
     event_subscriber_task = None
+    event_outbox_task = None
     try:
         import asyncio
         from app.service.event_bus import start_event_subscriber
+        from app.service.agent_event_service import run_outbox_relay
         event_subscriber_task = asyncio.create_task(start_event_subscriber())
+        event_outbox_task = asyncio.create_task(run_outbox_relay())
         print("  EventBus: 事件订阅消费者已启动（risk_alert + profile_update + work_order_change + graph_sync）")
     except Exception as e:
         print(f"  EventBus: 启动失败 ({e})")
@@ -78,6 +81,8 @@ async def lifespan(app: FastAPI):
     print("[关闭] 系统正在停止...")
     if event_subscriber_task:
         event_subscriber_task.cancel()
+    if event_outbox_task:
+        event_outbox_task.cancel()
     try:
         from app.service.risk_scheduler import stop_scheduler
         stop_scheduler()

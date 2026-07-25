@@ -6,6 +6,7 @@ from app.service.profile_service import ProfileService
 from app.service.advisor_service import AdvisorService
 from app.service.insight_extractor import extract_analytics_insights
 from app.service.customer_sentiment import detect_customer_sentiment
+from app.model.schemas import ProductRecommend
 
 
 class _RiskRule:
@@ -60,6 +61,16 @@ class TransactionPreflightTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RecommendationFeedbackTests(unittest.TestCase):
+    def test_recommendation_output_keeps_product_type_for_feedback(self):
+        recommendation = ProductRecommend(
+            product_code="F300001",
+            product_name="混合基金",
+            product_type="混合基金",
+            risk_level="R3",
+            reason="适配",
+        )
+        self.assertEqual("混合基金", recommendation.model_dump()["product_type"])
+
     def test_three_rejections_add_product_type_to_avoid_constraints(self):
         preference = {}
         event = {"product_type": "混合基金", "status": "rejected", "reason": "波动过大"}
@@ -104,3 +115,11 @@ class CustomerSentimentTests(unittest.TestCase):
 
         self.assertEqual("high_distress", result["level"])
         self.assertTrue(result["keywords"])
+
+
+class ProfileServiceRegressionTests(unittest.TestCase):
+    def test_profile_service_initializes_assessment_dependencies(self):
+        service = ProfileService(object())
+        self.assertIsNotNone(service.calculator)
+        self.assertIsNotNone(service.breaker)
+        self.assertIsNotNone(service.special)

@@ -146,6 +146,7 @@ class ProductRecommend(BaseModel):
     product_code: str
     product_name: str
     risk_level: str
+    product_type: Optional[str] = None
     expected_return: Optional[float] = None
     match_score: Optional[float] = None
     reason: str

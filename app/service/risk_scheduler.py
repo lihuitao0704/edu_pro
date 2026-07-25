@@ -13,8 +13,7 @@ from sqlalchemy import select, text, update
 from app.config.database import async_session_factory
 from app.model.entities import FinRiskAlert, RiskAssessment
 from app.engine.confidence import ConfidenceCalculator
-from app.service.agent_event_service import AgentDomainEvent
-from app.service.event_bus import publish_domain_event
+from app.service.agent_event_service import AgentDomainEvent, EventDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +118,6 @@ async def _run_calibration():
             f"更新{updated}条, 风评提醒{len(expiry_events)}条"
         )
         await db.commit()
-        for event in expiry_events:
-            await publish_domain_event(event)
 
 
 async def _create_expiry_reminders(db) -> list[AgentDomainEvent]:
@@ -164,6 +161,8 @@ async def _create_expiry_reminders(db) -> list[AgentDomainEvent]:
                     },
                 )
             )
+    for event in events:
+        await EventDispatcher.enqueue(db, event)
     return events
 
 

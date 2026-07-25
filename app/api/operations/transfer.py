@@ -140,18 +140,10 @@ async def transfer_funds(
         {"t": txn_no_in, "c": to_id, "a": amount, "o": operator_id, "r": f"收到客户{from_id}转账"},
     )
 
-    risk_monitor_out = await _transaction_flow.monitor(
-        db,
-        {
-            "customer_id": from_id,
-            "transaction_id": txn_no,
-            "amount": float(amount),
-            "transaction_type": "transfer_out",
-            "timestamp": datetime.now().isoformat(),
-            "counterparty": {"account": str(to_id)},
-            "investor_account": str(from_id),
-        },
-    )
+    risk_monitor_out = {
+        "alert": preflight["alert"],
+        "triggered_count": preflight["triggered_count"],
+    }
     risk_monitor_in = await _transaction_flow.monitor(
         db,
         {

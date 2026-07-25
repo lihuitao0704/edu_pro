@@ -140,17 +140,17 @@ class CustomerServiceAgent:
         )
         # 客服→画像：只记录可解释的短期情绪信号，不改变正式风险等级。
         try:
-            from app.service.agent_event_service import AgentDomainEvent
+            from app.service.agent_event_service import AgentDomainEvent, EventDispatcher
             from app.service.customer_sentiment import detect_customer_sentiment
-            from app.service.event_bus import publish_domain_event
 
             sentiment = detect_customer_sentiment(message)
             if sentiment["level"] != "neutral":
-                await publish_domain_event(
+                await EventDispatcher.enqueue(
+                    self.db,
                     AgentDomainEvent.create(
                         "customer_sentiment", "customer", user_id, sentiment,
                         correlation_id=session_id,
-                    )
+                    ),
                 )
         except Exception as exc:
             logger.warning("客户情绪联动失败（不影响客服回复）: %s", exc)

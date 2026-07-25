@@ -111,7 +111,7 @@ class EventOutboxTests(unittest.IsolatedAsyncioTestCase):
         event = AgentDomainEvent.create(
             "suspicious_reported", "operator", 27, {"alert_id": 89, "reason": "异常资金流"}
         )
-        with patch("app.service.event_bus.publish_domain_event", new=AsyncMock()) as publish:
+        with patch("app.service.event_bus.queue_domain_event", new=AsyncMock()) as publish:
             await event_bus.handle_domain_event(event)
 
         promoted = publish.await_args.args[0]
@@ -128,6 +128,16 @@ class EventOutboxTests(unittest.IsolatedAsyncioTestCase):
 
         customer.assert_awaited_once()
         self.assertEqual("risk_assessment_expiring", customer.await_args.args[0]["action"])
+
+    async def test_duplicate_domain_delivery_is_filtered_by_durable_claim(self):
+        event = AgentDomainEvent.create("risk_alert_created", "risk", 27, {"alert_level": "high"})
+        envelope = {"payload": event.to_dict()}
+        with patch("app.service.event_bus.claim_domain_event_consumption", new=AsyncMock(return_value=False)), patch(
+            "app.service.event_bus.handle_domain_event", new=AsyncMock()
+        ) as handle:
+            await event_bus._handle_event(envelope, EVENT_AGENT_DOMAIN)
+
+        handle.assert_not_awaited()
 
 
 class EventDispatcherTests(unittest.IsolatedAsyncioTestCase):

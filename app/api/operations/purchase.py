@@ -252,17 +252,12 @@ async def purchase_product(
                 synced_shares = float(shares)
                 synced_value = float(amount)
 
-            risk_monitor = await _transaction_flow.monitor(
-                db,
-                {
-                    "customer_id": customer_id,
-                    "transaction_id": txn_no,
-                    "amount": float(amount),
-                    "transaction_type": "purchase",
-                    "timestamp": datetime.now().isoformat(),
-                    "investor_account": str(customer_id),
-                },
-            )
+            # Reuse the pre-execution assessment. Running the same rule set a
+            # second time would create a duplicate low-risk alert.
+            risk_monitor = {
+                "alert": preflight["alert"],
+                "triggered_count": preflight["triggered_count"],
+            }
 
             # ── 事务性写入图谱同步意图（outbox 模式）──
             # 在 commit 前将 Neo4j 同步意图写入 retry 表，确保不会丢失

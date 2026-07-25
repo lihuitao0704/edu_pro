@@ -125,17 +125,14 @@ class RiskMonitorService:
             await self._create_work_order(db, alert, entity.id)
 
         # Redis 双写
-        await self._add_pending_alert(entity.id)
 
         # 风险事实只通过统一领域事件发布；不再向 C1/C2/C4/legacy 多播。
         if alert["alert_level"] in ("medium", "high"):
             try:
                 from app.service.agent_event_service import EventDispatcher
-                from app.service.event_bus import publish_domain_event
 
                 event = build_risk_alert_event({**alert, "alert_id": entity.id})
                 await EventDispatcher.enqueue(db, event)
-                await publish_domain_event(event)
                 logger.info("统一风险事件已广播: 客户%s %s级", alert["customer_id"], alert["alert_level"])
             except Exception as e:
                 logger.warning(f"事件广播失败(不影响主流程): {e}")

@@ -6,7 +6,8 @@ import inspect
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
 from typing import Awaitable, Callable
 
 
@@ -75,11 +76,7 @@ EventHandler = Callable[[AgentDomainEvent], Awaitable[None] | None]
 
 
 class EventDispatcher:
-    """Dispatch an event at-most-once per named consumer in one process.
-
-    Durable outbox/consumption persistence is added by the next implementation
-    task; this local guard prevents duplicate legacy Redis deliveries today.
-    """
+    """In-process helper retained for unit-level handler dispatch."""
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[tuple[str, EventHandler]]] = defaultdict(list)
@@ -118,3 +115,81 @@ class EventDispatcher:
             outcome = handler(event)
             if inspect.isawaitable(outcome):
                 await outcome
+
+
+async def relay_outbox_once(batch_size: int = 100) -> int:
+    """Publish committed outbox entries and retain failed entries for retry.
+
+    Rows are claimed in a short database transaction before Redis is touched;
+    a crashed relay is reclaimed after five minutes. This keeps publication
+    strictly after the originating business transaction commits.
+    """
+    from app.config.database import async_session_factory
+    from app.model.entities import AgentEventOutbox
+
+    now = datetime.now()
+    stale_before = now - timedelta(minutes=5)
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(AgentEventOutbox)
+                .where(
+                    (AgentEventOutbox.status == "pending")
+                    | ((AgentEventOutbox.status == "publishing") & (AgentEventOutbox.claimed_at < stale_before))
+                )
+                .order_by(AgentEventOutbox.created_at)
+                .limit(batch_size)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars().all()
+        for row in rows:
+            row.status = "publishing"
+            row.claimed_at = now
+            row.retry_count += 1
+        await db.commit()
+
+    published = 0
+    for row in rows:
+        event = AgentDomainEvent(
+            event_id=row.event_id,
+            event_type=row.event_type,
+            source_agent=row.source_agent,
+            customer_id=row.customer_id,
+            correlation_id=row.correlation_id,
+            version=int((row.payload or {}).get("version", 1)),
+            occurred_at=str((row.payload or {}).get("occurred_at")),
+            payload=dict((row.payload or {}).get("payload") or {}),
+        )
+        from app.service.event_bus import publish_domain_event
+
+        delivered = await publish_domain_event(event)
+        async with async_session_factory() as db:
+            record = await db.get(AgentEventOutbox, row.event_id, with_for_update=True)
+            if not record:
+                continue
+            if delivered:
+                record.status = "published"
+                record.published_at = datetime.now()
+                record.last_error = None
+                published += 1
+            else:
+                record.status = "pending"
+                record.last_error = "Redis publish failed; retained for retry"
+            await db.commit()
+    return published
+
+
+async def run_outbox_relay(poll_seconds: float = 1.0) -> None:
+    """Continuously relay committed six-Agent outbox records."""
+    import asyncio
+    import logging
+
+    logger = logging.getLogger(__name__)
+    while True:
+        try:
+            await relay_outbox_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Agent event outbox relay failed")
+        await asyncio.sleep(poll_seconds)

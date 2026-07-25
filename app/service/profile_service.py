@@ -39,6 +39,11 @@ class ProfileService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.cache = ProfileCache()
+        self.calculator = DimensionCalculator()
+        self.breaker = CircuitBreaker()
+        self.special = SpecialCaseHandler()
+        self.confidence = ConfidenceCalculator()
+        self.long_term = LongTermMemory(db)
 
     @staticmethod
     def merge_recommendation_feedback(preference: Optional[dict], event: dict) -> dict:
@@ -115,11 +120,6 @@ class ProfileService:
         profile.update_time = datetime.now()
         await self.db.flush()
         await self.cache.invalidate(customer_id)
-        self.calculator = DimensionCalculator()
-        self.breaker = CircuitBreaker()
-        self.special = SpecialCaseHandler()
-        self.confidence = ConfidenceCalculator()
-        self.long_term = LongTermMemory(db)
 
     # ========== 画像查询（Cache-Aside） ==========
 

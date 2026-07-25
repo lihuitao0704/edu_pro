@@ -274,7 +274,9 @@ class AgentEventOutbox(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class AgentEventConsumption(Base):

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.model.schemas import ProductRecommend, AllocationResult
 from app.model.entities import ProductRecommendation, FinCustomerProfile
 from app.service.profile_service import ProfileService
+from app.service.agent_event_service import AgentDomainEvent, EventDispatcher
 from app.tool.graph_tool import GraphTool
 from app.config.rules_config import (
     SUITABILITY_MATRIX, ASSET_ALLOCATION_TEMPLATES, RECOMMENDATION_WEIGHTS,
@@ -176,6 +177,7 @@ class AdvisorService:
                 product_code=p["product_code"],
                 product_name=p["product_name"],
                 risk_level=p["risk_level"],
+                product_type=p.get("product_type"),
                 expected_return=p["expected_return"],
                 match_score=round(p["match_score"], 2),
                 reason=await self._generate_reason(p, customer_risk, profile),
@@ -260,19 +262,30 @@ class AdvisorService:
         record = result.scalar_one_or_none()
         if not record:
             return None
+        # Replayed clicks or client retries must not compound a behavioral
+        # preference signal for the same recommendation.
+        if record.status == status and record.feedback_at:
+            return record
+
         record.status = status
         record.feedback_reason = reason[:255] or None
         record.feedback_at = datetime.now()
 
         product_type = (record.score_detail or {}).get("product_type") or "未知类型"
-        await self.profile_service.apply_recommendation_feedback(
-            {
-                "product_type": product_type,
-                "status": status,
-                "reason": reason,
-                "recommendation_id": recommendation_id,
-            },
-            customer_id,
+        await EventDispatcher.enqueue(
+            self.db,
+            AgentDomainEvent.create(
+                event_type="recommendation_feedback",
+                source_agent="advisor",
+                customer_id=customer_id,
+                correlation_id=f"recommendation:{recommendation_id}",
+                payload={
+                    "product_type": product_type,
+                    "status": status,
+                    "reason": reason,
+                    "recommendation_id": recommendation_id,
+                },
+            ),
         )
         await self.db.flush()
         return record

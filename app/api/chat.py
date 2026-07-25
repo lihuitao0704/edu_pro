@@ -75,6 +75,7 @@ async def customer_chat(
         user_id=request.user_id,
         message=request.message,
     )
+    await db.commit()
 
     return success(data=response.model_dump())
 
@@ -95,6 +96,7 @@ async def customer_chat_stream(
         user_id=request.user_id,
         message=request.message,
     )
+    await db.commit()
     data = response.model_dump()
     data["agent_type"] = "customer_service"
     return EventSourceResponse(
@@ -145,13 +147,18 @@ async def chat_analyst(
 
         if result.get("success"):
             try:
+                from app.config.database import async_session_factory
+                from app.service.agent_event_service import EventDispatcher
                 from app.service.insight_extractor import extract_analytics_insights
-                from app.service.event_bus import publish_domain_event
 
-                for event in extract_analytics_insights(
+                events = extract_analytics_insights(
                     request.message, result.get("query_result") or []
-                ):
-                    await publish_domain_event(event)
+                )
+                if events:
+                    async with async_session_factory() as event_db:
+                        for event in events:
+                            await EventDispatcher.enqueue(event_db, event)
+                        await event_db.commit()
             except Exception as exc:
                 logger.warning("数据分析洞察联动失败（不影响查询结果）: %s", exc)
             return success(
