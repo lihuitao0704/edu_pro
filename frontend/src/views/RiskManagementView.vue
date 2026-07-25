@@ -232,8 +232,8 @@ const batchUploading = ref(false)
 const batchResult = ref<{ total: number; normal: number; hit: number; high: number; medium: number; low: number } | null>(null)
 
 // ---- 计算属性 ----
-const pendingCount = computed(() => dailyReport.value?.summary?.pending_total ?? alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
-const highCount = computed(() => dailyReport.value?.summary?.high_new ?? alerts.value.filter((item) => item.alert_level === 'high').length)
+const pendingCount = computed(() => alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
+const highCount = computed(() => alerts.value.filter((item) => item.alert_level === 'high' && !['resolved', 'false_positive'].includes(item.status)).length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
 const levelLabel = (level: string) => ({ low: '低', medium: '中', high: '高' }[level] || level)
 
