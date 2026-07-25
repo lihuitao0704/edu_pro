@@ -208,12 +208,18 @@ def apply_dataset() -> None:
                     INSERT INTO fin_customer_profile
                     (customer_id,risk_level,risk_score,investment_experience,
                      annual_income_range,total_assets,confidence_score,risk_flag,
+                     basic_score,experience_score,risk_pref_score,behavior_score,
                      profile_json,create_time,update_time)
-                    VALUES (%s,%s,%s,%s,%s,%s,0.85,'normal',%s,NOW(),NOW())
+                    VALUES (%s,%s,%s,%s,%s,%s,0.85,'normal',
+                     %s,%s,%s,%s,
+                     %s,NOW(),NOW())
                     ON DUPLICATE KEY UPDATE risk_level=VALUES(risk_level),
                       risk_score=VALUES(risk_score), investment_experience=VALUES(investment_experience),
                       annual_income_range=VALUES(annual_income_range), total_assets=VALUES(total_assets),
-                      confidence_score=0.85, profile_json=VALUES(profile_json), update_time=NOW()
+                      confidence_score=0.85,
+                      basic_score=VALUES(basic_score), experience_score=VALUES(experience_score),
+                      risk_pref_score=VALUES(risk_pref_score), behavior_score=VALUES(behavior_score),
+                      profile_json=VALUES(profile_json), update_time=NOW()
                     """,
                     (
                         customer_id,
@@ -222,7 +228,19 @@ def apply_dataset() -> None:
                         customer["investment_experience"],
                         customer["annual_income_range"],
                         customer["total_assets"],
-                        json.dumps({"segment": customer["segment"]}, ensure_ascii=False),
+                        round(customer["risk_score"] * 0.25, 2),  # basic_score
+                        round(customer["risk_score"] * 0.25, 2),  # experience_score
+                        round(customer["risk_score"] * 0.30, 2),  # risk_pref_score
+                        round(customer["risk_score"] * 0.20, 2),  # behavior_score
+                        json.dumps({
+                            "segment": customer["segment"],
+                            "dimensions": {
+                                "basic": {"score": round(customer["risk_score"] * 0.25, 2)},
+                                "experience": {"score": round(customer["risk_score"] * 0.25, 2)},
+                                "risk_pref": {"score": round(customer["risk_score"] * 0.30, 2)},
+                                "behavior": {"score": round(customer["risk_score"] * 0.20, 2)},
+                            }
+                        }, ensure_ascii=False),
                     ),
                 )
                 cursor.execute(

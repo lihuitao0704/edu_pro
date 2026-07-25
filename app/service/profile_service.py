@@ -71,8 +71,12 @@ class ProfileService:
     # ========== 完整研判（核心） ==========
 
     async def assess(self, customer_id: int, trigger_type: str = "manual") -> ProfileResult:
-        """执行完整画像研判打分"""
-        # 1. 收集客户数据
+        """执行完整画像研判打分
+
+        当画像记录不存在时，基于 sys_user + 风评问卷 + 持仓/交易等数据动态计算，
+        不会因为 fin_customer_profile 缺失而抛出 ProfileNotFound。
+        """
+        # 1. 收集客户数据（不依赖 fin_customer_profile 的存在）
         customer_data = await self._collect_customer_data(customer_id)
         if not customer_data:
             raise ProfileNotFound(customer_id)
@@ -195,15 +199,19 @@ class ProfileService:
     # ========== 内部辅助 ==========
 
     async def _collect_customer_data(self, customer_id: int) -> Optional[dict]:
-        """收集客户全量数据（所有字段从数据库动态计算）"""
-        # 用户基础信息
+        """收集客户全量数据（所有字段从数据库动态计算）
+
+        不依赖 fin_customer_profile 记录存在 —— user 存在即可。
+        profile 为 None 时降级使用 sys_user + 风评 + 持仓/交易数据动态推断。
+        """
+        # 用户基础信息（唯一必须条件）
         user_stmt = select(SysUser).where(SysUser.id == customer_id)
         user_result = await self.db.execute(user_stmt)
         user = user_result.scalar_one_or_none()
         if not user:
             return None
 
-        # 已有的画像
+        # 已有的画像（可为 None）
         profile_stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
         profile_result = await self.db.execute(profile_stmt)
         profile = profile_result.scalar_one_or_none()
@@ -1006,21 +1014,21 @@ class ProfileService:
             "risk_score": getattr(profile, "risk_score", None),
             "investment_experience": getattr(profile, "investment_experience", None),
             "annual_income_range": getattr(profile, "annual_income_range", None),
-            "total_assets": str(profile.total_assets) if getattr(profile, "total_assets", None) else None,
+            "total_assets": float(profile.total_assets) if getattr(profile, "total_assets", None) else None,
             "asset_allocation": getattr(profile, "asset_allocation", None),
             "product_preference": getattr(profile, "product_preference", None),
             "confidence_score": (
-                str(profile.confidence_score) if getattr(profile, "confidence_score", None) else None
+                float(profile.confidence_score) if getattr(profile, "confidence_score", None) else None
             ),
-            "basic_score": str(profile.basic_score) if getattr(profile, "basic_score", None) else None,
+            "basic_score": float(profile.basic_score) if getattr(profile, "basic_score", None) else None,
             "experience_score": (
-                str(profile.experience_score) if getattr(profile, "experience_score", None) else None
+                float(profile.experience_score) if getattr(profile, "experience_score", None) else None
             ),
             "risk_pref_score": (
-                str(profile.risk_pref_score) if getattr(profile, "risk_pref_score", None) else None
+                float(profile.risk_pref_score) if getattr(profile, "risk_pref_score", None) else None
             ),
             "behavior_score": (
-                str(profile.behavior_score) if getattr(profile, "behavior_score", None) else None
+                float(profile.behavior_score) if getattr(profile, "behavior_score", None) else None
             ),
             "risk_flag": getattr(profile, "risk_flag", None),
             "profile_json": getattr(profile, "profile_json", None),
