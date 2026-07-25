@@ -187,7 +187,7 @@ async def unified_chat(
         return error(500, f"服务异常: {str(e)}")
 
 
-@router.post("/chat/stream")
+@router.api_route("/chat/stream", methods=["GET", "POST"])
 async def unified_chat_stream(
     req: UnifiedChatRequest,
     db: AsyncSession = Depends(get_db),

@@ -26,7 +26,7 @@ from app.agent.operator_agent import (
     _safe_float,
     _check_self_transfer,
     _check_trading_hours,
-    _check_suitability,
+    _check_suitability_combined,
     _check_holdings,
     _check_balance,
     _check_customer_status,
@@ -248,8 +248,8 @@ class TestSuitabilityMatrix:
         # Mock customer risk level = C1
         with patch("app.agent.operator_agent._get_customer_risk_level", return_value="C1"), \
              patch("app.agent.operator_agent._get_product_risk_level", return_value="R1"):
-            result = await _check_suitability(1, 1, db)
-        assert result is None  # 通过
+            block_err, exempt_warn = await _check_suitability_combined(1, 1, db)
+        assert block_err is None  # 通过
 
     @pytest.mark.asyncio
     async def test_c1_cannot_buy_r3(self):
@@ -257,9 +257,9 @@ class TestSuitabilityMatrix:
         db = make_mock_db()
         with patch("app.agent.operator_agent._get_customer_risk_level", return_value="C1"), \
              patch("app.agent.operator_agent._get_product_risk_level", return_value="R3"):
-            result = await _check_suitability(1, 1, db)
-        assert result is not None
-        assert "适当性不匹配" in result
+            block_err, exempt_warn = await _check_suitability_combined(1, 1, db)
+        assert block_err is not None
+        assert "适当性不匹配" in block_err
 
     @pytest.mark.asyncio
     async def test_c5_can_buy_any(self):
@@ -268,17 +268,17 @@ class TestSuitabilityMatrix:
         with patch("app.agent.operator_agent._get_customer_risk_level", return_value="C5"):
             for product_level in ["R1", "R2", "R3", "R4", "R5"]:
                 with patch("app.agent.operator_agent._get_product_risk_level", return_value=product_level):
-                    result = await _check_suitability(1, 1, db)
-                    assert result is None, f"C5 should be able to buy {product_level}"
+                    block_err, exempt_warn = await _check_suitability_combined(1, 1, db)
+                    assert block_err is None, f"C5 should be able to buy {product_level}"
 
     @pytest.mark.asyncio
     async def test_no_assessment_blocks(self):
         """未做风评的客户被阻断"""
         db = make_mock_db()
         with patch("app.agent.operator_agent._get_customer_risk_level", return_value=None):
-            result = await _check_suitability(1, 1, db)
-        assert result is not None
-        assert "风险评估" in result
+            block_err, exempt_warn = await _check_suitability_combined(1, 1, db)
+        assert block_err is not None
+        assert "风险评估" in block_err
 
     @pytest.mark.asyncio
     async def test_chinese_risk_level(self):
@@ -286,8 +286,8 @@ class TestSuitabilityMatrix:
         db = make_mock_db()
         with patch("app.agent.operator_agent._get_customer_risk_level", return_value="保守型"), \
              patch("app.agent.operator_agent._get_product_risk_level", return_value="R1"):
-            result = await _check_suitability(1, 1, db)
-        assert result is None
+            block_err, exempt_warn = await _check_suitability_combined(1, 1, db)
+        assert block_err is None
 
 
 # ==================== 4. DB 校验函数测试 ====================
@@ -568,33 +568,33 @@ class TestExecuteTool:
 
     @pytest.mark.asyncio
     async def test_purchase_invalid_amount(self):
-        result = await execute_tool("purchase_product", {
-            "customer_name": "张三",
-            "product_name": "产品A",
-            "amount": -100,
-        }, operator_id=1)
+        with patch("app.agent.operator_agent.resolve_customer_id", return_value=1), \
+             patch("app.agent.operator_agent.resolve_product_id", return_value=1):
+            result = await execute_tool("purchase_product", {
+                "customer_name": "张三",
+                "product_name": "产品A",
+                "amount": -100,
+            }, operator_id=1)
         assert result["success"] is False
         assert "必须大于0" in result["message"]
 
     @pytest.mark.asyncio
     async def test_purchase_customer_frozen(self):
         """客户冻结时应阻断申购"""
-        mock_db = make_mock_db(rows={"status": "冻结"})
         with patch("app.agent.operator_agent.resolve_customer_id", return_value=1), \
              patch("app.agent.operator_agent.resolve_product_id", return_value=1), \
-             patch("app.config.database.async_session_factory") as mock_factory:
-            mock_ctx = AsyncMock()
-            mock_ctx.__aenter__.return_value = mock_db
-            mock_ctx.__aexit__.return_value = None
-            mock_factory.return_value = mock_ctx
-
+             patch("app.agent.operator_agent._check_purchase_amount_multiple", return_value=None), \
+             patch("app.agent.operator_agent._check_product_min_purchase_amount", return_value=None), \
+             patch("app.agent.operator_agent._check_product_raise_quota", return_value=None), \
+             patch("app.agent.operator_agent._check_product_status", return_value=None), \
+             patch("app.agent.operator_agent._check_customer_status", return_value="客户账户状态异常：冻结，无法执行操作"):
             result = await execute_tool("purchase_product", {
                 "customer_name": "张三",
                 "product_name": "产品A",
                 "amount": 10000,
             }, operator_id=1)
         assert result["success"] is False
-        assert "状态异常" in result["message"] or "冻结" in result["message"]
+        assert "冻结" in result["message"]
 
     @pytest.mark.asyncio
     async def test_transfer_self_transfer_blocked(self):
@@ -741,7 +741,7 @@ class TestOperatorChat:
     @pytest.mark.asyncio
     async def test_purchase_suitability_mismatch(self):
         """申购时适当性不匹配应阻断"""
-        with patch("app.agent.operator_agent.resolve_customer_id", return_value=1),              patch("app.agent.operator_agent.resolve_product_id", return_value=1),              patch("app.agent.operator_agent._check_customer_status", return_value=None),              patch("app.agent.operator_agent._check_suitability", return_value="⚠️ 适当性不匹配"):
+        with patch("app.agent.operator_agent.resolve_customer_id", return_value=1),              patch("app.agent.operator_agent.resolve_product_id", return_value=1),              patch("app.agent.operator_agent._check_customer_status", return_value=None),              patch("app.agent.operator_agent._check_suitability_combined", return_value=("⚠️ 适当性不匹配", None)):
             result = await execute_tool("purchase_product", {
                 "customer_name": "张三",
                 "product_name": "高风险产品",
@@ -752,12 +752,12 @@ class TestOperatorChat:
     @pytest.mark.asyncio
     async def test_purchase_expired_risk_assessment(self):
         """申购时风评过期应阻断"""
-        with patch("app.agent.operator_agent.resolve_customer_id", return_value=1),              patch("app.agent.operator_agent.resolve_product_id", return_value=1),              patch("app.agent.operator_agent._check_customer_status", return_value=None),              patch("app.agent.operator_agent._check_suitability", return_value=None),              patch("app.agent.operator_agent._check_risk_assessment_validity", return_value="⚠️ 客户风险评估已过期"):
+        with patch("app.agent.operator_agent.resolve_customer_id", return_value=1),              patch("app.agent.operator_agent.resolve_product_id", return_value=1),              patch("app.agent.operator_agent._check_customer_status", return_value=None),              patch("app.agent.operator_agent._check_suitability_combined", return_value=(None, None)),              patch("app.agent.operator_agent._check_risk_assessment_validity", return_value="⚠️ 客户风险评估已过期"),              patch("app.agent.operator_agent._check_product_min_purchase_amount", return_value=None),              patch("app.agent.operator_agent._check_product_raise_quota", return_value=None):
             result = await execute_tool("purchase_product", {
                 "customer_name": "张三",
                 "product_name": "产品A",
                 "amount": 10000,
-            })
+            }, operator_id=1)
         assert result["success"] is False
 
     @pytest.mark.asyncio

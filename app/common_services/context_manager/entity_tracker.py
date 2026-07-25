@@ -49,8 +49,9 @@ class EntityTracker:
     )
 
     # 金额匹配
+    # group(1) = 数字金额，group(2) = 单位（万元/万/元/块）
     _AMOUNT_PATTERN = re.compile(
-        r"(\d+(?:\.\d+)?)\s*(?:万元|万|元|块)"
+        r"(\d+(?:\.\d+)?)\s*(万元|万|元|块)"
     )
 
     def track(
