@@ -1352,11 +1352,19 @@ async def _tool_query_customer_list(arguments: dict, _op) -> dict:
         result = await db.execute(text(base_query), params)
         customers = result.mappings().all()
 
-    customer_list = [{
-        "id": c["id"], "name": c["real_name"], "phone": c["phone"], "email": c["email"],
-        "balance": float(c["balance"] or 0), "status": c["status"],
-        "register_time": c["create_time"].strftime("%Y-%m-%d") if c["create_time"] else "",
-    } for c in customers]
+    customer_list = []
+    for c in customers:
+        # 手机号和邮箱脱敏（隐私保护）
+        _phone = c.get("phone", "") or ""
+        _email = c.get("email", "") or ""
+        phone_masked = (_phone[:3] + "****" + _phone[-4:]) if len(_phone) >= 7 else _phone
+        email_masked = (_email[:2] + "***" + _email[_email.index("@"):]) if "@" in _email else _email
+
+        customer_list.append({
+            "id": c["id"], "name": c["real_name"], "phone": phone_masked, "email": email_masked,
+            "balance": float(c["balance"] or 0), "status": c["status"],
+            "register_time": c["create_time"].strftime("%Y-%m-%d") if c["create_time"] else "",
+        })
 
     return {"success": True, "data": {
         "customers": customer_list, "total_count": len(customer_list), "limit": limit,
