@@ -124,6 +124,37 @@ class RiskMonitorService:
             except Exception as e:
                 logger.warning(f"事件广播失败(不影响主流程): {e}")
 
+        # 高风险累计告警：同一客户≥2条pending高预警 → 自动生成汇总告警
+        if alert["alert_level"] == "high":
+            try:
+                from sqlalchemy import func, text
+                cnt_result = await db.execute(
+                    text("SELECT COUNT(*) FROM fin_risk_alert WHERE customer_id=:cid AND alert_level='high' AND status='pending'"),
+                    {"cid": alert["customer_id"]},
+                )
+                pending_high = cnt_result.scalar()
+                if pending_high >= 2:
+                    # 今天已产生过累计告警则跳过
+                    dup_result = await db.execute(
+                        text("SELECT id FROM fin_risk_alert WHERE customer_id=:cid AND alert_type='cumulative_high' AND DATE(create_time)=CURDATE()"),
+                        {"cid": alert["customer_id"]},
+                    )
+                    if not dup_result.first():
+                        summary = FinRiskAlert(
+                            customer_id=alert["customer_id"],
+                            alert_type="cumulative_high",
+                            alert_level="high",
+                            trigger_detail=f"高风险累计告警: 该客户当前有{pending_high}条待处理高预警",
+                            transaction_ids={"pending_high_count": pending_high},
+                            status="pending",
+                            create_time=datetime.now(),
+                        )
+                        db.add(summary)
+                        await db.flush()
+                        logger.info(f"累计高风险告警: 客户{alert['customer_id']} 已达{pending_high}条高预警")
+            except Exception as e:
+                logger.warning(f"累计高风险检查失败(不影响主流程): {e}")
+
         return entity.id
 
     async def _create_work_order(self, db: AsyncSession, alert: dict, alert_id: int):
