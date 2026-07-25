@@ -211,6 +211,28 @@ class ProfileService:
         # 8a. 持久化校准记录
         await self._persist_calibration(customer_id, calibration_info, trigger_type)
 
+        # 8b. 校准趋势分析：连续偏差累积 → 自动调整 risk_level
+        trend_result = None
+        try:
+            from app.engine.calibration_trend import CalibrationTrendAnalyzer
+            trend_analyzer = CalibrationTrendAnalyzer(self.db)
+            trend_result = await trend_analyzer.analyze(customer_id)
+            if trend_result.adjusted:
+                final_level = trend_result.new_level
+                logging.getLogger(__name__).info(
+                    "校准趋势自动调级: customer=%s %s→%s direction=%s triggers=%d",
+                    customer_id, trend_result.old_level, trend_result.new_level,
+                    trend_result.direction, trend_result.total_triggers,
+                )
+            elif trend_result.cooldown_blocked or trend_result.direction != "aligned":
+                logging.getLogger(__name__).debug(
+                    "校准趋势分析: customer=%s %s", customer_id, trend_result.reason,
+                )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "校准趋势分析失败 customer=%s (不影响主流程): %s", customer_id, exc
+            )
+
         # 9. 返回结果
         warnings = cb_result.warnings + special_result.adjustments
         return ProfileResult(

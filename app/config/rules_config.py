@@ -121,3 +121,13 @@ RECOMMENDATION_WEIGHTS = {
     "graph_peer": 0.10,
     "return_term": 0.05,
 }
+
+# ==================== 双轨校准趋势自动调整 ====================
+# 查询最近 N 条校准记录，若方向一致且累计触发规则数达到阈值，自动调整 risk_level
+CALIBRATION_TREND = {
+    "enabled": True,
+    "lookback_count": 5,           # 查询最近 N 条校准记录
+    "trigger_threshold": 3,        # 累计触发规则数 ≥ 此值才触发调整
+    "cooldown_days": 7,            # 两次自动调整最小间隔（天），防震荡
+    "max_adjust_per_cycle": 1,     # 每次最多调整的档位数（保守：一次一档）
+}
