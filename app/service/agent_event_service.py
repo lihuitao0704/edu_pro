@@ -160,9 +160,18 @@ async def relay_outbox_once(batch_size: int = 100) -> int:
             occurred_at=str((row.payload or {}).get("occurred_at")),
             payload=dict((row.payload or {}).get("payload") or {}),
         )
-        from app.service.event_bus import publish_domain_event
+        # The six Agent handlers run in this application. Execute them from the
+        # durable outbox and mark publication only after their work completes;
+        # Redis Pub/Sub cannot acknowledge an offline consumer.
+        from app.service.event_bus import handle_domain_event
 
-        delivered = await publish_domain_event(event)
+        delivered = False
+        delivery_error = "Domain handler failed; retained for retry"
+        try:
+            await handle_domain_event(event)
+            delivered = True
+        except Exception as exc:
+            delivery_error = str(exc)[:1000]
         async with async_session_factory() as db:
             record = await db.get(AgentEventOutbox, row.event_id, with_for_update=True)
             if not record:
@@ -174,7 +183,7 @@ async def relay_outbox_once(batch_size: int = 100) -> int:
                 published += 1
             else:
                 record.status = "pending"
-                record.last_error = "Redis publish failed; retained for retry"
+                record.last_error = delivery_error
             await db.commit()
     return published
 

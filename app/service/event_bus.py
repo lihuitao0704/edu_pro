@@ -316,17 +316,6 @@ async def publish_operation_event(action: str, arguments: dict, data: dict,
     - C4: event:risk_alert:c4 → 客服联动
     - 向后兼容：同时发布到 event:risk_alert (legacy)
     """
-    if action in {"purchase_product", "redeem_product", "transfer_funds"}:
-        await queue_domain_event(
-            build_transaction_completed_event(
-                action=action,
-                arguments=arguments,
-                result=data,
-                operator_id=user_id,
-                correlation_id=trace_id,
-            )
-        )
-
     # C1/C2/C4 are intentionally no longer emitted here. They represented a
     # transaction as three incompatible risk events and caused duplicate
     # consumption. RiskMonitorService is the sole producer of risk alerts.

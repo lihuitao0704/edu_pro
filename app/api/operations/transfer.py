@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
 from app.service.transaction_flow_service import TransactionFlowService
+from app.service.agent_event_service import EventDispatcher
+from app.service.event_bus import build_transaction_completed_event
 from app.security.authorization import authenticated_actor_id, require_roles
 
 router = APIRouter()
@@ -155,6 +157,15 @@ async def transfer_funds(
             "counterparty": {"account": str(from_id)},
             "investor_account": str(to_id),
         },
+    )
+    await EventDispatcher.enqueue(
+        db,
+        build_transaction_completed_event(
+            "transfer_funds",
+            {"from_customer_id": from_id, "to_customer_id": to_id, "amount": float(amount)},
+            {"transaction_no": txn_no},
+            operator_id,
+        ),
     )
     await db.commit()
     return ApiResponse(

@@ -18,6 +18,8 @@ import sqlalchemy.exc as sa_exc
 from app.config.database import get_db
 from app.model.schemas import ApiResponse
 from app.service.transaction_flow_service import TransactionFlowService
+from app.service.agent_event_service import EventDispatcher
+from app.service.event_bus import build_transaction_completed_event
 from app.security.authorization import authenticated_actor_id, require_roles
 from app.tool.neo4j_sync import sync_holding
 
@@ -275,6 +277,13 @@ async def purchase_product(
                         "current_value": synced_value,
                     }, ensure_ascii=False),
                 },
+            )
+            await EventDispatcher.enqueue(
+                db,
+                build_transaction_completed_event(
+                    "purchase_product", {"customer_id": customer_id, "amount": float(amount)},
+                    {"transaction_no": txn_no}, operator_id,
+                ),
             )
             await db.commit()
 
