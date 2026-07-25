@@ -36,7 +36,6 @@
             </p>
           </div>
           <div class="banner-actions">
-            <button class="secondary-button" :disabled="actionLoading" @click="runAllocation">资产配置</button>
             <button class="secondary-button" :disabled="actionLoading" @click="runHoldingAnalysis">持仓</button>
             <button class="primary-button" :disabled="actionLoading" @click="runRecommend">生成推荐方案</button>
           </div>
@@ -91,6 +90,15 @@
           <div v-else-if="activeView === 'recommend'" class="surface-card recommendation-card">
             <div class="card-heading"><h3>投顾输出</h3></div>
             <EmptyState title="未获取到推荐方案" description="请稍后重试" />
+          </div>
+
+          <!-- 回退文本（activeView='text' 或旧逻辑残留） -->
+          <div v-else-if="activeView === 'text' && advice" class="surface-card recommendation-card">
+            <div class="card-heading"><h3>投顾输出</h3></div>
+            <div class="advice-content">
+              <div class="advice-mark">策</div>
+              <p>{{ advice }}</p>
+            </div>
           </div>
 
           <!-- 持仓面板 — 默认显示（没有 activeView 时） -->
@@ -474,8 +482,11 @@ async function runHoldingAnalysis() {
     // 同时获取基础持仓数据和深度分析
     const [holdingsResult, analysisResult] = await Promise.allSettled([
       get<{ items: Holding[]; total_value: number }>(`/customers/${selected.value.customer_id}/holdings`),
-      post<Record<string, any>>('/advisor/holdings-analysis', {
-        customer_id: selected.value.customer_id,
+      post<Record<string, any>>('/chat', {
+        message: `分析客户${selected.value.customer_id}的持仓情况`,
+        session_id: '',
+        user_id: selected.value.customer_id,
+        user_role: '理财顾问',
       }),
     ])
 
@@ -519,11 +530,11 @@ async function runRecommend() {
   error.value = ''
   activeView.value = 'recommend'
   try {
-    const result = await post<Record<string, any>>('/advisor', {
+    const result = await post<Record<string, any>>('/chat', {
       message: `为客户${selected.value.customer_id}推荐3款适合的产品`,
       session_id: '',
       user_id: selected.value.customer_id,
-      customer_id: selected.value.customer_id,
+      user_role: '理财顾问',
     })
     const inner = extractApiData(result)
 
@@ -544,7 +555,6 @@ async function runRecommend() {
     } else {
       advice.value = inner?.reply || JSON.stringify(inner, null, 2)
       recommendations.value = []
-      activeView.value = 'text'
     }
 
     // 同时提取 allocation（smart_recommend 可能一并返回）
