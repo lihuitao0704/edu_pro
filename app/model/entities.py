@@ -255,7 +255,35 @@ class ProductRecommendation(Base):
     match_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), comment="匹配评分")
     score_detail: Mapped[Optional[dict]] = mapped_column(JSON, comment="评分明细")
     reasoning: Mapped[Optional[str]] = mapped_column(Text, comment="推荐理由")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", comment="pending/accepted/rejected/ignored")
+    feedback_reason: Mapped[Optional[str]] = mapped_column(String(255), comment="客户或投顾反馈原因")
+    feedback_at: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="反馈时间")
     create_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, comment="推荐时间")
+
+
+class AgentEventOutbox(Base):
+    """Transactional event outbox for six-Agent collaboration."""
+    __tablename__ = "agent_event_outbox"
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_agent: Mapped[str] = mapped_column(String(32), nullable=False)
+    customer_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class AgentEventConsumption(Base):
+    """Idempotency ledger keyed by event and logical consumer."""
+    __tablename__ = "agent_event_consumption"
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    consumer: Mapped[str] = mapped_column(String(64), primary_key=True)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
 
 
 class ConversationArchive(Base):
