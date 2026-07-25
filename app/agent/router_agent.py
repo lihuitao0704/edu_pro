@@ -183,7 +183,9 @@ class RouterAgent:
         """分发到客服 Agent"""
         from app.agent.customer_agent import get_customer_service_agent
         agent = get_customer_service_agent(self.db)
-        response = await agent.handle(session_id, user_id, message)
+        response = await agent.handle(
+            session_id, user_id, message, actor_id=user_id
+        )
         return {
             "reply": response.reply,
             "data": {
@@ -199,7 +201,7 @@ class RouterAgent:
     ) -> dict:
         """分发到投顾 Agent"""
         from app.agent.advisor_agent import AdvisorAgent
-        agent = AdvisorAgent(self.db, session_id)
+        agent = AdvisorAgent(self.db, session_id, actor_id=user_id)
         # 如果消息中没有 customer_id 上下文，自动注入
         enhanced_message = message
         if customer_id:

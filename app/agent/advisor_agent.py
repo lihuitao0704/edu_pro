@@ -171,8 +171,10 @@ class AdvisorAgent(BaseAgent):
         print(result["reply"])
     """
 
-    def __init__(self, db: AsyncSession, session_id: str = ""):
-        super().__init__(db, session_id)
+    def __init__(
+        self, db: AsyncSession, session_id: str = "", actor_id: int = 0
+    ):
+        super().__init__(db, session_id, actor_id)
         self._settings = get_settings()
 
         # ── 初始化 LLM（投顾 Agent 单独压低 timeout，避免多轮工具调用叠加超时）──

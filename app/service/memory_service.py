@@ -21,7 +21,7 @@ class MemoryService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_history(self, session_id: str) -> list[dict]:
+    async def get_history(self, session_id: str, owner_id: int = 0) -> list[dict]:
         """
         获取会话历史（短期记忆）
 
@@ -30,11 +30,13 @@ class MemoryService:
         Returns:
             消息列表 [{"role": "user/assistant", "content": "...", "timestamp": ...}]
         """
-        memory = SessionMemory(session_id)
+        memory = SessionMemory(session_id, owner_id)
         messages = await memory.get_messages()
         return messages
 
-    async def save_message(self, session_id: str, role: str, content: str):
+    async def save_message(
+        self, session_id: str, role: str, content: str, owner_id: int = 0
+    ):
         """
         保存消息到短期记忆
 
@@ -43,7 +45,7 @@ class MemoryService:
             role: 角色（user / assistant / system）
             content: 消息内容
         """
-        memory = SessionMemory(session_id)
+        memory = SessionMemory(session_id, owner_id)
         await memory.add_message(role, content)
 
     async def archive_conversation(

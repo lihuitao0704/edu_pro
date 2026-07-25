@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { createMockChatResponse, getChatHistory, type ChatResponse } from '../api/chat'
 import MessageCard from './MessageCard.vue'
@@ -49,7 +49,7 @@ import { useConversationStore } from '../stores/conversation'
 const props = withDefaults(defineProps<{ userId?: string | number; userRole?: string; customerName?: string }>(), { userId: 0, userRole: '客户', customerName: '' })
 const emit = defineEmits<{ 'open-assessment': [] }>()
 const conversations = useConversationStore()
-const userKey = computed(() => String(props.userId))
+const userKey = computed(() => `${props.userRole}:${String(props.userId)}`)
 const session = computed(() => conversations.sessionFor(userKey.value))
 const messages = computed(() => session.value.messages)
 const mockEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_CHAT_MOCK === 'true'
@@ -59,6 +59,7 @@ const loading = ref(false)
 const error = ref('')
 const activeAgent = ref('')
 const scrollArea = ref<HTMLElement>()
+let activeRequest: AbortController | null = null
 const agentLabels: Record<string, string> = {
   advisor: '投顾助手正在生成方案',
   customer_service: '智能客服正在查询',
@@ -72,9 +73,11 @@ const statusText = computed(() => {
 })
 
 async function hydrateHistory() {
+  const requestedUserKey = userKey.value
   try {
     const history = await getChatHistory()
-    conversations.hydrateUserSession(userKey.value, history)
+    if (requestedUserKey !== userKey.value) return
+    conversations.hydrateUserSession(requestedUserKey, history)
     await scrollToBottom()
   } catch {
     // 历史读取失败不阻塞当前会话；发送下一条消息会建立新会话。
@@ -89,7 +92,9 @@ function ask(prompt: string) {
 async function send() {
   const message = input.value.trim()
   if (!message || loading.value) return
-  conversations.appendMessage(userKey.value, { role: 'user', content: message })
+  const requestUserKey = userKey.value
+  const requestSession = conversations.sessionFor(requestUserKey)
+  conversations.appendMessage(requestUserKey, { role: 'user', content: message })
   input.value = ''
   loading.value = true
   error.value = ''
@@ -101,17 +106,20 @@ async function send() {
     role: 'assistant',
     content: '',
   }
-  conversations.appendMessage(userKey.value, assistantMsg)
+  conversations.appendMessage(requestUserKey, assistantMsg)
   // 关键修复：通过 store 拿到 Vue 的响应式代理对象，后续修改它才能触发视图更新
-  const reactiveMsg = session.value.messages[session.value.messages.length - 1] as typeof assistantMsg
+  const reactiveMsg = requestSession.messages[requestSession.messages.length - 1] as typeof assistantMsg
+  const requestController = new AbortController()
+  activeRequest = requestController
 
   try {
     await streamChat('/chat/stream/v2', {
       message,
-      session_id: session.value.conversationId,
+      session_id: requestSession.conversationId,
       user_id: Number(props.userId) || 0,
       user_role: props.userRole || '客户',
     }, ({ event, data }) => {
+      if (requestUserKey !== userKey.value) return
       switch (event) {
         case 'token':
         case 'delta':
@@ -120,7 +128,7 @@ async function send() {
           break
         case 'done':
           loading.value = false
-          if (data.session_id) conversations.setSessionId(userKey.value, data.session_id)
+          if (data.session_id) conversations.setSessionId(requestUserKey, data.session_id)
           if (data.reply) reactiveMsg.content = data.narrative || data.reply
           reactiveMsg.response = normalizeStreamResponse(data, activeAgent.value)
           scrollToBottom()
@@ -129,26 +137,30 @@ async function send() {
           loading.value = false
           error.value = data.message || '流式服务异常'
           // 移除空消息
-          const msgs = session.value.messages
+          const msgs = requestSession.messages
           if (msgs[msgs.length - 1] === reactiveMsg) msgs.pop()
           break
         case 'meta':
           activeAgent.value = data.agent || data.agent_type || ''
           break
       }
-    })
+    }, requestController.signal)
   } catch (reason) {
+    if (requestController.signal.aborted) return
     error.value = reason instanceof Error ? reason.message : '金融服务暂时不可用'
     // 流式失败，移除空消息并回退 mock
-    const msgs = session.value.messages
+    const msgs = requestSession.messages
     if (msgs[msgs.length - 1] === reactiveMsg) msgs.pop()
     if (mockEnabled) {
       const response = createMockChatResponse(message)
-      conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response, isMock: true })
+      conversations.appendMessage(requestUserKey, { role: 'assistant', content: response.answer, response, isMock: true })
     }
   } finally {
-    loading.value = false
-    await scrollToBottom()
+    if (activeRequest === requestController) {
+      activeRequest = null
+      loading.value = false
+      await scrollToBottom()
+    }
   }
 }
 
@@ -182,14 +194,22 @@ async function scrollToBottom() {
 }
 
 function newChat() {
-  // 清空可见消息，但保留 session 和 conversationId（后端上下文记忆）
-  session.value.messages = []
+  activeRequest?.abort()
+  activeRequest = null
+  conversations.resetUserSession(userKey.value)
+  loading.value = false
   input.value = ''
   error.value = ''
+  activeAgent.value = ''
 }
 
 onMounted(() => {
   void hydrateHistory()
+})
+
+onBeforeUnmount(() => {
+  activeRequest?.abort()
+  activeRequest = null
 })
 </script>
 

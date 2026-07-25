@@ -43,7 +43,7 @@ describe('ChatWindow', () => {
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
-    const session = useConversationStore().sessionFor('7')
+    const session = useConversationStore().sessionFor('客户:7')
     expect(session.messages[1].content).toBe('已查询到赎回规则。')
     expect(session.conversationId).toBe('server-session-7')
     expect(session.messages[1].response?.agent).toBe('customer_service')

@@ -1,6 +1,7 @@
 <template>
   <div class="chat-fullscreen">
     <ChatWindow
+      :key="chatIdentityKey"
       :user-id="auth.user?.user_id || 0"
       :user-role="auth.user?.role || '客户'"
       :customer-name="auth.user?.real_name || auth.user?.username || ''"
@@ -17,12 +18,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ChatWindow from '../components/ChatWindow.vue'
 import RiskAssessmentModal from '../components/RiskAssessmentModal.vue'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const chatIdentityKey = computed(
+  () => `${auth.user?.role || 'anonymous'}:${auth.user?.user_id || 0}`,
+)
 const showAssessment = ref(false)
 
 function onAssessmentSubmitted(result: any) {

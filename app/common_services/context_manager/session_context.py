@@ -30,8 +30,11 @@ class SessionContextStore:
     _contexts: dict[str, dict[str, Any]] = {}
     _redis_available: bool | None = None  # None = not yet checked
 
-    def _redis_key(self, session_id: str) -> str:
-        return f"session_ctx:{session_id}"
+    def _storage_key(self, session_id: str, actor_id: int) -> str:
+        return f"{actor_id}:{session_id}"
+
+    def _redis_key(self, session_id: str, actor_id: int) -> str:
+        return f"chat:v2:{actor_id}:{session_id}:context"
 
     async def _get_redis(self):
         """Lazily get Redis connection (async, non-blocking check)."""
@@ -55,7 +58,7 @@ class SessionContextStore:
         redis = await self._get_redis()
         if redis:
             try:
-                raw = await redis.get(self._redis_key(session_id))
+                raw = await redis.get(self._redis_key(session_id, actor_id))
                 if raw:
                     stored = json.loads(raw)
                     if stored.get("actor_id") == actor_id:
@@ -64,7 +67,7 @@ class SessionContextStore:
                 logger.warning("Redis 读取 session context 失败: %s", exc)
 
         # Fallback to in-memory
-        stored = self._contexts.get(session_id)
+        stored = self._contexts.get(self._storage_key(session_id, actor_id))
         if not stored or stored["actor_id"] != actor_id:
             return {}
         return deepcopy(stored["context"])
@@ -90,7 +93,7 @@ class SessionContextStore:
         if redis:
             try:
                 await redis.setex(
-                    self._redis_key(session_id),
+                    self._redis_key(session_id, actor_id),
                     int(_SESSION_TTL.total_seconds()),
                     json.dumps(payload, ensure_ascii=False, default=str),
                 )
@@ -98,15 +101,15 @@ class SessionContextStore:
                 logger.warning("Redis 写入 session context 失败: %s", exc)
 
         # Always update in-memory as backup
-        self._contexts[session_id] = payload
+        self._contexts[self._storage_key(session_id, actor_id)] = payload
         return deepcopy(context)
 
-    async def delete(self, session_id: str) -> None:
+    async def delete(self, session_id: str, actor_id: int) -> None:
         """Remove session context from Redis and memory."""
         redis = await self._get_redis()
         if redis:
             try:
-                await redis.delete(self._redis_key(session_id))
+                await redis.delete(self._redis_key(session_id, actor_id))
             except Exception as exc:
                 logger.warning("Redis 删除 session context 失败: %s", exc)
-        self._contexts.pop(session_id, None)
+        self._contexts.pop(self._storage_key(session_id, actor_id), None)

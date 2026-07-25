@@ -19,6 +19,7 @@ from app.utils.response import success, error
 
 router = APIRouter()
 _settings = get_settings()
+_EMPLOYEE_ROLES = {"理财顾问", "客户经理", "风控专员", "管理员"}
 
 
 # ==================== 请求/响应模型 ====================
@@ -60,7 +61,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(
             text(
-                "SELECT id, username, password_hash, user_type, employee_role, real_name "
+                "SELECT id, username, password_hash, user_type, employee_role, real_name, status "
                 "FROM sys_user WHERE username = :u"
             ),
             {"u": body.username},
@@ -83,7 +84,17 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not password_ok:
         return error(code=401, message="用户名或密码错误")
 
-    role = user.get("employee_role") or "客户"
+    if str(user.get("status") or "") != "正常":
+        return error(code=403, message="账户已停用或状态异常，请联系管理员")
+
+    user_type = str(user.get("user_type") or "").upper()
+    employee_role = str(user.get("employee_role") or "")
+    if user_type == "CUSTOMER":
+        role = "客户"
+    elif user_type == "EMPLOYEE" and employee_role in _EMPLOYEE_ROLES:
+        role = employee_role
+    else:
+        return error(code=403, message="账户身份配置异常，请联系管理员")
 
     # 签发 Token
     expires = timedelta(minutes=_settings.jwt.expire_minutes)
@@ -147,8 +158,10 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/refresh")
-async def refresh_token(request: Request):
-    """刷新 Token（用旧 Token 换新 Token）"""
+async def refresh_token(
+    request: Request, db: AsyncSession = Depends(get_db)
+):
+    """刷新 Token，并重新校验数据库中的账户状态和当前角色。"""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return error(code=401, message="缺少 Token")
@@ -158,13 +171,38 @@ async def refresh_token(request: Request):
     if payload is None:
         return error(code=401, message="Token 无效或已过期")
 
+    try:
+        user_id = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        return error(code=401, message="Token 缺少有效用户身份")
+
+    result = await db.execute(
+        text(
+            "SELECT id, username, user_type, employee_role, status "
+            "FROM sys_user WHERE id = :id"
+        ),
+        {"id": user_id},
+    )
+    user = result.mappings().first()
+    if not user or str(user.get("status") or "") != "正常":
+        return error(code=401, message="账户不存在或已停用")
+
+    user_type = str(user.get("user_type") or "").upper()
+    employee_role = str(user.get("employee_role") or "")
+    if user_type == "CUSTOMER":
+        role = "客户"
+    elif user_type == "EMPLOYEE" and employee_role in _EMPLOYEE_ROLES:
+        role = employee_role
+    else:
+        return error(code=403, message="账户身份配置异常，请联系管理员")
+
     # 签发新 Token
     expires = timedelta(minutes=_settings.jwt.expire_minutes)
     new_token = create_access_token(
         data={
-            "sub": str(payload.get("sub", 0)),
-            "username": payload.get("username"),
-            "role": payload.get("role", "理财顾问"),
+            "sub": user_id,
+            "username": user.get("username") or "",
+            "role": role,
         },
         expires_delta=expires,
     )

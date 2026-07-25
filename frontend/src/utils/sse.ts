@@ -26,6 +26,7 @@ export async function streamChat(
   path: string,
   body: unknown,
   onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const token = localStorage.getItem('wealth-token')
   const response = await fetch(`${API_BASE}${path}`, {
@@ -35,6 +36,7 @@ export async function streamChat(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
+    signal,
   })
   if (!response.ok || !response.body) {
     throw new Error(`流式请求失败（HTTP ${response.status}）`)

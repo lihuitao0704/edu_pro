@@ -16,7 +16,11 @@ from app.utils.response import success, error
 from app.utils.logger import get_logger
 from app.utils.sse import stream_chat_result
 from app.config.settings import get_settings
-from app.security.authorization import enforce_customer_scope, require_roles
+from app.security.authorization import (
+    authenticated_actor_id,
+    enforce_customer_scope,
+    require_roles,
+)
 from sse_starlette.sse import EventSourceResponse
 
 logger = get_logger(__name__)
@@ -47,7 +51,9 @@ async def advisor_chat(
     enforce_customer_scope(user, req.customer_id)
 
     try:
-        agent = AdvisorAgent(db, req.session_id)
+        agent = AdvisorAgent(
+            db, req.session_id, actor_id=authenticated_actor_id(user)
+        )
         result = await agent.execute(req.message, customer_id=req.customer_id)
         raw_reply = result.get("reply", "")
         narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)
@@ -76,7 +82,9 @@ async def advisor_chat_stream(
     if not req.customer_id:
         return error(400, "缺少 customer_id 参数")
     enforce_customer_scope(user, req.customer_id)
-    agent = AdvisorAgent(db, req.session_id)
+    agent = AdvisorAgent(
+        db, req.session_id, actor_id=authenticated_actor_id(user)
+    )
     result = await agent.execute(req.message, customer_id=req.customer_id)
     raw_reply = result.get("reply", "")
     narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)

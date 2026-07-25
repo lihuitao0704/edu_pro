@@ -18,6 +18,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(username: string, password: string) {
     const result = await post<LoginResult>('/auth/login', { username, password })
+    // 登录成功后先丢弃浏览器内存中的上一身份会话，防止账号切换串消息。
+    useConversationStore().clearAll()
     token.value = result.access_token
     user.value = result.user
     localStorage.setItem('wealth-token', token.value)

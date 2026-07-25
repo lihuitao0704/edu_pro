@@ -26,7 +26,7 @@ export const useConversationStore = defineStore('conversation', () => {
   function sessionFor(userKey: string): ConversationSession {
     if (!sessions.value[userKey]) {
       sessions.value[userKey] = {
-        conversationId: `wealth-${userKey}-${Date.now().toString(36)}`,
+        conversationId: '',
         messages: [],
       }
     }
@@ -53,9 +53,24 @@ export const useConversationStore = defineStore('conversation', () => {
     delete sessions.value[userKey]
   }
 
+  function resetUserSession(userKey: string) {
+    sessions.value[userKey] = {
+      conversationId: '',
+      messages: [],
+    }
+  }
+
   function clearAll() {
     sessions.value = {}
   }
 
-  return { sessionFor, appendMessage, setSessionId, hydrateUserSession, clearUserSession, clearAll }
+  return {
+    sessionFor,
+    appendMessage,
+    setSessionId,
+    hydrateUserSession,
+    clearUserSession,
+    resetUserSession,
+    clearAll,
+  }
 })
