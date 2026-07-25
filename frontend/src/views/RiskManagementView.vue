@@ -231,9 +231,10 @@ const batchFile = ref<File | null>(null)
 const batchUploading = ref(false)
 const batchResult = ref<{ total: number; normal: number; hit: number; high: number; medium: number; low: number } | null>(null)
 
-// ---- 计算属性 ----
-const pendingCount = computed(() => alerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
-const highCount = computed(() => alerts.value.filter((item) => item.alert_level === 'high' && !['resolved', 'false_positive'].includes(item.status)).length)
+// ---- 计算属性（用全量数据，不从分页列表算） ----
+const fullAlerts = ref<RiskAlert[]>([])
+const pendingCount = computed(() => fullAlerts.value.filter((item) => !['resolved', 'false_positive'].includes(item.status)).length)
+const highCount = computed(() => fullAlerts.value.filter((item) => item.alert_level === 'high' && !['resolved', 'false_positive'].includes(item.status)).length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
 const levelLabel = (level: string) => ({ low: '低', medium: '中', high: '高' }[level] || level)
 
@@ -288,6 +289,10 @@ async function loadAll() {
     workorders.value = orderData.items
     dailyReport.value = reportData
     statistics.value = statsData
+
+    // 加载全量预警用于卡片计数（不分页）
+    const allData = await get<{ alerts: RiskAlert[] }>('/risk/alerts?page_size=1000').catch(() => null)
+    if (allData?.alerts) fullAlerts.value = allData.alerts
 
     await loadAlerts()
     await nextTick()
