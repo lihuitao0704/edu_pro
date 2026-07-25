@@ -109,6 +109,7 @@
 
 <script setup lang="ts">
 import * as echarts from 'echarts/core'
+import type { EChartsCoreOption } from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -180,7 +181,7 @@ const RISK_COLORS: Record<string, string> = {
 
 const aumData = computed(() => data.value.aum_distribution || [])
 
-const aumOption = computed<echarts.EChartsOption>(() => ({
+const aumOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'item', formatter: '{b}: {c}人 ({d}%)' },
   legend: { bottom: 0, textStyle: { color: '#bfd4e0', fontSize: 11 } },
   series: [{
@@ -207,7 +208,7 @@ const aumCaption = computed(() => {
 
 const returnData = computed(() => data.value.return_by_risk || [])
 
-const returnOption = computed<echarts.EChartsOption>(() => ({
+const returnOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'axis', formatter: (p: any) => {
     const d = p[0]
     if (!d) return ''
@@ -239,7 +240,7 @@ const returnCaption = computed(() => {
 
 const topProductData = computed(() => (data.value.top_products || []).slice(0, 5))
 
-const topProductOption = computed<echarts.EChartsOption>(() => ({
+const topProductOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: (p: any) => {
     const d = p[0]
     if (!d) return ''
@@ -294,7 +295,7 @@ const trendSeries = computed(() => {
   }))
 })
 
-const trendOption = computed<echarts.EChartsOption>(() => ({
+const trendOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'axis' },
   legend: { bottom: 0, textStyle: { color: '#bfd4e0', fontSize: 11 } },
   grid: { left: 55, right: 20, top: 10, bottom: 35 },
@@ -322,7 +323,7 @@ const alertData = computed(() => data.value.alert_distribution || [])
 
 const ALERT_COLORS: Record<string, string> = { 'high': '#ef5350', 'medium': '#ffa726', 'low': '#4fc3f7' }
 
-const alertOption = computed<echarts.EChartsOption>(() => ({
+const alertOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'item', formatter: '{b}: {c}条 ({d}%)' },
   legend: { bottom: 0, textStyle: { color: '#bfd4e0', fontSize: 11 } },
   series: [{
@@ -357,7 +358,7 @@ const matrixRiskLevels = computed(() => {
   return order.filter(l => levels.has(l))
 })
 
-const matrixOption = computed<echarts.EChartsOption>(() => ({
+const matrixOption = computed<EChartsCoreOption>(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
   legend: { bottom: 0, textStyle: { color: '#bfd4e0', fontSize: 10 } },
   grid: { left: 70, right: 20, top: 10, bottom: 45 },
@@ -393,7 +394,6 @@ const nl2sqlError = ref('')
 const nl2sqlResult = ref<any>(null)
 const nl2sqlEditableSql = ref('')
 const nl2sqlChartEl = ref<HTMLElement>()
-let nl2sqlChart: echarts.ECharts | null = null
 const nl2sqlColumns = computed(() => Object.keys(nl2sqlResult.value?.query_result?.[0] || {}))
 const nl2sqlChartMessage = ref('自动图表')
 
@@ -440,7 +440,6 @@ async function nl2sqlReExecute() {
 
 function copySql() { if (nl2sqlResult.value?.sql) navigator.clipboard?.writeText(nl2sqlResult.value.sql).catch(() => {}) }
 
-onBeforeUnmount(() => nl2sqlChart?.dispose())
 </script>
 
 <style scoped>

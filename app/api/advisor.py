@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.agent.advisor_agent import AdvisorAgent
 from app.service.advisor_service import AdvisorService
+from app.service.advisor_narrative_service import AdvisorNarrativeService
 from app.model.schemas import AdvisorChatRequest, RecommendRequest, AllocationRequest
 from app.utils.response import success, error
 from app.utils.logger import get_logger
@@ -48,9 +49,13 @@ async def advisor_chat(
     try:
         agent = AdvisorAgent(db, req.session_id)
         result = await agent.execute(req.message, customer_id=req.customer_id)
+        raw_reply = result.get("reply", "")
+        narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)
 
         return success(data={
-            "reply": result.get("reply", "处理完成"),
+            "reply": narrative,
+            "narrative": narrative,
+            "narrative_source": "llm" if raw_reply else "template",
             "recommendations": result.get("recommendations", []),
             "customer_profile": result.get("customer_profile"),
             "reasoning": result.get("reasoning"),
@@ -73,8 +78,11 @@ async def advisor_chat_stream(
     enforce_customer_scope(user, req.customer_id)
     agent = AdvisorAgent(db, req.session_id)
     result = await agent.execute(req.message, customer_id=req.customer_id)
+    raw_reply = result.get("reply", "")
+    narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)
     payload = {
-        "reply": result.get("reply", "处理完成"),
+        "reply": narrative,
+        "narrative": narrative,
         "sources": result.get("sources", []),
         "recommendations": result.get("recommendations", []),
         "customer_profile": result.get("customer_profile"),

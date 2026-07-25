@@ -92,9 +92,10 @@ const riskProductLevel = computed(() => {
 })
 
 const hasRadarData = computed(() => {
-  if (!profile.value) return false
+  const currentProfile = profile.value
+  if (!currentProfile) return false
   const dims = ['basic_score', 'experience_score', 'risk_pref_score', 'behavior_score']
-  return dims.some(k => Number(profile.value[k]) > 0)
+  return dims.some(k => Number(currentProfile[k]) > 0)
 })
 
 const money = (value: unknown) => value ? `¥${(Number(value) / 10_000).toFixed(1)}万` : '—'

@@ -170,6 +170,12 @@ except Exception as e:
     print(f"  [WARN] 画像路由加载失败: {e}")
 
 try:
+    from app.api.advisor import router as advisor_router
+    app.include_router(advisor_router, prefix="/api", tags=["投顾助手"])
+except Exception as e:
+    print(f"  [WARN] advisor route load failed: {e}")
+
+try:
     from app.api.risk import router as risk_router
     app.include_router(risk_router, prefix="/api/risk", tags=["风险评估"])
 except Exception as e:
@@ -326,37 +332,6 @@ async def frontend_fallback(frontend_path: str):
     return FileResponse(os.path.join(frontend_dir, "index.html"))
 
 
-def _kill_port(port: int) -> None:
-    """Kill any process occupying the target port before starting."""
-    import subprocess, platform
-
-    try:
-        if platform.system() == "Windows":
-            # Find PID by port
-            result = subprocess.run(
-                ["cmd", "/c", f'netstat -ano | findstr :{port} | findstr LISTENING'],
-                capture_output=True, text=True, shell=True,
-            )
-            for line in result.stdout.strip().split("\n"):
-                parts = line.strip().split()
-                if len(parts) >= 5:
-                    pid = parts[-1]
-                    subprocess.run(["taskkill", "/F", "/PID", pid],
-                                   capture_output=True, shell=True)
-                    print(f"  [端口释放] PID {pid} (端口 {port}) 已终止")
-        else:
-            # Linux/macOS
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
-            )
-            for pid in result.stdout.strip().split("\n"):
-                if pid:
-                    subprocess.run(["kill", "-9", pid], capture_output=True)
-                    print(f"  [端口释放] PID {pid} (端口 {port}) 已终止")
-    except Exception as e:
-        print(f"  [端口释放] 检查失败（可能无旧进程）: {e}")
-
-
 def is_port_available(port: int) -> bool:
     """Return whether the TCP port is available on the local host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -421,6 +396,8 @@ def ensure_frontend_build(project_root: Path = PROJECT_ROOT) -> None:
 if __name__ == "__main__":
     ensure_frontend_build()
     server_port = resolve_server_port()
+    if server_port != 8000:
+        print("[启动] 端口 8000 被非本项目进程占用，已安全切换到 8001。")
     # 设置环境变量允许热重载时的子进程正确处理
     uvicorn.run(
         "main:app",

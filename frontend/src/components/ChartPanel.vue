@@ -2,9 +2,10 @@
 
 <script setup lang="ts">
 import * as echarts from 'echarts'
+import type { EChartsCoreOption } from 'echarts/core'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-const props = defineProps<{ title: string; eyebrow: string; caption?: string; option: echarts.EChartsOption }>()
+const props = defineProps<{ title: string; eyebrow: string; caption?: string; option: EChartsCoreOption }>()
 const chartElement = ref<HTMLElement>()
 let chart: echarts.ECharts | undefined
 

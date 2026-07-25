@@ -6,7 +6,7 @@
         <span class="header-title">AI 财富助手</span>
       </div>
       <div class="header-right">
-        <span class="header-status">{{ customerName ? `${customerName}` : `${messages.length} 条对话` }}</span>
+        <span class="header-status">{{ statusText }}</span>
         <button class="new-chat-btn" @click="newChat" title="开始新对话">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           新聊天
@@ -41,7 +41,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 
-import { createMockChatResponse, getChatHistory } from '../api/chat'
+import { createMockChatResponse, getChatHistory, type ChatResponse } from '../api/chat'
 import MessageCard from './MessageCard.vue'
 import { streamChat } from '../utils/sse'
 import { useConversationStore } from '../stores/conversation'
@@ -57,7 +57,19 @@ const prompts = ['我有 50 万，如何稳健配置？', '帮我评估当前投
 const input = ref('')
 const loading = ref(false)
 const error = ref('')
+const activeAgent = ref('')
 const scrollArea = ref<HTMLElement>()
+const agentLabels: Record<string, string> = {
+  advisor: '投顾助手正在生成方案',
+  customer_service: '智能客服正在查询',
+  risk_monitor: '风控助手正在核查',
+  nl2sql: '数据分析助手正在处理',
+  operator: '业务助手正在处理',
+}
+const statusText = computed(() => {
+  if (loading.value) return agentLabels[activeAgent.value] || '正在识别您的需求'
+  return props.customerName || `${messages.value.length} 条对话`
+})
 
 async function hydrateHistory() {
   try {
@@ -81,6 +93,7 @@ async function send() {
   input.value = ''
   loading.value = true
   error.value = ''
+  activeAgent.value = ''
   await scrollToBottom()
 
   // 流式消息：先追加空气泡，逐步填充 content
@@ -99,13 +112,15 @@ async function send() {
     }, ({ event, data }) => {
       switch (event) {
         case 'token':
+        case 'delta':
           assistantMsg.content += data.content || ''
           scrollToBottom()
           break
         case 'done':
           loading.value = false
           if (data.session_id) conversations.setSessionId(userKey.value, data.session_id)
-          assistantMsg.response = data
+          if (data.reply) assistantMsg.content = data.narrative || data.reply
+          assistantMsg.response = normalizeStreamResponse(data, activeAgent.value)
           scrollToBottom()
           break
         case 'error':
@@ -116,7 +131,7 @@ async function send() {
           if (msgs[msgs.length - 1] === assistantMsg) msgs.pop()
           break
         case 'meta':
-          // 可用于显示 agent 名称
+          activeAgent.value = data.agent || data.agent_type || ''
           break
       }
     })
@@ -132,6 +147,24 @@ async function send() {
   } finally {
     loading.value = false
     await scrollToBottom()
+  }
+}
+
+function normalizeStreamResponse(data: Record<string, any>, agent: string): ChatResponse {
+  const product = Array.isArray(data.recommendations) ? data.recommendations[0] : undefined
+  const recommendation = product?.product_name ? {
+    title: '智能匹配产品建议',
+    risk_level: product.risk_level || '稳健型',
+    product: product.product_name,
+    allocation: product.expected_return ? `参考收益 ${product.expected_return}%` : '查看产品详情',
+    rationale: product.reason || '该产品已按客户画像与适当性规则匹配。',
+  } : undefined
+  return {
+    answer: data.narrative || data.reply || '',
+    agent: data.agent || agent || 'service',
+    confidence: Number(data.confidence) || 0.9,
+    suggestions: recommendation ? ['查看方案详情', '比较同类产品'] : [],
+    metadata: { recommendation, session_id: data.session_id },
   }
 }
 

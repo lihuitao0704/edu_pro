@@ -390,11 +390,8 @@ async function runAllocation() {
   error.value = ''
   activeView.value = 'allocation'
   try {
-    const result = await post<Record<string, any>>('/chat', {
-      message: `为客户${selected.value.customer_id}提供资产配置建议`,
-      session_id: '',
-      user_id: selected.value.customer_id,
-      user_role: '理财顾问',
+    const result = await post<Record<string, any>>('/advisor/allocation', {
+      customer_id: selected.value.customer_id,
     })
     const inner = extractApiData(result)
 
@@ -525,11 +522,11 @@ async function runRecommend() {
   error.value = ''
   activeView.value = 'recommend'
   try {
-    const result = await post<Record<string, any>>('/chat', {
+    const result = await post<Record<string, any>>('/advisor', {
       message: `为客户${selected.value.customer_id}推荐3款适合的产品`,
       session_id: '',
       user_id: selected.value.customer_id,
-      user_role: '理财顾问',
+      customer_id: selected.value.customer_id,
     })
     const inner = extractApiData(result)
 
@@ -546,7 +543,7 @@ async function runRecommend() {
         allocation: r.allocation || '',
       }))
       adviceReasoning.value = inner?.reasoning || ''
-      advice.value = ''
+      advice.value = inner?.narrative || inner?.reply || ''
     } else {
       advice.value = inner?.reply || JSON.stringify(inner, null, 2)
       recommendations.value = []

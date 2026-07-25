@@ -515,9 +515,25 @@ class AdvisorAgent(BaseAgent):
             except Exception:
                 pass
 
+        # The streaming path must meet the same suitability disclosure
+        # requirement as the regular advisor API.  A deterministic narrative
+        # also keeps the UI useful if the model returns no natural-language
+        # summary after invoking a recommendation tool.
+        from app.service.advisor_narrative_service import AdvisorNarrativeService
+        narrative_service = AdvisorNarrativeService()
+        final_reply = (
+            narrative_service.ensure_disclaimer(full_reply)
+            if full_reply
+            else narrative_service.render_template({
+                "customer_profile": customer_profile,
+                "recommendations": recommendations,
+            })
+        )
+
         yield {
             "type": "done",
-            "reply": full_reply,
+            "reply": final_reply,
+            "narrative": final_reply,
             "recommendations": recommendations,
             "customer_profile": customer_profile,
             "allocation": allocation,
@@ -554,7 +570,7 @@ class AdvisorAgent(BaseAgent):
 
             此工具内部会：
             1. 检查客户是否有未处理的风控预警（高风险客户限制推荐R1-R2产品）
-            2. 并行查询画像和推荐
+            2. 顺序读取客户画像和资产配置，避免共享数据库会话并发访问
             3. 综合风险预警和画像等级给出推荐
 
             重要：如果客户画像不存在（status=not_found），会回退推荐R1最低风险产品，
@@ -568,7 +584,6 @@ class AdvisorAgent(BaseAgent):
                 JSON 格式的一站式结果，包含客户画像摘要、风控预警状态、产品推荐列表、资产配置建议
             """
             import json
-            import asyncio
             from datetime import datetime as dt, timedelta
             from sqlalchemy import text, select, func
             from app.model.entities import FinRiskAlert
@@ -610,31 +625,20 @@ class AdvisorAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"风控预警查询失败 customer={customer_id}: {e}")
 
-            # 并行执行画像查询和产品推荐（互不依赖的数据并行获取）
-            profile_coro = profile_tool._arun(customer_id)
-            alloc_coro = alloc_tool.get_allocation(customer_id)
+            # AsyncSession is not safe for concurrent queries. Resolve the
+            # profile first so a real C3 profile can never be replaced by a
+            # transient allocation-query error.
+            try:
+                profile_json = await profile_tool._arun(customer_id)
+            except Exception as exc:
+                logger.warning("smart_recommend profile query failed: %s", exc)
+                profile_json = json.dumps({"customer_id": customer_id, "status": "error"})
 
-            # return_exceptions=True：单个工具失败不拖垮另一个
-            profile_json_raw, alloc_result_raw = await asyncio.gather(
-                profile_coro, alloc_coro, return_exceptions=True
-            )
-            # 只处理成功的结果
-            if isinstance(profile_json_raw, Exception):
-                import logging
-                logging.getLogger(__name__).warning(f"smart_recommend profile 查询失败: {profile_json_raw}")
-                profile_json = json.dumps({
-                    "customer_id": customer_id,
-                    "status": "error",
-                    "message": "画像查询超时，推荐结果基于历史交易数据",
-                })
-            else:
-                profile_json = profile_json_raw
-            if isinstance(alloc_result_raw, Exception):
-                import logging
-                logging.getLogger(__name__).warning(f"smart_recommend alloc 查询失败: {alloc_result_raw}")
+            try:
+                alloc_result = await alloc_tool.get_allocation(customer_id)
+            except Exception as exc:
+                logger.warning("smart_recommend allocation query failed: %s", exc)
                 alloc_result = {}
-            else:
-                alloc_result = alloc_result_raw
 
             # 解析画像获取风险等级，传给推荐
             try:
