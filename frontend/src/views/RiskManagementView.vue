@@ -53,7 +53,7 @@
           <span>📊 触发最多规则 TOP3</span>
           <ol>
             <li v-for="r in dailyReport.top_rules?.slice(0,3)" :key="r.rule_id">
-              {{ r.rule_id }} · {{ r.count }} 次
+              {{ ruleLabel(r.rule_id) }} · {{ r.count }} 次
             </li>
             <li v-if="!dailyReport.top_rules?.length">暂无</li>
           </ol>
@@ -93,6 +93,8 @@
                 <td>#{{ alert.customer_id }}</td>
                 <td>
                   {{ alert.trigger_rules?.map(r => r.rule_name || r.rule_id).join('、') || alert.summary }}
+                  <!-- 累计高风险标记 -->
+                  <span v-if="alert.alert_type === 'cumulative_high'" class="cumulative-badge" title="高风险累计告警">⚠️累计告警</span>
                   <!-- SLA超时标记 -->
                   <span v-if="slaTimeout(alert)" class="sla-badge" :title="slaTimeout(alert) || undefined">⏰超时</span>
                 </td>
@@ -237,6 +239,16 @@ const pendingCount = computed(() => fullAlerts.value.filter((item) => !['resolve
 const highCount = computed(() => fullAlerts.value.filter((item) => item.alert_level === 'high' && !['resolved', 'false_positive'].includes(item.status)).length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
 const levelLabel = (level: string) => ({ low: '低', medium: '中', high: '高' }[level] || level)
+const ruleNameMap: Record<string, string> = {
+  cs_signal: '客服渠道信号', abnormal_intent: '异常意图', account_compromise: '账户盗用',
+  social_engineering: '社会工程攻击', cumulative_high: '高风险累计告警', cumulative_risk: '累计风险升级',
+  suspicious: '人工可疑上报', large_transaction: '大额交易', frequent_trade: '频繁交易',
+  high_risk_country: '高风险国家', R001: '大额现金交易', R002: '频繁小额交易', R003: '快进快出',
+  R004: '分散转入集中转出', R005: '集中转入分散转出', R006: '金额与身份不符',
+  R009: '整数规避', R011: '高风险国家交易', R013: 'PEP关联', R014: '第三方代付',
+  R016: '老年异常大额', R017: '新开户短期大额', R018: '多账户归集', R019: '涉赌涉诈', R020: '离岸交易',
+}
+const ruleLabel = (type: string) => ruleNameMap[type] || (type.startsWith('cs_signal:') ? type.replace('cs_signal:', '客服信号: ') : type)
 
 // SLA超时判断
 function slaTimeout(alert: RiskAlert): string | null {
@@ -451,6 +463,14 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resizeCharts); tren
 .risk-chart { width: 100%; height: 260px; }
 
 /* ===== SLA超时 ===== */
+.cumulative-badge {
+  display: inline-block;
+  margin-left: 6px;
+  color: #f59e0b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .sla-badge {
   display: inline-block;
   margin-left: 6px;
