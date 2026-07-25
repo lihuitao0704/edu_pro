@@ -152,7 +152,7 @@ async function send() {
   }
 }
 
-function normalizeStreamResponse(data: Record<string, any>, agent: string): ChatResponse {
+function normalizeStreamResponse(data: Record<string, any>, agent: string): ChatResponse & { _queryResult?: any[]; _sql?: string } {
   const structuredData = data.data && typeof data.data === 'object' ? data.data : data
   const product = Array.isArray(data.recommendations)
     ? data.recommendations[0]
@@ -170,6 +170,9 @@ function normalizeStreamResponse(data: Record<string, any>, agent: string): Chat
     confidence: Number(data.confidence) || 0.9,
     suggestions: recommendation ? ['查看方案详情', '比较同类产品'] : [],
     metadata: { recommendation, session_id: data.session_id },
+    // 透传数据查询结果（供 MessageCard 渲染表格）
+    _queryResult: structuredData.query_result || [],
+    _sql: structuredData.sql || '',
   }
 }
 
