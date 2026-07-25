@@ -42,6 +42,7 @@ async def get_score_history(
     """Return the customer's archived score history in chronological order."""
     enforce_customer_scope(user, customer_id)
     records = await LongTermMemory(db).get_rating_history(customer_id, limit=1000)
+    # 按 create_time（完整 datetime）排序，确保同天内顺序确定
     records.sort(key=lambda record: record.create_time or record.rating_date)
 
     def decimal_to_float(value):
@@ -49,7 +50,7 @@ async def get_score_history(
 
     return success(data=[
         {
-            "rating_date": (record.rating_date or record.create_time).date().isoformat(),
+            "rating_date": (record.create_time or record.rating_date).date().isoformat(),
             "total_score": decimal_to_float(record.total_score),
             "risk_level": record.risk_level,
             "basic_score": decimal_to_float(record.basic_score),

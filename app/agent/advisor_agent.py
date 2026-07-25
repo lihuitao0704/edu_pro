@@ -119,6 +119,10 @@ ADVISOR_SYSTEM_PROMPT = """# 角色
 
 **6. 客户对比分析 / 持仓分析 / 知识检索结果（按需出现）**
 
+**7. 风险提示（必须出现，固定章节）**
+- 所有包含产品推荐的回答**必须**在末尾添加风险提示
+- 固定文案："> ⚠️ **风险提示**：投资有风险，入市需谨慎。以上推荐基于当前画像和历史数据生成，不构成投资建议。过往业绩不代表未来表现，请根据自身风险承受能力审慎决策。如有疑问，请咨询持牌理财顾问。"
+
 # 语言风格
 - **精炼优先**：用最少的字传达最多的信息，避免铺垫和过度修饰
 - 面向理财顾问，专业但不晦涩，使用金融行业通用术语
@@ -610,7 +614,27 @@ class AdvisorAgent(BaseAgent):
             profile_coro = profile_tool._arun(customer_id)
             alloc_coro = alloc_tool.get_allocation(customer_id)
 
-            profile_json, alloc_result = await asyncio.gather(profile_coro, alloc_coro)
+            # return_exceptions=True：单个工具失败不拖垮另一个
+            profile_json_raw, alloc_result_raw = await asyncio.gather(
+                profile_coro, alloc_coro, return_exceptions=True
+            )
+            # 只处理成功的结果
+            if isinstance(profile_json_raw, Exception):
+                import logging
+                logging.getLogger(__name__).warning(f"smart_recommend profile 查询失败: {profile_json_raw}")
+                profile_json = json.dumps({
+                    "customer_id": customer_id,
+                    "status": "error",
+                    "message": "画像查询超时，推荐结果基于历史交易数据",
+                })
+            else:
+                profile_json = profile_json_raw
+            if isinstance(alloc_result_raw, Exception):
+                import logging
+                logging.getLogger(__name__).warning(f"smart_recommend alloc 查询失败: {alloc_result_raw}")
+                alloc_result = {}
+            else:
+                alloc_result = alloc_result_raw
 
             # 解析画像获取风险等级，传给推荐
             try:

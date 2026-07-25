@@ -50,16 +50,30 @@ async def list_customers(
         text(
             "SELECT u.id AS customer_id, u.username, u.real_name, u.phone, u.age, "
             "u.customer_level, p.risk_level, p.risk_score, p.total_assets, "
-            "p.confidence_score, p.risk_flag "
+            "p.confidence_score, p.risk_flag, "
+            "COALESCE((SELECT COUNT(*) FROM fin_risk_alert a "
+            "  WHERE a.customer_id = u.id AND a.create_time >= NOW() - INTERVAL 30 DAY), 0) "
+            "  AS alert_count_30d "
             "FROM sys_user u "
             "LEFT JOIN fin_customer_profile p ON p.customer_id = u.id "
             f"WHERE {where} ORDER BY u.id LIMIT :limit OFFSET :offset"
         ),
         params,
     )
+    items = []
+    for row in rows_result.mappings().all():
+        d = _serialize_row(row)
+        count = d.get("alert_count_30d", 0)
+        if count >= 3:
+            d["aml_risk_level"] = "high"
+        elif count >= 1:
+            d["aml_risk_level"] = "medium"
+        else:
+            d["aml_risk_level"] = "low"
+        items.append(d)
     return success(
         data={
-            "items": [_serialize_row(row) for row in rows_result.mappings().all()],
+            "items": items,
             "total": int(count_result.scalar() or 0),
             "page": page,
             "page_size": page_size,
@@ -80,7 +94,10 @@ async def get_customer(
             "u.age, u.education, u.occupation, u.customer_level, "
             "p.risk_level, p.risk_score, p.investment_experience, "
             "p.annual_income_range, p.total_assets, p.asset_allocation, "
-            "p.product_preference, p.confidence_score, p.risk_flag "
+            "p.product_preference, p.confidence_score, p.risk_flag, "
+            "COALESCE((SELECT COUNT(*) FROM fin_risk_alert a "
+            "  WHERE a.customer_id = u.id AND a.create_time >= NOW() - INTERVAL 30 DAY), 0) "
+            "  AS alert_count_30d "
             "FROM sys_user u LEFT JOIN fin_customer_profile p ON p.customer_id = u.id "
             "WHERE u.id = :customer_id AND u.user_type = 'CUSTOMER'"
         ),
@@ -89,7 +106,15 @@ async def get_customer(
     row = result.mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="客户不存在")
-    return success(data=_serialize_row(row))
+    d = _serialize_row(row)
+    count = d.get("alert_count_30d", 0)
+    if count >= 3:
+        d["aml_risk_level"] = "high"
+    elif count >= 1:
+        d["aml_risk_level"] = "medium"
+    else:
+        d["aml_risk_level"] = "low"
+    return success(data=d)
 
 
 @router.get("/{customer_id}/holdings")
