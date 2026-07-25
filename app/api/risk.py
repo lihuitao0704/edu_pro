@@ -319,9 +319,10 @@ async def alert_statistics(days: int = 7, db: AsyncSession = Depends(get_db),
 
 @router.get("/alerts/export", summary="导出预警CSV")
 async def export_alerts(from_date: str = None, to_date: str = None,
+                        alert_level: str = None, customer_id: int = None, status: str = None,
                         db: AsyncSession = Depends(get_db),
                         _: dict = Depends(require_roles("风控专员", "管理员"))):
-    """导出预警记录为CSV文件（监管报送用）"""
+    """导出预警记录为CSV文件（支持按日期/级别/客户/状态筛选）"""
     import csv, io
     from fastapi.responses import StreamingResponse
     from sqlalchemy import text as sa_text
@@ -334,6 +335,15 @@ async def export_alerts(from_date: str = None, to_date: str = None,
     if to_date:
         conditions.append("create_time <= :to_date")
         params["to_date"] = to_date + " 23:59:59"
+    if alert_level:
+        conditions.append("alert_level = :level")
+        params["level"] = alert_level
+    if customer_id:
+        conditions.append("customer_id = :cid")
+        params["cid"] = customer_id
+    if status:
+        conditions.append("status = :st")
+        params["st"] = status
     where = " AND ".join(conditions) if conditions else "1=1"
 
     result = await db.execute(
