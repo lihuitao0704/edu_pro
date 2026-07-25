@@ -530,15 +530,15 @@ async function runRecommend() {
   error.value = ''
   activeView.value = 'recommend'
   try {
-    const result = await post<Record<string, any>>('/chat', {
+    const result = await post<Record<string, any>>('/chat/recommend', {
       message: `为客户${selected.value.customer_id}推荐3款适合的产品`,
       session_id: '',
       user_id: selected.value.customer_id,
       user_role: '理财顾问',
     })
-    const inner = extractApiData(result)
 
-    const recs = inner?.data?.recommendations || inner?.recommendations
+    // /chat/recommend 返回扁平结构: {reply, recommendations, allocation, ...}
+    const recs = result?.recommendations
     if (Array.isArray(recs) && recs.length) {
       recommendations.value = recs.map((r: any) => ({
         product_name: r.product_name || r.title || r.name || '',
@@ -550,16 +550,16 @@ async function runRecommend() {
         match_score: r.match_score,
         allocation: r.allocation || '',
       }))
-      adviceReasoning.value = inner?.reasoning || ''
-      advice.value = inner?.narrative || inner?.reply || ''
+      adviceReasoning.value = result?.reasoning || ''
+      advice.value = result?.reply || ''
     } else {
-      advice.value = inner?.reply || JSON.stringify(inner, null, 2)
+      advice.value = result?.reply || '当前服务繁忙，请稍后再试'
       recommendations.value = []
     }
 
-    // 同时提取 allocation（smart_recommend 可能一并返回）
-    if (inner?.allocation) {
-      const alloc = inner.allocation
+    // 同时提取 allocation（smart_recommend 一并返回）
+    if (result?.allocation) {
+      const alloc = result.allocation
       if (alloc.allocation && typeof alloc.allocation === 'object') {
         allocationData.value = alloc.allocation
         allocationRiskLevel.value = alloc.risk_level || ''
@@ -569,7 +569,7 @@ async function runRecommend() {
 
     if (selected.value) saveAdviceToCache(selected.value.customer_id)
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '推荐生成失败'
+    error.value = reason instanceof Error ? reason.message : '当前服务繁忙，请稍后再试'
   } finally {
     actionLoading.value = false
   }

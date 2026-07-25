@@ -172,11 +172,14 @@ async def unified_chat(
             customer_id=req.user_id,
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
-        if result.agent != "safety_guard":
-            await MemoryService(db).archive_turn(
-                result.session_id, actor_id, result.agent, safe_input, result.reply
-            )
-        await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
+        try:
+            if result.agent != "safety_guard":
+                await MemoryService(db).archive_turn(
+                    result.session_id, actor_id, result.agent, safe_input, result.reply
+                )
+            await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
+        except Exception as e:
+            logger.warning(f"对话归档失败(不影响响应): {e}")
         logger.info(
             f"统一入口响应 | intent={result.intent} | agent={result.agent} "
             f"| session={result.session_id}"
@@ -217,13 +220,15 @@ async def unified_chat_stream(
             customer_id=req.user_id,
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
-        if result.agent != "safety_guard":
-            await MemoryService(db).archive_turn(
-                result.session_id, actor_id, result.agent, safe_input, result.reply
-            )
-        await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
+        try:
+            if result.agent != "safety_guard":
+                await MemoryService(db).archive_turn(
+                    result.session_id, actor_id, result.agent, safe_input, result.reply
+                )
+            await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result)
+        except Exception as e:
+            logger.warning(f"对话归档失败(不影响响应): {e}")
         payload = result.model_dump()
-        # 补充 agent_type 供 SSE meta 事件使用
         payload["agent_type"] = result.agent
         return EventSourceResponse(
             stream_chat_result(payload, chunk_size=_settings.sse.chunk_size)
@@ -349,6 +354,32 @@ def _make_json_safe(obj: dict) -> dict:
         else:
             result[k] = v
     return result
+
+
+@router.post("/chat/recommend")
+async def chat_recommend(
+    req: UnifiedChatRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(
+        require_roles("客户", "理财顾问", "客户经理", "风控专员", "管理员")
+    ),
+):
+    """
+    直调投顾 Agent 推荐 — 不走编排器，无对话归档。
+
+    轻量端点，专供顾问工作台「生成推荐方案」按钮使用。
+    直调 AdvisorAgent，无编排器开销，无对话归档。
+    """
+    from app.agent.advisor_agent import AdvisorAgent
+    agent = AdvisorAgent(db, req.session_id)
+    result = await agent.execute(req.message, customer_id=req.user_id)
+    return success(data={
+        "reply": result.get("reply", ""),
+        "recommendations": result.get("recommendations", []),
+        "allocation": result.get("allocation"),
+        "customer_profile": result.get("customer_profile"),
+        "reasoning": result.get("reasoning"),
+    })
 
 
 def get_request_role_from_user(user: dict) -> str:

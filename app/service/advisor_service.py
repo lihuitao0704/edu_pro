@@ -192,8 +192,11 @@ class AdvisorService:
 
         reasoning = f"基于客户 {customer_risk} 风险等级，从 {len(candidates)} 个候选产品中推荐 Top{len(top)}"
 
-        # ── 持久化推荐记录 ──
-        await self._persist_recommendations(customer_id, recommendations)
+        # ── 持久化推荐记录（失败不影响推荐结果）──
+        try:
+            await self._persist_recommendations(customer_id, recommendations)
+        except Exception as e:
+            logger.warning(f"推荐记录持久化失败(不影响推荐结果): {e}")
 
         return {
             "recommendations": recommendations,
