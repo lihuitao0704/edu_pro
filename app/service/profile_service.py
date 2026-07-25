@@ -29,6 +29,7 @@ from app.config.rules_config import (
 from app.memory.profile_cache import ProfileCache
 from app.memory.long_term import LongTermMemory
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
+import logging
 
 PROFILE_CACHE_SCHEMA_VERSION = 2
 
@@ -353,9 +354,9 @@ class ProfileService:
             "abnormal_behaviors": await self._calc_abnormal_behaviors(customer_id),
             "is_student": user.occupation == "在校学生",
             "is_dishonest": await self._calc_is_dishonest(customer_id),
-            "is_foreign": await self._calc_is_foreign(user),
+            "is_foreign": self._calc_is_foreign(user),
             "id_expired_days": self._calc_id_expired_days(user),
-            "identity_check_failed": await self._calc_identity_check_failed(user),
+            "identity_check_failed": self._calc_identity_check_failed(user),
             "on_sanction_list": await self._calc_on_sanction_list(customer_id, profile),
             "daily_loss_pct": await self._calc_daily_loss_pct(customer_id, profile),
             "consecutive_redeem_pct": await self._calc_consecutive_redeem_pct(customer_id, profile),

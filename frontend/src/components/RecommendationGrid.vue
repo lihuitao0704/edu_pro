@@ -28,7 +28,8 @@
             </div>
             <div class="metric">
               <span>匹配度</span>
-              <strong>{{ product.match_score ? `${(product.match_score * 100).toFixed(0)}%` : '—' }}</strong>
+              <strong>{{ product.match_score != null ? `${(product.match_score * 100).toFixed(0)}%` : '—' }}</strong>
+              <small v-if="product.match_level" class="match-level-tag">{{ product.match_level }}</small>
             </div>
           </div>
 
@@ -95,6 +96,7 @@ interface ProductRecommendation {
   description?: string
   expected_return?: number | string
   match_score?: number
+  match_level?: string
   allocation?: string
 }
 
@@ -242,6 +244,16 @@ function formatNlpContent(content: string): string {
   color: #67e8f9;
   font-size: 19px;
   font-family: Georgia, serif;
+}
+.match-level-tag {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.12);
 }
 .hover-hint {
   margin-top: 14px;

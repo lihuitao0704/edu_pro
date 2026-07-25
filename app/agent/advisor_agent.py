@@ -48,6 +48,12 @@ def _json_default(obj):
     return str(obj)
 
 
+def _level_to_name_static(level: str) -> str:
+    """风险等级代码转中文名称（静态辅助函数）"""
+    mapping = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}
+    return mapping.get(level, level)
+
+
 # ══════════════════════════════════════════════════════════════════
 # System Prompt — 投顾分析师的"人设"
 # ══════════════════════════════════════════════════════════════════
@@ -475,8 +481,18 @@ class AdvisorAgent(BaseAgent):
                 elif kind == "on_tool_end":
                     name = event.get("name", "")
                     output = event.get("data", {}).get("output", {})
-                    # 工具输出可能是 JSON 字符串，尝试解析
-                    if isinstance(output, str):
+                    # 工具输出可能是 ToolMessage / JSON 字符串 / dict，统一提取
+                    if hasattr(output, "content"):
+                        # LangChain ToolMessage / AIMessage 等消息对象
+                        raw_content = getattr(output, "content", "")
+                        if isinstance(raw_content, str):
+                            try:
+                                output = _json.loads(raw_content)
+                            except (_json.JSONDecodeError, TypeError):
+                                output = {"raw": raw_content}
+                        else:
+                            output = {"raw": str(raw_content)}
+                    elif isinstance(output, str):
                         try:
                             output = _json.loads(output)
                         except (_json.JSONDecodeError, TypeError):
@@ -651,7 +667,51 @@ class AdvisorAgent(BaseAgent):
             if isinstance(profile_data, dict):
                 if profile_data.get("status") == "not_found":
                     profile_not_found = True
-                    risk_level = "C1"
+                    # ── 自动修复：画像缺失时主动执行研判创建画像 ──
+                    try:
+                        from app.service.profile_service import ProfileService
+                        profile_svc = ProfileService(db)
+                        assess_result = await profile_svc.assess(customer_id, trigger_type="auto_recovery")
+                        risk_level = assess_result.risk_level
+                        profile_not_found = False  # 画像已创建
+                        profile_data = {
+                            "customer_id": customer_id,
+                            "assessment": {
+                                "risk_level": assess_result.risk_level,
+                                "risk_level_name": _level_to_name_static(assess_result.risk_level),
+                                "total_score": assess_result.total_score,
+                                "confidence_score": assess_result.confidence_score,
+                            },
+                            "basic_info": {"name": "客户" + str(customer_id)},
+                            "status": "recovered",
+                        }
+                        logger.info(f"smart_recommend 自动修复画像成功 | customer_id={customer_id} | risk_level={risk_level}")
+                    except Exception as recovery_err:
+                        logger.warning(
+                            f"smart_recommend 自动修复画像失败(回退C1) | customer_id={customer_id} | {recovery_err}"
+                        )
+                        risk_level = "C1"
+                elif profile_data.get("status") in ("error", "parse_error"):
+                    # 画像查询出错 → 尝试通过 assess() 修复
+                    try:
+                        from app.service.profile_service import ProfileService
+                        profile_svc = ProfileService(db)
+                        assess_result = await profile_svc.assess(customer_id, trigger_type="auto_recovery")
+                        risk_level = assess_result.risk_level
+                        profile_data = {
+                            "customer_id": customer_id,
+                            "assessment": {
+                                "risk_level": assess_result.risk_level,
+                                "risk_level_name": _level_to_name_static(assess_result.risk_level),
+                                "total_score": assess_result.total_score,
+                                "confidence_score": assess_result.confidence_score,
+                            },
+                            "basic_info": {"name": "客户" + str(customer_id)},
+                            "status": "recovered",
+                        }
+                        logger.info(f"smart_recommend 修复异常画像成功 | customer_id={customer_id}")
+                    except Exception:
+                        risk_level = "C2"
                 else:
                     assessment = profile_data.get("assessment", {})
                     risk_level = assessment.get("risk_level")
@@ -697,7 +757,7 @@ class AdvisorAgent(BaseAgent):
                 "recommendations": recommendations[:top_n],
             }
 
-            # 无画像时的处理
+            # 无画像时的处理（仅自动修复也失败时才会进入此分支）
             if profile_not_found:
                 result = {
                     "customer_profile": profile_data,
@@ -711,8 +771,8 @@ class AdvisorAgent(BaseAgent):
                     },
                     "status": "profile_not_found",
                     "notice": (
-                        "⚠️ 该客户当前风险测评已失效或不存在，系统已回退推荐R1级（最低风险）产品。"
-                        "建议客户及时完成【风评问卷】，维持有效的风评状态以便购买更多财富产品。"
+                        "⚠️ 该客户暂未完成风险测评，系统已按最低风险等级（C1保守型）匹配产品。"
+                        "建议引导客户完成风险测评以获得更精准的推荐。"
                         "风评问卷入口：点击「开始风评测评」按钮或访问 /api/risk/questionnaire"
                     ),
                 }

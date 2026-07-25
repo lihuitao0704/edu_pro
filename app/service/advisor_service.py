@@ -172,6 +172,16 @@ class AdvisorService:
         candidates.sort(key=lambda x: x["match_score"], reverse=True)
         top = candidates[:top_n]
 
+        @staticmethod
+        def _score_to_match_level(score: float) -> str:
+            if score >= 0.8:
+                return "高度匹配"
+            elif score >= 0.6:
+                return "中度匹配"
+            elif score >= 0.4:
+                return "一般匹配"
+            return "低度匹配"
+
         recommendations = [
             ProductRecommend(
                 product_code=p["product_code"],
@@ -180,6 +190,7 @@ class AdvisorService:
                 product_type=p.get("product_type"),
                 expected_return=p["expected_return"],
                 match_score=round(p["match_score"], 2),
+                match_level=_score_to_match_level(p["match_score"]),
                 reason=await self._generate_reason(p, customer_risk, profile),
             ).model_dump()
             for p in top

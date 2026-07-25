@@ -149,6 +149,7 @@ class ProductRecommend(BaseModel):
     product_type: Optional[str] = None
     expected_return: Optional[float] = None
     match_score: Optional[float] = None
+    match_level: Optional[str] = None
     reason: str
 
 
