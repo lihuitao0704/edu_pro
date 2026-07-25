@@ -86,6 +86,16 @@ class MilvusTool:
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=self.dim),
             FieldSchema(name="metadata", dtype=DataType.JSON),
         ]
+
+        # faq_knowledge 集合额外增加 question / answer 字段
+        if collection_name == "faq_knowledge":
+            fields.append(
+                FieldSchema(name="question", dtype=DataType.VARCHAR, max_length=2048)
+            )
+            fields.append(
+                FieldSchema(name="answer", dtype=DataType.VARCHAR, max_length=6144)
+            )
+
         schema = CollectionSchema(fields=fields, description=f"{collection_name} 知识库")
 
         # 创建集合
@@ -107,6 +117,8 @@ class MilvusTool:
         embeddings: list[list[float]],
         contents: list[str],
         metadatas: list[dict],
+        questions: Optional[list[str]] = None,
+        answers: Optional[list[str]] = None,
     ):
         """
         批量插入向量
@@ -116,9 +128,17 @@ class MilvusTool:
             embeddings: 向量列表
             contents: 文本内容列表
             metadatas: 元数据列表
+            questions: 问题列表（仅 faq_knowledge 集合使用）
+            answers: 答案列表（仅 faq_knowledge 集合使用）
         """
         collection = Collection(collection_name)
-        data = [contents, embeddings, metadatas]
+
+        # faq_knowledge 集合包含 question / answer 字段
+        if collection_name == "faq_knowledge" and questions and answers:
+            data = [contents, embeddings, metadatas, questions, answers]
+        else:
+            data = [contents, embeddings, metadatas]
+
         result = collection.insert(data)
         collection.flush()
         logger.info(f"向量插入成功 | collection={collection_name} | count={len(embeddings)}")

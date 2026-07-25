@@ -381,7 +381,7 @@ def release_workspace_listener(port: int) -> bool:
 
 
 def resolve_server_port(preferred_port: int = 8000) -> int:
-    for port in dict.fromkeys((preferred_port, 8001)):
+    for port in dict.fromkeys((preferred_port, 8005)):
         if is_port_available(port):
             return port
         release_workspace_listener(port)

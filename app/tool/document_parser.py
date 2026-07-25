@@ -151,6 +151,10 @@ class DocumentParser:
         if self._is_faq_format(text):
             return self._chunk_faq(text, metadata)
 
+        # 检测是否为 TSV 格式 FAQ（问题\t答案）
+        if self._is_tsv_faq_format(text):
+            return self._chunk_tsv_faq(text, metadata)
+
         # 检测是否为法规条款格式（第X条 ...）
         if self._is_regulation_format(text):
             return self._chunk_regulation(text, metadata)
@@ -169,6 +173,52 @@ class DocumentParser:
             if re.search(pattern, text, re.MULTILINE):
                 return True
         return False
+
+    def _is_tsv_faq_format(self, text: str) -> bool:
+        """检测是否为 TSV 格式 FAQ（每行：问题\t答案）"""
+        lines = text.strip().split("\n")
+        tsv_count = 0
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 检查是否包含 Tab 且前后都有内容
+            if "\t" in line:
+                parts = line.split("\t", 1)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                    tsv_count += 1
+        # 至少 3 行符合 TSV 格式才判定为 TSV FAQ
+        return tsv_count >= 3
+
+    def _chunk_tsv_faq(self, text: str, metadata: dict) -> list[dict]:
+        """TSV 格式 FAQ 分块：每条问答对独立成块"""
+        chunks = []
+        lines = text.strip().split("\n")
+        idx = 0
+
+        for line in lines:
+            line = line.strip()
+            if not line or "\t" not in line:
+                continue
+
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+
+            question = parts[0].strip()
+            answer = parts[1].strip()
+
+            if not question or not answer:
+                continue
+
+            # 组合为标准 QA 格式
+            qa_text = f"Q: {question}\nA: {answer}"
+            chunk_meta = {**metadata, "chunk_index": idx, "chunk_type": "faq"}
+            chunks.append({"content": qa_text, "metadata": chunk_meta})
+            idx += 1
+
+        logger.info(f"TSV FAQ 分块完成 | 共 {len(chunks)} 条")
+        return chunks
 
     def _is_regulation_format(self, text: str) -> bool:
         """检测是否为法规条款格式"""
