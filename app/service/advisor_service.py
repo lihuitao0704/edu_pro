@@ -5,7 +5,9 @@
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Optional
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model.schemas import ProductRecommend, AllocationResult
@@ -44,6 +46,12 @@ class AdvisorService:
         from app.tool.llm_tool import get_llm_tool
         self._llm = get_llm_tool()
 
+    @staticmethod
+    def filter_candidates_by_preferences(candidates: list[dict], preference: Optional[dict]) -> list[dict]:
+        """Apply non-regulatory feedback constraints to the candidate pool."""
+        avoided = set((preference or {}).get("avoid_product_types") or [])
+        return [dict(product) for product in candidates if product.get("product_type") not in avoided]
+
     async def recommend_products(
         self, customer_id: int, top_n: int = 3, risk_level: Optional[str] = None,
         fallback_risk: Optional[str] = None,
@@ -74,6 +82,13 @@ class AdvisorService:
 
         # 筛选
         candidates = [p for p in MOCK_PRODUCTS if p["risk_level"] in allowed_levels]
+        preference = (
+            profile.get("product_preference") if isinstance(profile, dict)
+            else getattr(profile, "product_preference", None)
+        ) if profile else None
+        candidates = self.filter_candidates_by_preferences(candidates, preference)
+        drawdown = ((preference or {}).get("analytics_signals") or {}).get("pnl_drawdown", {})
+        is_drawdown = float(drawdown.get("profit_ratio", 0) or 0) <= -0.10
 
         # ── 风控检查：高风险标记客户限制 R3+ 产品 ──
         is_high_risk = await self._check_risk_flag(customer_id)
@@ -141,6 +156,8 @@ class AdvisorService:
             risk_penalty = 1.0
             if is_high_risk and p["risk_level"] in ("R3", "R4", "R5"):
                 risk_penalty = 0.3
+            if is_drawdown and p["risk_level"] in ("R4", "R5"):
+                risk_penalty *= 0.5
 
             p["match_score"] = (
                 weights["risk_match"] * risk_match
@@ -209,6 +226,7 @@ class AdvisorService:
 
     async def _persist_recommendations(self, customer_id: int, recommendations: list) -> None:
         """将推荐结果持久化到 product_recommendation 表"""
+        records = []
         for rec in recommendations:
             record = ProductRecommendation(
                 customer_id=customer_id,
@@ -217,11 +235,47 @@ class AdvisorService:
                 score_detail={
                     "risk_level": rec["risk_level"],
                     "expected_return": rec["expected_return"],
+                    "product_type": rec.get("product_type", ""),
                 },
                 reasoning=rec["reason"],
             )
             self.db.add(record)
+            records.append((rec, record))
         await self.db.flush()
+        for rec, record in records:
+            rec["recommendation_id"] = record.id
+
+    async def record_recommendation_feedback(
+        self, customer_id: int, recommendation_id: int, status: str, reason: str = ""
+    ) -> ProductRecommendation | None:
+        """Record feedback and update only behavioral preference constraints."""
+        if status not in {"accepted", "rejected", "ignored"}:
+            raise ValueError("反馈状态必须是 accepted、rejected 或 ignored")
+        result = await self.db.execute(
+            select(ProductRecommendation).where(
+                ProductRecommendation.id == recommendation_id,
+                ProductRecommendation.customer_id == customer_id,
+            )
+        )
+        record = result.scalar_one_or_none()
+        if not record:
+            return None
+        record.status = status
+        record.feedback_reason = reason[:255] or None
+        record.feedback_at = datetime.now()
+
+        product_type = (record.score_detail or {}).get("product_type") or "未知类型"
+        await self.profile_service.apply_recommendation_feedback(
+            {
+                "product_type": product_type,
+                "status": status,
+                "reason": reason,
+                "recommendation_id": recommendation_id,
+            },
+            customer_id,
+        )
+        await self.db.flush()
+        return record
 
     # ═══════════════════════════════════════════════════════════════
     # 图谱增强 — 行业集中度

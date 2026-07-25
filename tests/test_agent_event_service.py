@@ -107,6 +107,28 @@ class EventOutboxTests(unittest.IsolatedAsyncioTestCase):
             {"arguments": {"customer_id": 27}, "result": {"alert_level": "high", "alert_id": 88}}
         )
 
+    async def test_suspicious_report_is_promoted_to_risk_alert(self):
+        event = AgentDomainEvent.create(
+            "suspicious_reported", "operator", 27, {"alert_id": 89, "reason": "异常资金流"}
+        )
+        with patch("app.service.event_bus.publish_domain_event", new=AsyncMock()) as publish:
+            await event_bus.handle_domain_event(event)
+
+        promoted = publish.await_args.args[0]
+        self.assertEqual("risk_alert_created", promoted.event_type)
+        self.assertEqual(27, promoted.customer_id)
+        self.assertEqual("medium", promoted.payload["alert_level"])
+
+    async def test_expiring_assessment_updates_customer_context(self):
+        event = AgentDomainEvent.create(
+            "risk_assessment_expiring", "risk", 27, {"valid_until": "2026-08-01"}
+        )
+        with patch("app.service.event_bus._handle_c4_customer_context", new=AsyncMock()) as customer:
+            await event_bus.handle_domain_event(event)
+
+        customer.assert_awaited_once()
+        self.assertEqual("risk_assessment_expiring", customer.await_args.args[0]["action"])
+
 
 class EventDispatcherTests(unittest.IsolatedAsyncioTestCase):
     async def test_dispatcher_delivers_one_event_once_per_consumer(self):

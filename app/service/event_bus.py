@@ -205,8 +205,69 @@ async def handle_domain_event(event) -> None:
                 "result": {"alert_level": alert_level, "alert_id": event.payload.get("alert_id")},
             }
         )
+    elif event.event_type == "suspicious_reported":
+        # An operator report is evidence, not a second risk engine. Promote it
+        # into the canonical risk fact so every downstream Agent shares one path.
+        from app.service.agent_event_service import AgentDomainEvent
+
+        await publish_domain_event(
+            AgentDomainEvent.create(
+                event_type="risk_alert_created",
+                source_agent="risk",
+                customer_id=event.customer_id,
+                correlation_id=event.correlation_id,
+                payload={
+                    "alert_id": event.payload.get("alert_id"),
+                    "alert_level": "medium",
+                    "summary": event.payload.get("reason", "可疑交易上报"),
+                    "trigger_rules": [
+                        {"rule_id": "SUSPICIOUS_REPORT", "rule_name": "可疑交易上报"}
+                    ],
+                },
+            )
+        )
+    elif event.event_type == "risk_assessment_expiring":
+        # An expiring assessment is a risk-owned reminder. It reaches customer
+        # service through the same C4 context, without altering client ratings.
+        await _handle_c4_customer_context(
+            {
+                "action": "risk_assessment_expiring",
+                "arguments": {"customer_id": event.customer_id},
+                "result": {
+                    "alert_level": event.payload.get("alert_level", "medium"),
+                    "valid_until": event.payload.get("valid_until"),
+                },
+            }
+        )
     elif event.event_type == "transaction_completed":
         await _handle_profile_update({"arguments": {"customer_id": event.customer_id}})
+    elif event.event_type == "analytics_insight":
+        from app.config.database import async_session_factory
+        from app.service.profile_service import ProfileService
+
+        async with async_session_factory() as db:
+            await ProfileService(db).apply_analytics_insight(event.payload, event.customer_id)
+            if event.payload.get("kind") == "trading_frequency":
+                from app.service.transaction_flow_service import TransactionFlowService
+
+                await TransactionFlowService().monitor(
+                    db,
+                    {
+                        "customer_id": event.customer_id,
+                        "transaction_id": f"ANALYTICS-FREQ-{event.event_id[:12]}",
+                        "amount": event.payload.get("weekly_total", 0),
+                        "transaction_type": "analytics_frequency",
+                        "weekly_count": event.payload.get("weekly_count"),
+                    },
+                )
+            await db.commit()
+    elif event.event_type == "customer_sentiment":
+        from app.config.database import async_session_factory
+        from app.service.profile_service import ProfileService
+
+        async with async_session_factory() as db:
+            await ProfileService(db).apply_customer_sentiment(event.payload, event.customer_id)
+            await db.commit()
 
 
 async def publish_operation_event(action: str, arguments: dict, data: dict,

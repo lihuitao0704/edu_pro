@@ -120,6 +120,27 @@ async def purchase_product(
             trace_id=uuid.uuid4().hex[:8],
         )
 
+    preflight = await _transaction_flow.assess_pre_execution(
+        db,
+        {
+            "customer_id": customer_id,
+            "transaction_id": f"PRE-{uuid.uuid4().hex[:12]}",
+            "amount": float(amount),
+            "transaction_type": "purchase",
+            "timestamp": datetime.now().isoformat(),
+            "investor_account": str(customer_id),
+        },
+    )
+    if preflight["decision"] != "allow":
+        await db.commit()
+        is_blocked = preflight["decision"] == "block"
+        return ApiResponse(
+            code=409 if is_blocked else 202,
+            message="申购已被风控拦截，请联系风控专员" if is_blocked else "申购已进入风控复核，暂未执行",
+            data={"risk_monitor": preflight},
+            trace_id=uuid.uuid4().hex[:8],
+        )
+
     # 4. 获取当前净值
     # 优先级: fin_product_nav 表 > product.current_nav 字段 > 基于 expected_return 估算
     nav = None

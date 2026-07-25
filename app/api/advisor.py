@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.database import get_db
 from app.agent.advisor_agent import AdvisorAgent
+from app.service.advisor_service import AdvisorService
 from app.model.schemas import AdvisorChatRequest, RecommendRequest, AllocationRequest
 from app.utils.response import success, error
 from app.utils.logger import get_logger
@@ -97,6 +98,35 @@ async def recommend_products(
     agent = AdvisorAgent(db)
     result = await agent.execute("推荐产品", customer_id=req.customer_id)
     return success(data=result)
+
+
+@router.put("/recommendations/{recommendation_id}/feedback")
+async def recommendation_feedback(
+    recommendation_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("客户", "理财顾问", "管理员")),
+):
+    """Record a recommendation outcome and feed it back into the customer profile."""
+    customer_id = body.get("customer_id")
+    if not customer_id:
+        return error(400, "缺少 customer_id")
+    enforce_customer_scope(user, customer_id)
+    try:
+        service = AdvisorService(db)
+        record = await service.record_recommendation_feedback(
+            int(customer_id), recommendation_id, str(body.get("status", "")), str(body.get("reason", ""))
+        )
+        if not record:
+            return error(404, "推荐记录不存在或不属于该客户")
+        await db.commit()
+        return success(data={"recommendation_id": record.id, "status": record.status}, message="反馈已记录")
+    except ValueError as exc:
+        return error(400, str(exc))
+    except Exception as exc:
+        await db.rollback()
+        logger.error("推荐反馈记录失败: %s", exc, exc_info=True)
+        return error(500, "推荐反馈保存失败")
 
 
 @router.post("/allocation")

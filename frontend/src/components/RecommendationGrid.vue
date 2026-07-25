@@ -45,6 +45,13 @@
           <!-- NLP 洞察操作栏 -->
           <div class="nlp-actions">
             <button
+              class="nlp-btn nlp-btn-reject"
+              :disabled="feedbackLoading?.[index] || !product.recommendation_id"
+              @click.stop="emit('reject', product, index)"
+            >
+              {{ feedbackLoading?.[index] ? '⏳ 提交中…' : '不感兴趣' }}
+            </button>
+            <button
               class="nlp-btn"
               :disabled="nlpLoading?.[`intro-${index}`]"
               @click.stop="emit('insight', product, index, 'intro')"
@@ -78,6 +85,7 @@
 
 <script setup lang="ts">
 interface ProductRecommendation {
+  recommendation_id?: number
   product_name?: string
   title?: string
   product_type?: string
@@ -95,11 +103,13 @@ const props = defineProps<{
   reasoning?: string
   nlpLoading?: Record<string, boolean>
   nlpInsights?: Record<number, { type: string; content: string }>
+  feedbackLoading?: Record<number, boolean>
 }>()
 
 const emit = defineEmits<{
   insight: [product: ProductRecommendation, index: number, type: 'intro' | 'advantage']
   closeInsight: [index: number]
+  reject: [product: ProductRecommendation, index: number]
 }>()
 
 function formatNlpContent(content: string): string {
@@ -319,6 +329,8 @@ function formatNlpContent(content: string): string {
   background: rgba(167, 139, 250, 0.15);
   border-color: #a78bfa;
 }
+.nlp-btn-reject { color: #fda4af; background: rgba(251, 113, 133, 0.06); }
+.nlp-btn-reject:hover:not(:disabled) { background: rgba(251, 113, 133, 0.15); border-color: #fb7185; }
 
 /* NLP 洞察结果 */
 .nlp-insight {

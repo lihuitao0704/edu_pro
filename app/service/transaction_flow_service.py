@@ -83,6 +83,29 @@ class TransactionFlowService:
         alert["alert_id"] = alert_id
         return {"alert": alert, "triggered_count": len(triggered)}
 
+    async def assess_pre_execution(self, db, event: dict) -> dict:
+        """Decide whether a sensitive operation may mutate customer assets.
+
+        This deliberately uses the same rule engine as post-completion
+        monitoring. A formal risk rating is not changed here: the method only
+        returns an execution decision plus an auditable alert when needed.
+        """
+        payload = await self.enrich_context(db, event)
+        triggered = self.monitor_engine.evaluate_all(payload)
+        if not triggered:
+            return {"decision": "allow", "alert": None, "triggered_count": 0}
+
+        _, history = await self.monitor_engine.get_alerts(db, customer_id=payload["customer_id"])
+        level = self.monitor_engine.grade(triggered, history, payload)
+        confidence = self.confidence.calc_single(
+            source="ai_extract", evidence_count=len(triggered)
+        )
+        alert = self.monitor_engine.build_alert(payload, triggered, level, confidence)
+        alert_id = await self.monitor_engine.save_alert(db, alert)
+        alert["alert_id"] = alert_id
+        decision = "block" if level == "high" else "review" if level == "medium" else "allow"
+        return {"decision": decision, "alert": alert, "triggered_count": len(triggered)}
+
 
 def _income_range_to_amount(value: Optional[str]) -> Optional[float]:
     if not value:

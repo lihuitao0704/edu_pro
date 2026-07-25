@@ -144,6 +144,16 @@ async def chat_analyst(
         result = nl2sql_service.query_and_explain(request.message, user_id=request.user_id)
 
         if result.get("success"):
+            try:
+                from app.service.insight_extractor import extract_analytics_insights
+                from app.service.event_bus import publish_domain_event
+
+                for event in extract_analytics_insights(
+                    request.message, result.get("query_result") or []
+                ):
+                    await publish_domain_event(event)
+            except Exception as exc:
+                logger.warning("数据分析洞察联动失败（不影响查询结果）: %s", exc)
             return success(
                 data={
                     "reply": result.get("explanation"),

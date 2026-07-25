@@ -39,6 +39,82 @@ class ProfileService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.cache = ProfileCache()
+
+    @staticmethod
+    def merge_recommendation_feedback(preference: Optional[dict], event: dict) -> dict:
+        """Return behavioral preference constraints without touching risk level.
+
+        A single rejection is evidence, not a permanent exclusion. Three
+        rejections of the same product type add a candidate-pool constraint.
+        """
+        current = dict(preference or {})
+        signals = dict(current.get("feedback_signals") or {})
+        product_type = str(event.get("product_type") or "未知类型")
+        signal = dict(signals.get(product_type) or {})
+        status = event.get("status")
+        if status == "rejected":
+            signal["rejected_count"] = int(signal.get("rejected_count", 0)) + 1
+            signal["last_reason"] = str(event.get("reason") or "")[:255]
+        elif status == "accepted":
+            signal["accepted_count"] = int(signal.get("accepted_count", 0)) + 1
+        signal["last_feedback_at"] = datetime.now().isoformat()
+        signals[product_type] = signal
+        current["feedback_signals"] = signals
+
+        avoided = set(current.get("avoid_product_types") or [])
+        if int(signal.get("rejected_count", 0)) >= 3:
+            avoided.add(product_type)
+        current["avoid_product_types"] = sorted(avoided)
+        return current
+
+    async def apply_recommendation_feedback(self, event: dict, customer_id: int) -> None:
+        """Persist recommendation feedback as a behavioral preference signal."""
+        stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
+        result = await self.db.execute(stmt)
+        profile = result.scalar_one_or_none()
+        if not profile:
+            return
+        profile.product_preference = self.merge_recommendation_feedback(
+            profile.product_preference, event
+        )
+        profile.update_time = datetime.now()
+        await self.db.flush()
+        await self.cache.invalidate(customer_id)
+
+    async def apply_analytics_insight(self, event: dict, customer_id: int) -> None:
+        """Store an analytics fact as a recommendation constraint, never as a rating change."""
+        stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
+        result = await self.db.execute(stmt)
+        profile = result.scalar_one_or_none()
+        if not profile:
+            return
+        preference = dict(profile.product_preference or {})
+        signals = dict(preference.get("analytics_signals") or {})
+        kind = str(event.get("kind") or "unknown")
+        signals[kind] = {**event, "updated_at": datetime.now().isoformat()}
+        preference["analytics_signals"] = signals
+        profile.product_preference = preference
+        profile.update_time = datetime.now()
+        await self.db.flush()
+        await self.cache.invalidate(customer_id)
+
+    async def apply_customer_sentiment(self, event: dict, customer_id: int) -> None:
+        """Persist time-stamped customer sentiment as non-regulatory context."""
+        stmt = select(FinCustomerProfile).where(FinCustomerProfile.customer_id == customer_id)
+        result = await self.db.execute(stmt)
+        profile = result.scalar_one_or_none()
+        if not profile:
+            return
+        preference = dict(profile.product_preference or {})
+        preference["sentiment_signal"] = {
+            "level": event.get("level"),
+            "keywords": list(event.get("keywords") or []),
+            "updated_at": datetime.now().isoformat(),
+        }
+        profile.product_preference = preference
+        profile.update_time = datetime.now()
+        await self.db.flush()
+        await self.cache.invalidate(customer_id)
         self.calculator = DimensionCalculator()
         self.breaker = CircuitBreaker()
         self.special = SpecialCaseHandler()

@@ -76,8 +76,10 @@
             :reasoning="adviceReasoning"
             :nlp-loading="nlpLoading"
             :nlp-insights="nlpInsights"
+            :feedback-loading="feedbackLoading"
             @insight="onNlpInsight"
             @close-insight="onCloseNlpInsight"
+            @reject="onRejectRecommendation"
           />
           <div v-else-if="activeView === 'recommend' && advice" class="surface-card recommendation-card">
             <div class="card-heading"><h3>投顾输出</h3></div>
@@ -136,6 +138,7 @@ import RecommendationGrid from '../components/RecommendationGrid.vue'
 import { onProfileUpdated } from '../utils/profile-events'
 
 interface ProductRecommendation {
+  recommendation_id?: number
   product_name?: string
   title?: string
   product_type?: string
@@ -164,6 +167,7 @@ const error = ref('')
 const advice = ref('')
 const adviceReasoning = ref('')
 const recommendations = ref<ProductRecommendation[]>([])
+const feedbackLoading = ref<Record<number, boolean>>({})
 const holdingCounts = ref<Record<number, number>>({})
 
 // 当前展示视图：allocation | holding | recommend | text
@@ -421,6 +425,7 @@ async function runAllocation() {
     if (Array.isArray(recs) && recs.length) {
       recommendations.value = recs.map((r: any) => ({
         product_name: r.product_name || r.title || r.name || '',
+        recommendation_id: r.recommendation_id,
         product_type: r.product_type || r.type || '',
         risk_level: r.risk_level || '',
         rationale: r.rationale || r.reason || r.description || '',
@@ -441,6 +446,25 @@ async function runAllocation() {
     error.value = reason instanceof Error ? reason.message : '资产配置生成失败'
   } finally {
     actionLoading.value = false
+  }
+}
+
+async function onRejectRecommendation(product: ProductRecommendation, index: number) {
+  if (!selected.value || !product.recommendation_id) return
+  feedbackLoading.value = { ...feedbackLoading.value, [index]: true }
+  try {
+    await post(`/advisor/recommendations/${product.recommendation_id}/feedback`, {
+      customer_id: selected.value.customer_id,
+      status: 'rejected',
+      reason: '投顾工作台标记不感兴趣',
+    })
+    recommendations.value = recommendations.value.filter((_, itemIndex) => itemIndex !== index)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '推荐反馈提交失败'
+  } finally {
+    const next = { ...feedbackLoading.value }
+    delete next[index]
+    feedbackLoading.value = next
   }
 }
 
@@ -513,6 +537,7 @@ async function runRecommend() {
     if (Array.isArray(recs) && recs.length) {
       recommendations.value = recs.map((r: any) => ({
         product_name: r.product_name || r.title || r.name || '',
+        recommendation_id: r.recommendation_id,
         product_type: r.product_type || r.type || '',
         risk_level: r.risk_level || '',
         rationale: r.rationale || r.reason || r.description || '',

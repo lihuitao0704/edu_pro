@@ -57,6 +57,30 @@ async def transfer_funds(
                 trace_id=uuid.uuid4().hex[:8],
             )
 
+    # 风控预检必须发生在余额和流水变更之前。中高风险只生成可审计预警，
+    # 不会因行为信号自动修改客户正式风险等级。
+    preflight = await _transaction_flow.assess_pre_execution(
+        db,
+        {
+            "customer_id": from_id,
+            "transaction_id": f"PRE-{uuid.uuid4().hex[:12]}",
+            "amount": float(amount),
+            "transaction_type": "transfer_out",
+            "timestamp": datetime.now().isoformat(),
+            "counterparty": {"account": str(to_id)},
+            "investor_account": str(from_id),
+        },
+    )
+    if preflight["decision"] != "allow":
+        await db.commit()
+        is_blocked = preflight["decision"] == "block"
+        return ApiResponse(
+            code=409 if is_blocked else 202,
+            message="交易已被风控拦截，请联系风控专员" if is_blocked else "交易已进入风控复核，暂未执行",
+            data={"risk_monitor": preflight},
+            trace_id=uuid.uuid4().hex[:8],
+        )
+
     # 🔴 修复：同时锁定双方账户（按ID排序，避免死锁）
     ids_sorted = sorted([from_id, to_id])
 

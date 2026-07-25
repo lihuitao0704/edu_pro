@@ -13,6 +13,8 @@ from sqlalchemy import select, text, update
 from app.config.database import async_session_factory
 from app.model.entities import FinRiskAlert, RiskAssessment
 from app.engine.confidence import ConfidenceCalculator
+from app.service.agent_event_service import AgentDomainEvent
+from app.service.event_bus import publish_domain_event
 
 logger = logging.getLogger(__name__)
 
@@ -109,17 +111,19 @@ async def _run_calibration():
         await db.flush()
 
         # 风评到期提醒
-        expiry_reminders = await _create_expiry_reminders(db)
+        expiry_events = await _create_expiry_reminders(db)
 
         logger.info(
             f"周期校准完成: 处理{len(alerts)}条, 过期{expired}条, "
             f"SLA升级{sla_upgraded}条, 累计升级{cumulative_upgraded}条, "
-            f"更新{updated}条, 风评提醒{expiry_reminders}条"
+            f"更新{updated}条, 风评提醒{len(expiry_events)}条"
         )
         await db.commit()
+        for event in expiry_events:
+            await publish_domain_event(event)
 
 
-async def _create_expiry_reminders(db) -> int:
+async def _create_expiry_reminders(db) -> list[AgentDomainEvent]:
     """Create one pending alert per customer for assessments expiring within 30 days."""
     today = date.today()
     deadline = today + timedelta(days=30)
@@ -131,7 +135,7 @@ async def _create_expiry_reminders(db) -> int:
         current = latest_by_customer.get(assessment.customer_id)
         if current is None or assessment.create_time > current.create_time:
             latest_by_customer[assessment.customer_id] = assessment
-    created = 0
+    events: list[AgentDomainEvent] = []
     for assessment in latest_by_customer.values():
         if not today <= assessment.valid_until <= deadline:
             continue
@@ -146,8 +150,21 @@ async def _create_expiry_reminders(db) -> int:
             "payload": __import__("json").dumps({"assessment_id": assessment.id, "valid_until": assessment.valid_until.isoformat()}),
             "now": datetime.now(),
         })
-        created += int(result.rowcount or 0)
-    return created
+        if int(result.rowcount or 0) > 0:
+            events.append(
+                AgentDomainEvent.create(
+                    event_type="risk_assessment_expiring",
+                    source_agent="risk",
+                    customer_id=int(assessment.customer_id),
+                    correlation_id=f"risk_expiry:{assessment.id}",
+                    payload={
+                        "alert_level": "medium",
+                        "assessment_id": assessment.id,
+                        "valid_until": assessment.valid_until.isoformat(),
+                    },
+                )
+            )
+    return events
 
 
 def start_scheduler():
