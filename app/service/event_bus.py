@@ -27,6 +27,42 @@ EVENT_C5_RISK_FROM_CUSTOMER = "event:risk_alert:c5"  # C5: 客服→风控反向
 EVENT_PROFILE_UPDATE = "event:profile_update"
 EVENT_WORK_ORDER_CHANGE = "event:work_order_change"
 EVENT_GRAPH_SYNC = "event:graph_sync"           # 图谱增量同步
+EVENT_AGENT_DOMAIN = "event:agent_domain"       # 六 Agent 统一领域事件
+
+
+def build_transaction_completed_event(
+    action: str,
+    arguments: dict,
+    result: dict,
+    operator_id: int,
+    correlation_id: str = "",
+):
+    """Create the canonical business-operation event without risk-channel coupling."""
+    from app.service.agent_event_service import AgentDomainEvent
+
+    customer_id = arguments.get("customer_id") or arguments.get("from_customer_id")
+    if not customer_id:
+        raise ValueError(f"{action} requires a customer_id or from_customer_id")
+    transaction_type = {
+        "purchase_product": "purchase",
+        "redeem_product": "redeem",
+        "transfer_funds": "transfer_out",
+    }.get(action, action)
+    return AgentDomainEvent.create(
+        event_type="transaction_completed",
+        source_agent="operator",
+        customer_id=int(customer_id),
+        correlation_id=correlation_id or str(result.get("transaction_no") or ""),
+        payload={
+            "action": action,
+            "transaction_type": transaction_type,
+            "transaction_no": result.get("transaction_no", ""),
+            "amount": arguments.get("amount", result.get("amount", 0)),
+            "operator_id": operator_id,
+            "arguments": arguments,
+            "result": result,
+        },
+    )
 
 # 操作 → 事件类型映射（供 operator_agent 调用）
 # 现在发布到分拆的频道 + 向后兼容的通用频道
@@ -153,6 +189,26 @@ async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> N
         await _save_failed_event(event_type, payload, trace_id, str(e))
 
 
+async def publish_domain_event(event) -> None:
+    """Publish one canonical AgentDomainEvent on the sole six-Agent channel."""
+    await publish_event(EVENT_AGENT_DOMAIN, event.to_dict(), event.correlation_id)
+
+
+async def handle_domain_event(event) -> None:
+    """Consume a canonical event exactly through its declared business meaning."""
+    if event.event_type == "risk_alert_created":
+        alert_level = event.payload.get("alert_level", "medium")
+        await _handle_risk_alert({"customer_id": event.customer_id, "alert_level": alert_level})
+        await _handle_c4_customer_context(
+            {
+                "arguments": {"customer_id": event.customer_id},
+                "result": {"alert_level": alert_level, "alert_id": event.payload.get("alert_id")},
+            }
+        )
+    elif event.event_type == "transaction_completed":
+        await _handle_profile_update({"arguments": {"customer_id": event.customer_id}})
+
+
 async def publish_operation_event(action: str, arguments: dict, data: dict,
                                     user_id: int, trace_id: str = "") -> None:
     """
@@ -165,28 +221,28 @@ async def publish_operation_event(action: str, arguments: dict, data: dict,
     - C4: event:risk_alert:c4 → 客服联动
     - 向后兼容：同时发布到 event:risk_alert (legacy)
     """
-    event_types = ACTION_EVENT_MAP.get(action)
-    if not event_types:
-        return  # 无需广播的操作（query_product 等）
+    if action in {"purchase_product", "redeem_product", "transfer_funds"}:
+        await publish_domain_event(
+            build_transaction_completed_event(
+                action=action,
+                arguments=arguments,
+                result=data,
+                operator_id=user_id,
+                correlation_id=trace_id,
+            )
+        )
 
-    payload = {
-        "action": action,
-        "arguments": arguments,
-        "result": data,
-        "operator_id": user_id,
-    }
-
-    # 发布到所有对应的分拆频道
-    published_channels = set()
+    # C1/C2/C4 are intentionally no longer emitted here. They represented a
+    # transaction as three incompatible risk events and caused duplicate
+    # consumption. RiskMonitorService is the sole producer of risk alerts.
+    event_types = [
+        event_type
+        for event_type in ACTION_EVENT_MAP.get(action, [])
+        if event_type not in {EVENT_C1_ADVISOR, EVENT_C2_MONITOR, EVENT_C4_CUSTOMER}
+    ]
+    payload = {"action": action, "arguments": arguments, "result": data, "operator_id": user_id}
     for event_type in event_types:
         await publish_event(event_type, payload, trace_id)
-        published_channels.add(event_type)
-
-    # 向后兼容：同时发布到 legacy 通用频道
-    for channel in published_channels:
-        legacy = _LEGACY_RISK_CHANNELS.get(channel)
-        if legacy:
-            await publish_event(legacy, payload, trace_id)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -217,6 +273,7 @@ async def start_event_subscriber() -> None:
     max_reconnect_delay = 60
 
     SUBSCRIBED_CHANNELS = [
+        EVENT_AGENT_DOMAIN,
         EVENT_C1_ADVISOR,
         EVENT_C2_MONITOR,
         EVENT_C4_CUSTOMER,
@@ -266,6 +323,11 @@ async def _handle_event(event: dict, channel: str = "") -> None:
     """分发事件到对应处理器（支持 C1/C2/C4 分拆频道）"""
     event_type = event.get("event_type", "")
     payload = event.get("payload", {})
+
+    if channel == EVENT_AGENT_DOMAIN:
+        from app.service.agent_event_service import AgentDomainEvent
+        await handle_domain_event(AgentDomainEvent.from_dict(payload))
+        return
 
     # 根据频道路由（优先使用频道名，因为同一个 event_type 可能出现在多个频道）
     if channel in (EVENT_C1_ADVISOR, EVENT_RISK_ALERT):

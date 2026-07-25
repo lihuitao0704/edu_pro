@@ -17,6 +17,25 @@ from app.tool.memory_validator import MemoryUnitValidator
 logger = logging.getLogger(__name__)
 
 
+def build_risk_alert_event(alert: dict):
+    """Translate a persisted risk fact into the canonical six-Agent event."""
+    from app.service.agent_event_service import AgentDomainEvent
+
+    return AgentDomainEvent.create(
+        event_type="risk_alert_created",
+        source_agent="risk",
+        customer_id=int(alert["customer_id"]),
+        correlation_id=str(alert.get("transaction_id") or alert.get("alert_id") or ""),
+        payload={
+            "alert_id": alert.get("alert_id"),
+            "alert_level": alert["alert_level"],
+            "trigger_rules": alert.get("trigger_rules", []),
+            "summary": alert.get("summary", ""),
+            "confidence": alert.get("confidence"),
+        },
+    )
+
+
 class RiskMonitorService:
     """风控监测引擎"""
 
@@ -108,19 +127,16 @@ class RiskMonitorService:
         # Redis 双写
         await self._add_pending_alert(entity.id)
 
-        # 发布风控预警事件 → 通知投顾/客服 Agent 更新客户风险标记（阶段3协作闭环）
+        # 风险事实只通过统一领域事件发布；不再向 C1/C2/C4/legacy 多播。
         if alert["alert_level"] in ("medium", "high"):
             try:
-                from app.service.event_bus import publish_event, EVENT_RISK_ALERT
-                await publish_event(EVENT_RISK_ALERT, {
-                    "alert_id": entity.id,
-                    "customer_id": alert["customer_id"],
-                    "alert_level": alert["alert_level"],
-                    "trigger_rules": alert["trigger_rules"],
-                    "confidence": alert["confidence"],
-                    "summary": alert["summary"],
-                })
-                logger.info(f"风控预警事件已广播: 客户{alert['customer_id']} {alert['alert_level']}级")
+                from app.service.agent_event_service import EventDispatcher
+                from app.service.event_bus import publish_domain_event
+
+                event = build_risk_alert_event({**alert, "alert_id": entity.id})
+                await EventDispatcher.enqueue(db, event)
+                await publish_domain_event(event)
+                logger.info("统一风险事件已广播: 客户%s %s级", alert["customer_id"], alert["alert_level"])
             except Exception as e:
                 logger.warning(f"事件广播失败(不影响主流程): {e}")
 
