@@ -83,7 +83,13 @@ class CustomerServiceAgent:
         self.llm = get_llm_tool()
         self.memory_recall = get_memory_recall_service()
 
-    async def handle(self, session_id: str, user_id: int, message: str) -> CustomerChatResponse:
+    async def handle(
+        self,
+        session_id: str,
+        user_id: int,
+        message: str,
+        actor_id: int | None = None,
+    ) -> CustomerChatResponse:
         """
         处理用户消息的主流程
 
@@ -108,7 +114,8 @@ class CustomerServiceAgent:
             )
 
         # 1. 加载短期记忆（同 session 多轮）
-        history = await self.memory.get_history(session_id)
+        memory_owner_id = int(actor_id if actor_id is not None else user_id)
+        history = await self.memory.get_history(session_id, memory_owner_id)
 
         # 1b. 跨 session 记忆召回（画像摘要 + 历史偏好 + 近期对话）
         user_profile = await self.memory_recall.build_user_profile_summary(self.db, user_id)
@@ -246,8 +253,12 @@ class CustomerServiceAgent:
                 if intent in ("product_inquiry", "faq"):
                     reply = self._append_risk_disclaimer(reply, intent)
         # 4. 更新短期记忆
-        await self.memory.save_message(session_id, "user", message)
-        await self.memory.save_message(session_id, "assistant", reply)
+        await self.memory.save_message(
+            session_id, "user", message, memory_owner_id
+        )
+        await self.memory.save_message(
+            session_id, "assistant", reply, memory_owner_id
+        )
 
         # 5. 长期归档由统一聊天入口在回复成功后统一处理
         return CustomerChatResponse(

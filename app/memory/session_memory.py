@@ -11,9 +11,10 @@ settings = get_settings()
 class SessionMemory:
     """会话记忆管理器（含归档能力）"""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, owner_id: int = 0):
         self.session_id = session_id
-        self.key = f"session:{session_id}:messages"
+        self.owner_id = int(owner_id or 0)
+        self.key = f"chat:v2:{self.owner_id}:{session_id}:messages"
         self._redis = None
 
     async def _get_redis(self):
@@ -51,11 +52,16 @@ class SessionMemory:
                 stmt = (
                     select(ConversationArchive)
                     .where(ConversationArchive.session_id == self.session_id)
-                    .order_by(ConversationArchive.create_time.asc())
+                    .order_by(
+                        ConversationArchive.create_time.desc(),
+                        ConversationArchive.id.desc(),
+                    )
                     .limit(50)
                 )
+                if self.owner_id:
+                    stmt = stmt.where(ConversationArchive.user_id == self.owner_id)
                 result = await db.execute(stmt)
-                records = result.scalars().all()
+                records = list(reversed(result.scalars().all()))
                 if records:
                     messages = [
                         {"role": r.role, "content": r.content}
@@ -110,6 +116,8 @@ class SessionMemory:
             归档的消息条数
         """
         from app.model.entities import ConversationArchive
+        if self.owner_id and int(user_id) != self.owner_id:
+            raise PermissionError("session memory owner mismatch")
         messages = await self.get_all_messages()
         if not messages:
             return 0
@@ -118,7 +126,8 @@ class SessionMemory:
         from sqlalchemy import select, func
         existing_count = await db.execute(
             select(func.count()).select_from(ConversationArchive).where(
-                ConversationArchive.session_id == self.session_id
+                ConversationArchive.session_id == self.session_id,
+                ConversationArchive.user_id == user_id,
             )
         )
         existing = existing_count.scalar() or 0

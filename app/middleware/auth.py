@@ -1,8 +1,8 @@
 """
 JWT 认证中间件
 =============
-开发阶段：AUTH_MOCK_MODE=true 时跳过认证（兼容现有测试）
-生产阶段：校验 Bearer Token，验证用户身份和角色
+所有受保护 API 均校验 Bearer Token。
+AUTH_MOCK_MODE 仅用于兼容演示数据登录，不再提供匿名管理员身份。
 """
 
 import logging
@@ -22,6 +22,9 @@ _settings = get_settings()
 PUBLIC_PATHS = {
     "/api/health",
     "/api/engine/test",  # 开发阶段保留，生产环境应移除
+    "/api/auth/login",
+    "/api/auth/register",
+    "/api/auth/refresh",
     "/docs",
     "/openapi.json",
     "/redoc",
@@ -29,9 +32,7 @@ PUBLIC_PATHS = {
 }
 
 # 公开路径前缀
-PUBLIC_PREFIXES = (
-    "/api/auth/",  # 登录/注册本身不需要认证
-)
+PUBLIC_PREFIXES: tuple[str, ...] = ()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -82,28 +83,6 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     """JWT 认证中间件"""
 
     async def dispatch(self, request: Request, call_next):
-        # Mock 模式：跳过认证但仍解析 Token 中的用户信息（开发环境）
-        if _settings.jwt.mock_mode:
-            # 尝试从 Token 中提取用户信息，以便多用户测试
-            user_info = {
-                "user_id": 0,
-                "username": "mock_user",
-                "role": "管理员",
-            }
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-                payload = decode_access_token(token)
-                if payload:
-                    try:
-                        user_info["user_id"] = int(payload.get("sub", 0))
-                        user_info["username"] = payload.get("username", "mock_user")
-                        user_info["role"] = payload.get("role", "管理员")
-                    except (ValueError, TypeError):
-                        pass  # 保持默认值
-            request.state.user = user_info
-            return await call_next(request)
-
         path = request.url.path
 
         # 公开路径直接放行
@@ -130,13 +109,24 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 
         # 将用户信息注入 request state
         try:
-            user_id = int(payload.get("sub", 0))
+            user_id = int(payload.get("sub"))
         except (ValueError, TypeError):
-            user_id = 0
+            return Response(
+                content='{"code": 401, "message": "Token 缺少有效用户身份", "data": null, "trace_id": ""}',
+                status_code=401,
+                media_type="application/json",
+            )
+        role = str(payload.get("role") or "")
+        if user_id <= 0 or not role:
+            return Response(
+                content='{"code": 401, "message": "Token 身份信息不完整", "data": null, "trace_id": ""}',
+                status_code=401,
+                media_type="application/json",
+            )
         request.state.user = {
             "user_id": user_id,
             "username": payload.get("username", ""),
-            "role": payload.get("role", "理财顾问"),
+            "role": role,
         }
 
         return await call_next(request)

@@ -24,7 +24,9 @@ class ChatOrchestratorTests(unittest.IsolatedAsyncioTestCase):
              patch("app.api.unified_chat.resolve_owned_session_id", new=AsyncMock(return_value="s-api")):
             result = await unified_chat(request, AsyncMock(), {"user_id": 7, "role": "客户"})
 
-        orchestrator.handle.assert_awaited_once_with("产品问题", "s-api", 7, "客户")
+        orchestrator.handle.assert_awaited_once_with(
+            "产品问题", "s-api", 7, "客户", customer_id=7
+        )
         memory_service.archive_turn.assert_awaited_once_with(
             "s-api", 7, "customer_service", "产品问题", "ok"
         )

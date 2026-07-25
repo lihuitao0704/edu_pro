@@ -139,7 +139,7 @@ llm_client = AsyncOpenAI(
 
 # ==================== 二次确认 Redis 状态管理 ====================
 
-_CONFIRM_PREFIX = "confirm:pending:"
+_CONFIRM_PREFIX = "chat:v2:confirm:"
 _CONFIRM_TTL = 120
 
 
@@ -152,7 +152,7 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
         r = await get_redis()
         summary = _build_confirmation_summary(action, arguments, estimated_amount=estimated_amount)
         await r.setex(
-            f"{_CONFIRM_PREFIX}{session_id}",
+            f"{_CONFIRM_PREFIX}{user_id}:{session_id}",
             _CONFIRM_TTL,
             json.dumps({"action": action, "arguments": arguments,
                         "user_id": user_id, "user_role": user_role,
@@ -166,26 +166,20 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
 async def _load_pending_confirm(session_id: str, user_id: int = 0) -> Optional[dict]:
     try:
         r = await get_redis()
-        data = await r.get(f"{_CONFIRM_PREFIX}{session_id}")
+        data = await r.get(f"{_CONFIRM_PREFIX}{user_id}:{session_id}")
         if data:
-            return json.loads(data)
-        if user_id:
-            keys = await r.keys(f"{_CONFIRM_PREFIX}*")
-            for key in keys:
-                d = await r.get(key)
-                if d:
-                    p = json.loads(d)
-                    if p.get("user_id") == user_id:
-                        return p
+            pending = json.loads(data)
+            if int(pending.get("user_id") or 0) == int(user_id):
+                return pending
     except Exception:
         pass
     return None
 
 
-async def _delete_pending_confirm(session_id: str):
+async def _delete_pending_confirm(session_id: str, user_id: int):
     try:
         r = await get_redis()
-        await r.delete(f"{_CONFIRM_PREFIX}{session_id}")
+        await r.delete(f"{_CONFIRM_PREFIX}{user_id}:{session_id}")
     except Exception:
         pass
 
@@ -1426,7 +1420,7 @@ async def operator_chat(
     if not session_id:
         session_id = uuid.uuid4().hex
 
-    memory = SessionMemory(session_id)
+    memory = SessionMemory(session_id, user_id)
     await memory.add_message("user", message)
 
     msg_stripped = message.strip()
@@ -1447,7 +1441,7 @@ async def operator_chat(
                 return {"reply": reply, "action": pending["action"],
                         "params": pending["arguments"], "status": "note_required", "session_id": session_id}
 
-            await _delete_pending_confirm(session_id)
+            await _delete_pending_confirm(session_id, user_id)
             action = pending["action"]
             arguments = pending["arguments"]
             if _parsed_note:
@@ -1476,7 +1470,7 @@ async def operator_chat(
     if msg_stripped in ("取消", "不", "否", "n", "no"):
         pending = await _load_pending_confirm(session_id, user_id)
         if pending:
-            await _delete_pending_confirm(session_id)
+            await _delete_pending_confirm(session_id, user_id)
             reply = f"已取消 {pending['action']} 操作。"
             await memory.add_message("assistant", reply)
             await _archive_memory(memory, user_id)

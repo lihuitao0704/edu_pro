@@ -8,6 +8,7 @@
 """
 
 from datetime import datetime
+import uuid
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,14 +163,17 @@ async def unified_chat(
     """
     try:
         actor_id = authenticated_actor_id(user)
-        session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
+        session_id = (
+            await resolve_owned_session_id(db, req.session_id, actor_id)
+            or uuid.uuid4().hex
+        )
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
             req.message,
             session_id,
             actor_id,
             get_request_role_from_user(user),
-            customer_id=req.user_id,
+            customer_id=get_subject_customer_id(user, req.user_id),
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         try:
@@ -210,14 +214,17 @@ async def unified_chat_stream(
     """
     try:
         actor_id = authenticated_actor_id(user)
-        session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
+        session_id = (
+            await resolve_owned_session_id(db, req.session_id, actor_id)
+            or uuid.uuid4().hex
+        )
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
             req.message,
             session_id,
             actor_id,
             get_request_role_from_user(user),
-            customer_id=req.user_id,
+            customer_id=get_subject_customer_id(user, req.user_id),
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         try:
@@ -240,7 +247,7 @@ async def unified_chat_stream(
             import json
             yield {"event": "meta", "data": json.dumps({"error": str(e)})}
             yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
-            yield {"event": "done", "data": json.dumps({"session_id": req.session_id})}
+            yield {"event": "done", "data": json.dumps({"session_id": session_id})}
         return EventSourceResponse(error_stream())
 
 
@@ -267,7 +274,10 @@ async def unified_chat_stream_v2(
     """
     import json
     actor_id = authenticated_actor_id(user)
-    session_id = await resolve_owned_session_id(db, req.session_id, actor_id)
+    session_id = (
+        await resolve_owned_session_id(db, req.session_id, actor_id)
+        or uuid.uuid4().hex
+    )
 
     # ── 轻量意图分类（不阻塞，快速判断是否投顾）──
     try:
@@ -283,14 +293,19 @@ async def unified_chat_stream_v2(
 
         async def advisor_event_stream():
             from app.agent.advisor_agent import AdvisorAgent
-            agent = AdvisorAgent(db, session_id)
+            agent = AdvisorAgent(db, session_id, actor_id=actor_id)
+            final_payload: dict = {}
             try:
                 async for evt in agent.stream_execute(
-                    req.message, customer_id=req.user_id
+                    req.message,
+                    customer_id=get_subject_customer_id(user, req.user_id),
                 ):
                     # 过滤掉 py 对象，确保 JSON 可序列化
-                    evt_type = evt.pop("type", "message")
-                    safe = _make_json_safe(evt)
+                    event_payload = dict(evt)
+                    evt_type = event_payload.pop("type", "message")
+                    safe = _make_json_safe(event_payload)
+                    if evt_type == "done":
+                        final_payload = safe
                     yield {
                         "event": evt_type,
                         "data": json.dumps(safe, ensure_ascii=False, default=str),
@@ -302,13 +317,25 @@ async def unified_chat_stream_v2(
                     "data": json.dumps({"message": str(e)}, ensure_ascii=False),
                 }
 
-            # 归档记忆
+            # 流结束后按真实账户归档完整轮次，并写入会话所有权记录。
             try:
+                final_reply = str(final_payload.get("reply") or "")
                 await MemoryService(db).archive_turn(
-                    session_id, actor_id, "advisor", safe_input, ""
+                    session_id, actor_id, "advisor", safe_input, final_reply
                 )
-            except Exception:
-                pass
+                persisted = UnifiedChatResponse(
+                    intent="investment_recommendation",
+                    agent="advisor",
+                    confidence=float(confidence or 0),
+                    session_id=session_id,
+                    reply=final_reply,
+                    data=final_payload,
+                )
+                await PlatformPersistenceService(db).persist_turn(
+                    actor_id, safe_input, persisted
+                )
+            except Exception as exc:
+                logger.warning("投顾流式归档失败: %s", exc)
 
         return EventSourceResponse(advisor_event_stream())
 
@@ -317,7 +344,8 @@ async def unified_chat_stream_v2(
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
             req.message, session_id, actor_id,
-            get_request_role_from_user(user), customer_id=req.user_id,
+            get_request_role_from_user(user),
+            customer_id=get_subject_customer_id(user, req.user_id),
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         if result.agent != "safety_guard":
@@ -335,7 +363,7 @@ async def unified_chat_stream_v2(
         async def error_stream():
             yield {"event": "meta", "data": json.dumps({"error": str(e)})}
             yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
-            yield {"event": "done", "data": json.dumps({"session_id": req.session_id})}
+            yield {"event": "done", "data": json.dumps({"session_id": session_id})}
         return EventSourceResponse(error_stream())
 
 
@@ -371,8 +399,15 @@ async def chat_recommend(
     直调 AdvisorAgent，无编排器开销，无对话归档。
     """
     from app.agent.advisor_agent import AdvisorAgent
-    agent = AdvisorAgent(db, req.session_id)
-    result = await agent.execute(req.message, customer_id=req.user_id)
+    actor_id = authenticated_actor_id(user)
+    session_id = (
+        await resolve_owned_session_id(db, req.session_id, actor_id)
+        or uuid.uuid4().hex
+    )
+    agent = AdvisorAgent(db, session_id, actor_id=actor_id)
+    result = await agent.execute(
+        req.message, customer_id=get_subject_customer_id(user, req.user_id)
+    )
     return success(data={
         "reply": result.get("reply", ""),
         "recommendations": result.get("recommendations", []),
@@ -385,3 +420,16 @@ async def chat_recommend(
 def get_request_role_from_user(user: dict) -> str:
     """Use the authenticated role, never a client-claimed chat role."""
     return str(user.get("role") or "")
+
+
+def get_subject_customer_id(user: dict, claimed_user_id: int) -> int | None:
+    """Separate the authenticated actor from the customer being discussed.
+
+    Customer accounts are always scoped to themselves. Employee roles may
+    explicitly select a customer through the request payload.
+    """
+    actor_id = authenticated_actor_id(user)
+    if get_request_role_from_user(user) == "客户":
+        return actor_id
+    target_id = int(claimed_user_id or 0)
+    return target_id or None

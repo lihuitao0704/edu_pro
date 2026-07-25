@@ -84,6 +84,17 @@ class ArchiveTurnContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SessionOwnershipContractTests(unittest.IsolatedAsyncioTestCase):
+    def test_short_term_memory_key_is_scoped_to_the_authenticated_owner(self):
+        from app.memory.session_memory import SessionMemory
+
+        owner_seven = SessionMemory("same-session", owner_id=7)
+        owner_eight = SessionMemory("same-session", owner_id=8)
+
+        self.assertNotEqual(owner_seven.key, owner_eight.key)
+        self.assertEqual(
+            "chat:v2:7:same-session:messages", owner_seven.key
+        )
+
     async def test_unknown_session_id_is_not_reused(self):
         from app.api.unified_chat import resolve_owned_session_id
 

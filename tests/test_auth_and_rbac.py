@@ -65,6 +65,8 @@ class AuthorizationTests(unittest.TestCase):
         self.assertTrue(_is_public_path("/"))
         self.assertTrue(_is_public_path("/assets/app.js"))
         self.assertTrue(_is_public_path("/advisor"))
+        self.assertTrue(_is_public_path("/api/auth/login"))
+        self.assertFalse(_is_public_path("/api/auth/me"))
         self.assertFalse(_is_public_path("/api/customers"))
 
     def test_request_role_comes_from_authenticated_user(self):
@@ -82,6 +84,90 @@ class AuthorizationTests(unittest.TestCase):
         request = SimpleNamespace(state=SimpleNamespace(user={"user_id": 7}))
 
         self.assertEqual("", get_request_role(request))
+
+    def test_mock_mode_does_not_grant_anonymous_admin_access(self):
+        from fastapi import FastAPI, Request
+        from fastapi.testclient import TestClient
+
+        from app.middleware.auth import JWTAuthMiddleware, create_access_token
+
+        app = FastAPI()
+        app.add_middleware(JWTAuthMiddleware)
+
+        @app.get("/api/private")
+        async def private(request: Request):
+            return request.state.user
+
+        with TestClient(app) as client:
+            self.assertEqual(401, client.get("/api/private").status_code)
+            self.assertEqual(
+                401,
+                client.get(
+                    "/api/private",
+                    headers={"Authorization": "Bearer invalid-token"},
+                ).status_code,
+            )
+            token = create_access_token(
+                {"sub": 7, "username": "customer-7", "role": "客户"}
+            )
+            response = client.get(
+                "/api/private",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(7, response.json()["user_id"])
+        self.assertEqual("客户", response.json()["role"])
+
+
+class LoginEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_account_cannot_login(self):
+        from app.api.auth import LoginRequest, login
+        from app.security.passwords import hash_password
+
+        row = {
+            "id": 7,
+            "username": "disabled-user",
+            "password_hash": hash_password("Demo@123"),
+            "user_type": "CUSTOMER",
+            "employee_role": None,
+            "real_name": "停用客户",
+            "status": "停用",
+        }
+        db = AsyncMock()
+        db.execute.return_value = SimpleNamespace(
+            mappings=lambda: SimpleNamespace(first=lambda: row)
+        )
+
+        result = await login(
+            LoginRequest(username="disabled-user", password="Demo@123"), db
+        )
+
+        self.assertEqual(403, result["code"])
+
+    async def test_employee_requires_a_valid_employee_role(self):
+        from app.api.auth import LoginRequest, login
+        from app.security.passwords import hash_password
+
+        row = {
+            "id": 8,
+            "username": "broken-employee",
+            "password_hash": hash_password("Demo@123"),
+            "user_type": "EMPLOYEE",
+            "employee_role": None,
+            "real_name": "异常员工",
+            "status": "正常",
+        }
+        db = AsyncMock()
+        db.execute.return_value = SimpleNamespace(
+            mappings=lambda: SimpleNamespace(first=lambda: row)
+        )
+
+        result = await login(
+            LoginRequest(username="broken-employee", password="Demo@123"), db
+        )
+
+        self.assertEqual(403, result["code"])
 
 
 class RegisterEndpointTests(unittest.IsolatedAsyncioTestCase):
@@ -197,6 +283,22 @@ class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
         memory_service.archive_turn.assert_awaited_once_with(
             "scope-test", 7, "operator", request.message, routed.reply
+        )
+
+    def test_customer_subject_is_always_the_authenticated_customer(self):
+        from app.api.unified_chat import get_subject_customer_id
+
+        self.assertEqual(
+            7,
+            get_subject_customer_id(
+                {"user_id": 7, "role": "客户"}, claimed_user_id=999
+            ),
+        )
+        self.assertEqual(
+            999,
+            get_subject_customer_id(
+                {"user_id": 20, "role": "理财顾问"}, claimed_user_id=999
+            ),
         )
 
 

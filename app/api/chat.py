@@ -15,6 +15,7 @@ from app.agent.customer_agent import get_customer_service_agent
 from app.service.nl2sql_service import NL2SQLService
 from app.agent.operator_agent import operator_chat
 from app.security.authorization import (
+    authenticated_actor_id,
     enforce_customer_scope,
     get_request_role,
     require_roles,
@@ -74,6 +75,7 @@ async def customer_chat(
         session_id=request.session_id,
         user_id=request.user_id,
         message=request.message,
+        actor_id=authenticated_actor_id(user),
     )
     await db.commit()
 
@@ -95,6 +97,7 @@ async def customer_chat_stream(
         session_id=request.session_id,
         user_id=request.user_id,
         message=request.message,
+        actor_id=authenticated_actor_id(user),
     )
     await db.commit()
     data = response.model_dump()

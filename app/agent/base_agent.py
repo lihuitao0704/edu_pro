@@ -9,10 +9,15 @@ from app.memory.session_memory import SessionMemory
 class BaseAgent(ABC):
     """Agent 统一执行骨架"""
 
-    def __init__(self, db: AsyncSession, session_id: str = ""):
+    def __init__(
+        self, db: AsyncSession, session_id: str = "", actor_id: int = 0
+    ):
         self.db = db
         self.session_id = session_id
-        self.memory = SessionMemory(session_id) if session_id else None
+        self.actor_id = int(actor_id or 0)
+        self.memory = (
+            SessionMemory(session_id, self.actor_id) if session_id else None
+        )
 
     @abstractmethod
     async def execute(self, message: str, **kwargs) -> dict:
