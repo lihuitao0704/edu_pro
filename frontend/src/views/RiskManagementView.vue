@@ -180,7 +180,7 @@
     <section class="surface-card">
       <div class="card-heading"><h3>关联调查工单</h3></div>
       <div class="workorder-strip">
-        <article v-for="order in workorders.slice(0, 6)" :key="order.id">
+        <article v-for="order in workorders" :key="order.id">
           <span>{{ order.priority || '普通' }}</span><strong>{{ order.work_order_no }}</strong><p>客户 #{{ order.customer_id }} · {{ order.order_type }}</p><small>{{ order.status }}</small>
         </article>
       </div>
