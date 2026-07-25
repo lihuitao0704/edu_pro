@@ -3,6 +3,10 @@
 启动方式: python main.py  或  uvicorn main:app --reload
 """
 
+import socket
+import subprocess
+from pathlib import Path
+
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -135,6 +139,7 @@ from fastapi.responses import FileResponse
 import os
 
 project_dir = os.path.dirname(__file__)
+PROJECT_ROOT = Path(project_dir).resolve()
 vue_dist_dir = os.path.join(project_dir, "frontend", "dist")
 frontend_dir = vue_dist_dir
 
@@ -352,15 +357,75 @@ def _kill_port(port: int) -> None:
         print(f"  [端口释放] 检查失败（可能无旧进程）: {e}")
 
 
+def is_port_available(port: int) -> bool:
+    """Return whether the TCP port is available on the local host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _listener_pid(port: int) -> str | None:
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, check=False
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].endswith(f":{port}") and parts[3] == "LISTENING":
+                return parts[-1]
+    except OSError:
+        return None
+    return None
+
+
+def listener_command(port: int) -> str:
+    pid = _listener_pid(port)
+    if not pid:
+        return ""
+    result = subprocess.run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def release_workspace_listener(port: int) -> bool:
+    """End a stale listener only when it is this workspace's Python service."""
+    pid = _listener_pid(port)
+    command = listener_command(port)
+    normalized = command.replace("/", "\\").lower()
+    root = str(PROJECT_ROOT).replace("/", "\\").lower()
+    if not pid or root not in normalized or not ("python" in normalized or "uvicorn" in normalized):
+        return False
+    subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, text=True, check=False)
+    return is_port_available(port)
+
+
+def resolve_server_port(preferred_port: int = 8000) -> int:
+    if is_port_available(preferred_port):
+        return preferred_port
+    release_workspace_listener(preferred_port)
+    return preferred_port if is_port_available(preferred_port) else 8001
+
+
+def ensure_frontend_build(project_root: Path = PROJECT_ROOT) -> None:
+    if (project_root / "frontend" / "dist" / "index.html").is_file():
+        return
+    subprocess.run(["pnpm", "--dir", "frontend", "build"], cwd=project_root, check=True)
+
+
 if __name__ == "__main__":
-    import os as _os
-    _kill_port(8000)
+    ensure_frontend_build()
+    server_port = resolve_server_port()
     # 设置环境变量允许热重载时的子进程正确处理
-    _os.environ.setdefault("SERVER_PORT", "8000")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=server_port,
         reload=True,
         log_level="info",
     )
