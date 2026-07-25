@@ -12,6 +12,7 @@ async def stream_chat_result(
         "session_id": session_id,
         "intent": result.get("intent", ""),
         "confidence": result.get("confidence", 0),
+        "agent": result.get("agent", result.get("agent_type", "")),
         "agent_type": result.get("agent_type", ""),
     }
     yield {"event": "meta", "data": json.dumps(meta, ensure_ascii=False)}
@@ -33,7 +34,9 @@ async def stream_chat_result(
             "data": json.dumps({"sources": sources}, ensure_ascii=False, default=str),
         }
 
+    done_payload = dict(result)
+    done_payload["session_id"] = session_id
     yield {
         "event": "done",
-        "data": json.dumps({"session_id": session_id}, ensure_ascii=False),
+        "data": json.dumps(done_payload, ensure_ascii=False, default=str),
     }

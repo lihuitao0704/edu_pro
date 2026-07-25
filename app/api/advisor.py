@@ -148,3 +148,16 @@ async def asset_allocation(
     agent = AdvisorAgent(db)
     result = await agent.execute("资产配置", customer_id=req.customer_id)
     return success(data=result)
+
+
+@router.post("/holdings-analysis")
+async def holdings_analysis(
+    req: AllocationRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_roles("客户", "理财顾问", "管理员")),
+):
+    """Analyze one explicitly scoped customer's holdings through AdvisorAgent."""
+    enforce_customer_scope(user, req.customer_id)
+    agent = AdvisorAgent(db)
+    result = await agent.execute("分析持仓", customer_id=req.customer_id)
+    return success(data=result)

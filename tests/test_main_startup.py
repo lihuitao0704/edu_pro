@@ -10,6 +10,18 @@ def test_resolve_server_port_falls_back_to_8001(monkeypatch):
     assert main.resolve_server_port() == 8001
 
 
+def test_resolve_server_port_fails_clearly_when_both_supported_ports_are_busy(monkeypatch):
+    monkeypatch.setattr(main, "is_port_available", lambda _port: False)
+    monkeypatch.setattr(main, "release_workspace_listener", lambda _port: False)
+
+    try:
+        main.resolve_server_port()
+    except RuntimeError as exc:
+        assert "8000" in str(exc) and "8001" in str(exc)
+    else:
+        raise AssertionError("an occupied 8001 must not be passed to Uvicorn")
+
+
 def test_unknown_listener_is_not_terminated(monkeypatch):
     monkeypatch.setattr(main, "listener_command", lambda port: "python D:/other/app.py")
 

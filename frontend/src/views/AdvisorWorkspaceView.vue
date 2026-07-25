@@ -474,11 +474,8 @@ async function runHoldingAnalysis() {
     // 同时获取基础持仓数据和深度分析
     const [holdingsResult, analysisResult] = await Promise.allSettled([
       get<{ items: Holding[]; total_value: number }>(`/customers/${selected.value.customer_id}/holdings`),
-      post<Record<string, any>>('/chat', {
-        message: `分析客户${selected.value.customer_id}的持仓情况`,
-        session_id: '',
-        user_id: selected.value.customer_id,
-        user_role: '理财顾问',
+      post<Record<string, any>>('/advisor/holdings-analysis', {
+        customer_id: selected.value.customer_id,
       }),
     ])
 

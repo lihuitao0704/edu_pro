@@ -381,10 +381,13 @@ def release_workspace_listener(port: int) -> bool:
 
 
 def resolve_server_port(preferred_port: int = 8000) -> int:
-    if is_port_available(preferred_port):
-        return preferred_port
-    release_workspace_listener(preferred_port)
-    return preferred_port if is_port_available(preferred_port) else 8001
+    for port in dict.fromkeys((preferred_port, 8001)):
+        if is_port_available(port):
+            return port
+        release_workspace_listener(port)
+        if is_port_available(port):
+            return port
+    raise RuntimeError("端口 8000 和 8001 均不可用，请释放端口后重试。")
 
 
 def ensure_frontend_build(project_root: Path = PROJECT_ROOT) -> None:

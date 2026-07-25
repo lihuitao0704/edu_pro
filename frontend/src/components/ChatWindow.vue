@@ -151,7 +151,10 @@ async function send() {
 }
 
 function normalizeStreamResponse(data: Record<string, any>, agent: string): ChatResponse {
-  const product = Array.isArray(data.recommendations) ? data.recommendations[0] : undefined
+  const structuredData = data.data && typeof data.data === 'object' ? data.data : data
+  const product = Array.isArray(data.recommendations)
+    ? data.recommendations[0]
+    : Array.isArray(structuredData.recommendations) ? structuredData.recommendations[0] : undefined
   const recommendation = product?.product_name ? {
     title: '智能匹配产品建议',
     risk_level: product.risk_level || '稳健型',
@@ -161,7 +164,7 @@ function normalizeStreamResponse(data: Record<string, any>, agent: string): Chat
   } : undefined
   return {
     answer: data.narrative || data.reply || '',
-    agent: data.agent || agent || 'service',
+    agent: data.agent || data.agent_type || agent || 'service',
     confidence: Number(data.confidence) || 0.9,
     suggestions: recommendation ? ['查看方案详情', '比较同类产品'] : [],
     metadata: { recommendation, session_id: data.session_id },

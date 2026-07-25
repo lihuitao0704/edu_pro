@@ -26,7 +26,13 @@ describe('ChatWindow', () => {
   it('renders a non-advisor delta response and saves the server session id', async () => {
     streamChat.mockImplementation(async (_path, _body, onEvent) => {
       onEvent({ event: 'delta', data: { content: '已查询到赎回规则。' } })
-      onEvent({ event: 'done', data: { reply: '已查询到赎回规则。', session_id: 'server-session-7' } })
+      onEvent({ event: 'done', data: {
+        reply: '已查询到赎回规则。',
+        session_id: 'server-session-7',
+        agent: 'customer_service',
+        confidence: 0.91,
+        data: { recommendations: [{ product_name: '稳健债券A' }] },
+      } })
     })
     const wrapper = mount(ChatWindow, {
       props: { userId: 7 },
@@ -40,5 +46,7 @@ describe('ChatWindow', () => {
     const session = useConversationStore().sessionFor('7')
     expect(session.messages[1].content).toBe('已查询到赎回规则。')
     expect(session.conversationId).toBe('server-session-7')
+    expect(session.messages[1].response?.agent).toBe('customer_service')
+    expect(session.messages[1].response?.metadata.recommendation?.product).toBe('稳健债券A')
   })
 })
