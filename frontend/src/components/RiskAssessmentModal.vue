@@ -11,7 +11,14 @@
           <button class="quiet-button modal-close" @click="close">&times;</button>
         </div>
         <div class="modal-body">
-          <LoadingPanel v-if="loading" text="加载问卷中…" />
+          <!-- 已有有效评估 -->
+          <div v-if="hasValidAssessment" class="valid-assessment-notice">
+            <div class="notice-icon">✓</div>
+            <h3>您已完成风险评估</h3>
+            <p>当前评估有效期至 <strong>{{ validUntil }}</strong></p>
+            <p class="notice-hint">如需重新测评，请点击下方"重新测评"按钮</p>
+          </div>
+          <LoadingPanel v-else-if="loading" text="加载问卷中…" />
           <template v-else>
             <!-- 进度条 -->
             <div class="quiz-progress">
@@ -42,8 +49,16 @@
           </template>
         </div>
         <div class="modal-footer">
-          <button class="secondary-button" @click="close">取消</button>
+          <button class="secondary-button" @click="close">{{ hasValidAssessment ? '关闭' : '取消' }}</button>
           <button
+            v-if="hasValidAssessment"
+            class="primary-button"
+            @click="reAssess"
+          >
+            重新测评
+          </button>
+          <button
+            v-else
             class="primary-button"
             :disabled="!allAnswered || submitting"
             @click="submit"
@@ -82,9 +97,33 @@ const questions = ref<Question[]>([])
 const answers = reactive<Record<number, string>>({})
 const loading = ref(false)
 const submitting = ref(false)
+const hasValidAssessment = ref(false)
+const validUntil = ref('')
 
 const answeredCount = computed(() => Object.keys(answers).length)
 const allAnswered = computed(() => questions.value.length > 0 && answeredCount.value === questions.value.length)
+
+async function checkAssessmentStatus() {
+  try {
+    const status = await get<{ needs_assessment: boolean; valid_until: string | null; risk_level?: string }>('/risk/assessment-status')
+    if (!status.needs_assessment && status.valid_until) {
+      hasValidAssessment.value = true
+      // 格式化日期显示
+      const date = new Date(status.valid_until)
+      validUntil.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    } else {
+      hasValidAssessment.value = false
+    }
+  } catch {
+    hasValidAssessment.value = false
+  }
+}
+
+function reAssess() {
+  hasValidAssessment.value = false
+  Object.keys(answers).forEach((k) => delete answers[Number(k)])
+  loadQuestionnaire()
+}
 
 async function loadQuestionnaire() {
   loading.value = true
@@ -124,13 +163,18 @@ function close() {
   emit('update:visible', false)
 }
 
-// 每次打开时重置并重新加载
+// 每次打开时先检查是否已有有效评估
 watch(
   () => props.visible,
-  (val) => {
+  async (val) => {
     if (val) {
+      hasValidAssessment.value = false
+      validUntil.value = ''
       Object.keys(answers).forEach((k) => delete answers[Number(k)])
-      loadQuestionnaire()
+      await checkAssessmentStatus()
+      if (!hasValidAssessment.value) {
+        loadQuestionnaire()
+      }
     }
   }
 )
@@ -184,4 +228,44 @@ watch(
 .quiz-options label:hover { background: #edf7f5; }
 .quiz-options label.selected { border-color: #0b7f78; background: #dff3ef; font-weight: 600; }
 .quiz-options input[type="radio"] { width: auto; accent-color: #0b7f78; }
+
+/* 有效评估提示 */
+.valid-assessment-notice {
+  text-align: center;
+  padding: 40px 20px;
+}
+.notice-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0b7f78, #10b981);
+  color: white;
+  font-size: 32px;
+  font-weight: bold;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 12px rgba(11, 127, 120, 0.3);
+}
+.valid-assessment-notice h3 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  color: #1a2b3b;
+  font-weight: 600;
+}
+.valid-assessment-notice p {
+  margin: 8px 0;
+  color: #6d7c87;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.valid-assessment-notice strong {
+  color: #0b7f78;
+  font-weight: 600;
+}
+.notice-hint {
+  font-size: 12px !important;
+  color: #9aa8b3 !important;
+  margin-top: 16px !important;
+}
 </style>

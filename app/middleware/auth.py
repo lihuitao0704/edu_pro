@@ -82,14 +82,26 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     """JWT 认证中间件"""
 
     async def dispatch(self, request: Request, call_next):
-        # Mock 模式：跳过所有认证（开发环境）
+        # Mock 模式：跳过认证但仍解析 Token 中的用户信息（开发环境）
         if _settings.jwt.mock_mode:
-            # 注入默认用户信息到 request state
-            request.state.user = {
+            # 尝试从 Token 中提取用户信息，以便多用户测试
+            user_info = {
                 "user_id": 0,
                 "username": "mock_user",
                 "role": "管理员",
             }
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                payload = decode_access_token(token)
+                if payload:
+                    try:
+                        user_info["user_id"] = int(payload.get("sub", 0))
+                        user_info["username"] = payload.get("username", "mock_user")
+                        user_info["role"] = payload.get("role", "管理员")
+                    except (ValueError, TypeError):
+                        pass  # 保持默认值
+            request.state.user = user_info
             return await call_next(request)
 
         path = request.url.path

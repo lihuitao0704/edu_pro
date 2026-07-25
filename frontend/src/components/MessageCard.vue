@@ -11,6 +11,35 @@
         v-if="message.response?.metadata.recommendation"
         :recommendation="message.response.metadata.recommendation"
       />
+
+      <!-- 数据查询结果表格 -->
+      <div v-if="queryResult.length" class="data-table-preview">
+        <div class="dt-preview-header">
+          <span class="eyebrow">QUERY RESULT</span>
+          <button class="text-button" @click="showTable = true">📋 查看全部 {{ queryResult.length }} 条</button>
+        </div>
+        <div class="dt-preview-table-wrap">
+          <table>
+            <thead><tr><th v-for="col in previewColumns" :key="col">{{ colLabel(col) }}</th></tr></thead>
+            <tbody>
+              <tr v-for="(row, i) in previewRows" :key="i">
+                <td v-for="col in previewColumns" :key="col">{{ formatCell(row[col]) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="queryResult.length > 5" class="dt-preview-more">
+          … 还有 {{ queryResult.length - 5 }} 条
+        </div>
+      </div>
+      <DataTableModal
+        v-if="showTable"
+        :rows="queryResult"
+        :sql="querySql"
+        title="数据查询结果"
+        @close="showTable = false"
+      />
+
       <!-- 风评失效/缺失提示入口 -->
       <div v-if="message.role === 'assistant' && hasAssessmentPrompt" class="assessment-inline-cta">
         <span>📋 你的风险评估可能已失效或不存在</span>
@@ -28,9 +57,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import RecommendationCard from './RecommendationCard.vue'
+import DataTableModal from './DataTableModal.vue'
 import type { ChatMessage } from '../stores/conversation'
 import { renderAssistantMarkdown } from '../utils/markdown'
 
@@ -53,6 +83,46 @@ const hasAssessmentPrompt = computed(() => {
   const keywords = ['风评', '风险评估', '测评', '风险测评', '风险问卷', '适当性评估', '评估已失效', '评估不存在', '及时评测', '完成风险']
   return keywords.some(kw => text.includes(kw))
 })
+
+// 数据查询结果（从 normalizeStreamResponse 透传的 _queryResult / _sql）
+const showTable = ref(false)
+const queryResult = computed<any[]>(() => (props.message.response as any)?._queryResult || [])
+const querySql = computed(() => (props.message.response as any)?._sql || '')
+
+const COLUMN_ALIAS: Record<string, string> = {
+  id: '编号', username: '用户名', real_name: '姓名', user_type: '客户类型',
+  employee_role: '员工角色', customer_level: '客户等级', phone: '手机号',
+  email: '邮箱', status: '状态', balance: '账户余额', age: '年龄',
+  education: '学历', occupation: '职业', create_time: '创建时间',
+  update_time: '更新时间', total_assets: '总资产', risk_level: '风险等级',
+  product_name: '产品名称', product_type: '产品类型', shares: '持有份额',
+  current_value: '当前市值', profit_loss: '盈亏', profit_ratio: '收益率',
+  transaction_type: '交易类型', amount: '交易金额',
+}
+
+function colLabel(key: string): string {
+  return COLUMN_ALIAS[key] || key.replace(/_/g, ' ')
+}
+
+function formatCell(val: any): string {
+  if (val === null || val === undefined) return '—'
+  // 字符串数字统一转 number 格式化
+  const num = typeof val === 'number' ? val : Number(val)
+  if (!isNaN(num)) {
+    // 金额类加 ¥ 前缀（>=100 的数值视为金额类，避免年龄/ID也被加 ¥）
+    if (Math.abs(num) >= 100 || String(val).includes('.')) {
+      return `¥${num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    }
+    return num.toLocaleString()
+  }
+  return String(val)
+}
+
+const previewColumns = computed(() => {
+  if (!queryResult.value.length) return []
+  return Object.keys(queryResult.value[0]).filter(k => !['password_hash', 'password', 'salt', 'secret'].includes(k)).slice(0, 6)
+})
+const previewRows = computed(() => queryResult.value.slice(0, 5))
 </script>
 
 <style scoped>
@@ -102,5 +172,57 @@ const hasAssessmentPrompt = computed(() => {
 }
 .assessment-inline-cta button:hover {
   background: #086f69;
+}
+
+/* 数据表格预览 */
+.data-table-preview {
+  margin-top: 14px;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.dt-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #0a1525;
+  border-bottom: 1px solid #1e293b;
+}
+.dt-preview-header .eyebrow { font-size: 9px; }
+.dt-preview-header .text-button {
+  padding: 4px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #94a3b8;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dt-preview-header .text-button:hover {
+  border-color: #38bdf8;
+  color: #bae6fd;
+}
+.dt-preview-table-wrap { overflow-x: auto; }
+.dt-preview-table-wrap table { min-width: 600px; width: 100%; border-collapse: collapse; font-size: 11px; }
+.dt-preview-table-wrap th {
+  padding: 7px 10px; text-align: left;
+  color: #64748b; background: #0d1a2a;
+  font-weight: 600; white-space: nowrap;
+  border-bottom: 1px solid #1e293b;
+}
+.dt-preview-table-wrap td {
+  padding: 6px 10px; color: #c9d5e5;
+  border-bottom: 1px solid #1a273a;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dt-preview-more {
+  padding: 8px 14px; text-align: center;
+  color: #4a5a70; font-size: 11px;
+  background: #0a1525;
 }
 </style>
