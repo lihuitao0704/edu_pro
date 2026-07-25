@@ -23,7 +23,6 @@ EVENT_RISK_ALERT = "event:risk_alert"          # 向后兼容的通用频道
 EVENT_C1_ADVISOR = "event:risk_alert:c1"       # C1: 投顾降权 — 高风险客户推荐降权
 EVENT_C2_MONITOR = "event:risk_alert:c2"       # C2: 风控监测 — 规则触发/预警生成
 EVENT_C4_CUSTOMER = "event:risk_alert:c4"      # C4: 客服联动 — 客服Agent风控提示
-EVENT_C5_RISK_FROM_CUSTOMER = "event:risk_alert:c5"  # C5: 客服→风控反向联动
 EVENT_PROFILE_UPDATE = "event:profile_update"
 EVENT_WORK_ORDER_CHANGE = "event:work_order_change"
 EVENT_GRAPH_SYNC = "event:graph_sync"           # 图谱增量同步
@@ -350,8 +349,6 @@ async def start_event_subscriber() -> None:
       - event:risk_alert     → legacy 通用频道（向后兼容）
       - event:profile_update → 清除画像缓存
       - event:work_order_change → 记录日志
-
-    Redis 不可用或连接断开时自动重连（指数退避，最长 60s），不影响主服务。
     """
     import asyncio
 
@@ -363,7 +360,6 @@ async def start_event_subscriber() -> None:
         EVENT_C1_ADVISOR,
         EVENT_C2_MONITOR,
         EVENT_C4_CUSTOMER,
-        EVENT_C5_RISK_FROM_CUSTOMER,  # C5: 客服→风控反向联动
         EVENT_RISK_ALERT,       # legacy 通用频道
         EVENT_PROFILE_UPDATE,
         EVENT_WORK_ORDER_CHANGE,
@@ -430,9 +426,6 @@ async def _handle_event(event: dict, channel: str = "") -> None:
         # C4: 客服联动 — 更新客服风险上下文
         if channel == EVENT_C4_CUSTOMER or event_type in (EVENT_C4_CUSTOMER, EVENT_RISK_ALERT):
             await _handle_c4_customer_context(payload)
-    if channel == EVENT_C5_RISK_FROM_CUSTOMER:
-        # C5: 客服→风控反向联动 — 客服Agent检测到可疑信号，通知风控Agent生成预警
-        await _handle_c5_risk_from_customer(payload)
 
     # 画像更新和工单变更按原逻辑处理
     if event_type == EVENT_PROFILE_UPDATE:
@@ -509,63 +502,6 @@ async def _handle_c4_customer_context(payload: dict) -> None:
             )
         except Exception as e:
             raise RuntimeError("customer-service risk context update failed") from e
-
-
-async def _handle_c5_risk_from_customer(payload: dict) -> None:
-    """
-    C5 频道处理：客服→风控反向联动
-    客服Agent检测到可疑信号，通知风控Agent生成预警
-
-    联动逻辑：
-      客服Agent检测信号 → event_bus C5频道 → 风控Agent生成预警 → 更新risk_flag → 回传客服
-    """
-    import logging
-    logger = logging.getLogger("event_bus.c5")
-
-    customer_id = payload.get("customer_id")
-    signal_type = payload.get("signal_type")
-    signal_level = payload.get("signal_level")
-    session_id = payload.get("session_id")
-
-    if not customer_id or not signal_type:
-        logger.warning("C5事件缺少必要字段: customer_id=%s, signal_type=%s", customer_id, signal_type)
-        return
-
-    logger.info(
-        "C5客服→风控联动 | customer=%s | signal=%s | level=%s | session=%s",
-        customer_id, signal_type, signal_level, session_id,
-    )
-
-    try:
-        from app.service.risk_monitor_service import RiskMonitorService
-        from app.config.database import async_session_factory
-
-        async with async_session_factory() as db:
-            service = RiskMonitorService()
-            alert_id = await service.save_cs_signal_alert(db, payload)
-            await db.commit()
-
-            if alert_id:
-                logger.info("C5信号已生成预警: alert_id=%s, customer=%s", alert_id, customer_id)
-
-                # 反馈闭环：将处理结果回传给客服Agent
-                try:
-                    from app.config.database import get_redis
-                    r = await get_redis()
-                    feedback_key = f"cs_risk_feedback:{session_id}:{customer_id}"
-                    feedback_data = {
-                        "alert_id": alert_id,
-                        "signal_type": signal_type,
-                        "signal_level": signal_level,
-                        "status": "alert_created",
-                        "created_at": datetime.now().isoformat(),
-                    }
-                    await r.set(feedback_key, json.dumps(feedback_data, ensure_ascii=False), ex=3600)  # 1h TTL
-                    logger.info("C5反馈已写入Redis: key=%s", feedback_key)
-                except Exception as e:
-                    logger.warning("C5反馈写入Redis失败: %s", e)
-    except Exception as e:
-        logger.error("C5信号处理失败: %s", e)
 
 
 async def _handle_risk_alert(payload: dict) -> None:

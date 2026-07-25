@@ -1,7 +1,6 @@
 """
 Agent Service — 客服Agent核心编排逻辑
 完整流程：会话管理 → 意图路由 → 记忆召回 → RAG检索 → 结果组装 → 安全审核 → 归档
-C5 反向联动：对话中检测风控信号 → 通知风控Agent → 反馈闭环
 """
 
 import json
@@ -18,7 +17,6 @@ from app.service.memory_service import get_memory_service
 from app.service.safety_service import get_safety_service
 from app.service.memory_recall_service import get_memory_recall_service
 from app.tool.llm_tool import get_llm_tool
-from app.tool.risk_signal_rules import detect_l1_signals, should_trigger_l3_detection, RiskSignal, LLM_SIGNAL_CLASSIFICATION_PROMPT
 from app.config.settings import get_settings
 from app.utils.logger import get_logger
 
@@ -84,7 +82,6 @@ class CustomerServiceAgent:
         self.safety = get_safety_service()
         self.llm = get_llm_tool()
         self.memory_recall = get_memory_recall_service()
-        self.settings = get_settings()
 
     async def handle(self, session_id: str, user_id: int, message: str) -> CustomerChatResponse:
         """
@@ -131,13 +128,6 @@ class CustomerServiceAgent:
                 user_id, message[:30], risk_context.get("risk_level"), risk_context.get("alert_count"),
             )
 
-        # 2c. C5 反向联动：风控信号检测（L1关键词 + L2行为模式 + L3 LLM辅助）
-        detected_signal = await self._detect_risk_signals(
-            session_id=session_id,
-            user_id=user_id,
-            message=message,
-            history=history,
-        )
         # 客服→画像：只记录可解释的短期情绪信号，不改变正式风险等级。
         try:
             from app.service.agent_event_service import AgentDomainEvent, EventDispatcher
@@ -163,11 +153,6 @@ class CustomerServiceAgent:
                 risk_reply = self._get_risk_aware_reply(risk_context)
                 if risk_reply:
                     reply = risk_reply + "\n\n" + reply
-            # C5 反馈闭环：如果检测到信号，附加安抚话术
-            if detected_signal:
-                feedback_reply = self._get_signal_feedback_reply(detected_signal)
-                if feedback_reply:
-                    reply = feedback_reply + "\n\n" + reply
             sources = []
 
         elif intent == "chitchat":
@@ -177,11 +162,6 @@ class CustomerServiceAgent:
                 risk_reply = self._get_risk_aware_reply(risk_context)
                 if risk_reply:
                     reply = risk_reply + "\n\n---\n\n" + reply
-            # C5 反馈闭环
-            if detected_signal:
-                feedback_reply = self._get_signal_feedback_reply(detected_signal)
-                if feedback_reply:
-                    reply = feedback_reply + "\n\n---\n\n" + reply
             sources = []
 
         else:
@@ -209,11 +189,6 @@ class CustomerServiceAgent:
                     risk_reply = self._get_risk_aware_reply(risk_context)
                     if risk_reply:
                         reply = risk_reply + "\n\n---\n\n" + reply
-                # C5 反馈闭环
-                if detected_signal:
-                    feedback_reply = self._get_signal_feedback_reply(detected_signal)
-                    if feedback_reply:
-                        reply = feedback_reply + "\n\n---\n\n" + reply
                 sources = []
             else:
                 # 增强生成（注入跨 session 记忆）
@@ -253,12 +228,6 @@ class CustomerServiceAgent:
                             "C4联动: 客户%s 敏感操作(%s) 附加风险提示 | level=%s",
                             user_id, intent, risk_context.get("risk_level"),
                         )
-
-                # C5 反馈闭环：检测到信号后附加安抚话术
-                if detected_signal:
-                    feedback_reply = self._get_signal_feedback_reply(detected_signal)
-                    if feedback_reply:
-                        reply = feedback_reply + "\n\n---\n\n" + reply
 
                 # 安全审核
                 safety_result = await self.safety.check_content(llm_response)
@@ -386,331 +355,6 @@ class CustomerServiceAgent:
         if risk_level and risk_level in self.RISK_AWARE_TEMPLATES:
             return self.RISK_AWARE_TEMPLATES[risk_level]
         return ""
-
-    # ═══════════════════════════════════════════════════════════
-    # C5 反向联动：客服→风控 信号检测层
-    # ═══════════════════════════════════════════════════════════
-
-    async def _detect_risk_signals(
-        self, session_id: str, user_id: int, message: str, history: list[dict]
-    ) -> Optional[RiskSignal]:
-        """
-        C5 反向联动：三级风控信号检测
-
-        L1: 关键词规则（<1ms）
-        L2: 行为模式 — Redis 频率计数（<5ms）
-        L3: LLM 辅助意图分类（~500ms，仅在 L1/L2 不确定时触发）
-
-        去重：同客户同信号类型在 dedup_window 内只上报一次。
-
-        Returns:
-            检测到的最高优先级信号，未检测到返回 None
-        """
-        risk_signal_cfg = self.settings.risk_signal
-
-        # ── L1: 关键词规则检测 ──
-        l1_signals = detect_l1_signals(message)
-
-        # ── L2: 行为模式检测（Redis 频率计数）──
-        l2_triggered = False
-        l2_signal = await self._check_l2_behavior_pattern(
-            user_id, l1_signals, risk_signal_cfg
-        )
-        if l2_signal:
-            l2_triggered = True
-            l1_signals.append(l2_signal)
-
-        # 选出最高优先级信号
-        best_signal = self._pick_best_signal(l1_signals)
-
-        # ── 去重检查 ──
-        if best_signal:
-            is_dup = await self._check_dedup(user_id, best_signal, risk_signal_cfg)
-            if is_dup:
-                logger.debug(
-                    "C5信号去重命中 | user=%s | signal=%s", user_id, best_signal.signal_type
-                )
-                return None
-
-        # ── L3: LLM 辅助检测（仅在需要时触发）──
-        need_l3 = should_trigger_l3_detection(l1_signals, l2_triggered)
-        if need_l3:
-            l3_signal = await self._l3_llm_detection(message, history, user_id)
-            if l3_signal:
-                # L3 结果与 L1 合并，取最优
-                if best_signal is None or l3_signal.confidence > best_signal.confidence:
-                    best_signal = l3_signal
-                # L3 去重
-                if best_signal is l3_signal:
-                    is_dup = await self._check_dedup(user_id, best_signal, risk_signal_cfg)
-                    if is_dup:
-                        return None
-
-        # ── 上报决策 ──
-        if best_signal is None:
-            return None
-
-        # low 级信号根据配置决定是否上报
-        if best_signal.signal_level == "low" and not risk_signal_cfg.report_low_level:
-            logger.info(
-                "C5信号仅记录日志(不上报) | user=%s | signal=%s | confidence=%.2f",
-                user_id, best_signal.signal_type, best_signal.confidence,
-            )
-            return None
-
-        # 置信度阈值检查
-        threshold = (
-            risk_signal_cfg.l3_confidence_threshold
-            if best_signal.confidence >= risk_signal_cfg.l1_confidence_threshold
-            else risk_signal_cfg.l1_confidence_threshold
-        )
-        if best_signal.confidence < threshold:
-            logger.info(
-                "C5信号置信度不足(不上报) | user=%s | signal=%s | confidence=%.2f < threshold=%.2f",
-                user_id, best_signal.signal_type, best_signal.confidence, threshold,
-            )
-            return None
-
-        # ── 发布 C5 事件 ──
-        await self._publish_c5_event(session_id, user_id, best_signal)
-
-        # ── 写入去重标记 ──
-        await self._write_dedup(user_id, best_signal, risk_signal_cfg)
-
-        logger.info(
-            "C5信号已上报 | user=%s | signal=%s | level=%s | confidence=%.2f",
-            user_id, best_signal.signal_type, best_signal.signal_level, best_signal.confidence,
-        )
-        return best_signal
-
-    async def _check_l2_behavior_pattern(
-        self, user_id: int, l1_signals: list[RiskSignal], cfg
-    ) -> Optional[RiskSignal]:
-        """
-        L2 行为模式检测：通过 Redis 频率计数器检测异常行为模式
-
-        规则：同一客户在 time_window 内触发 >= threshold 次 L1 信号 → 升级为 high
-        """
-        if not l1_signals:
-            return None
-
-        try:
-            from app.config.database import get_redis
-            r = await get_redis()
-            counter_key = f"cs_signal_count:{user_id}"
-            count = await r.incr(counter_key)
-            if count == 1:
-                await r.expire(counter_key, cfg.frequent_signal_window_minutes * 60)
-
-            if count >= cfg.frequent_signal_threshold:
-                logger.info(
-                    "C5 L2行为模式触发 | user=%s | count=%s >= threshold=%s",
-                    user_id, count, cfg.frequent_signal_threshold,
-                )
-                return RiskSignal(
-                    signal_type="behavior_change",
-                    signal_level="high",
-                    confidence=0.8,
-                    keywords_hit=[],
-                    evidence={
-                        "pattern": "frequent_sensitive_signals",
-                        "count": count,
-                        "window_minutes": cfg.frequent_signal_window_minutes,
-                    },
-                )
-        except Exception as e:
-            logger.warning("C5 L2行为模式检测失败(非阻断): %s", e)
-
-        return None
-
-    async def _l3_llm_detection(
-        self, message: str, history: list[dict], user_id: int
-    ) -> Optional[RiskSignal]:
-        """
-        L3 LLM 辅助检测：使用现有大模型对对话上下文做意图分类
-
-        将最近几轮对话 + 当前消息送入 LLM，判断是否存在风控信号。
-        仅在 L1/L2 不确定时触发，避免不必要的延迟。
-        """
-        try:
-            # 构建对话上下文
-            recent_history = history[-6:]  # 最近3轮对话
-            conversation_parts = []
-            for msg in recent_history:
-                role_label = "客户" if msg.get("role") == "user" else "客服"
-                content = (msg.get("content") or "")[:200]
-                conversation_parts.append(f"{role_label}: {content}")
-            conversation_parts.append(f"客户: {message[:200]}")
-            conversation_text = "\n".join(conversation_parts)
-
-            prompt = LLM_SIGNAL_CLASSIFICATION_PROMPT.replace(
-                "{conversation}", conversation_text
-            )
-            messages = [{"role": "user", "content": prompt}]
-
-            reply = await self.llm.chat_with_fallback(
-                messages=messages, temperature=0.1, max_tokens=200
-            )
-
-            # 解析 LLM 返回的 JSON
-            result = self._extract_json_from_text(reply)
-            if not result:
-                return None
-
-            if not result.get("has_signal"):
-                logger.info("C5 L3检测: 未发现信号 | user=%s", user_id)
-                return None
-
-            signal_type = result.get("signal_type")
-            confidence = float(result.get("confidence", 0.5))
-            reason = result.get("reason", "")
-
-            if not signal_type or signal_type == "null":
-                return None
-
-            # 根据 LLM 置信度确定信号等级
-            if confidence >= 0.85:
-                signal_level = "high"
-            elif confidence >= 0.65:
-                signal_level = "medium"
-            else:
-                signal_level = "low"
-
-            logger.info(
-                "C5 L3 LLM检测命中 | user=%s | signal=%s | level=%s | confidence=%.2f | reason=%s",
-                user_id, signal_type, signal_level, confidence, reason[:80],
-            )
-            return RiskSignal(
-                signal_type=signal_type,
-                signal_level=signal_level,
-                confidence=confidence,
-                keywords_hit=[],
-                evidence={
-                    "source": "llm_l3",
-                    "reason": reason[:200],
-                    "message": message[:200],
-                },
-            )
-
-        except Exception as e:
-            logger.warning("C5 L3 LLM检测失败(非阻断): %s", e)
-            return None
-
-    async def _check_dedup(
-        self, user_id: int, signal: RiskSignal, cfg
-    ) -> bool:
-        """检查去重：同客户同信号类型在 dedup_window 内是否已上报"""
-        try:
-            from app.config.database import get_redis
-            r = await get_redis()
-            dedup_key = f"cs_signal_dedup:{user_id}:{signal.signal_type}"
-            exists = await r.exists(dedup_key)
-            return exists > 0
-        except Exception as e:
-            logger.warning("C5去重检查失败(非阻断): %s", e)
-            return False
-
-    async def _write_dedup(
-        self, user_id: int, signal: RiskSignal, cfg
-    ) -> None:
-        """写入去重标记"""
-        try:
-            from app.config.database import get_redis
-            r = await get_redis()
-            dedup_key = f"cs_signal_dedup:{user_id}:{signal.signal_type}"
-            await r.set(dedup_key, "1", ex=cfg.dedup_window)
-        except Exception as e:
-            logger.warning("C5去重标记写入失败(非阻断): %s", e)
-
-    async def _publish_c5_event(
-        self, session_id: str, user_id: int, signal: RiskSignal
-    ) -> None:
-        """发布 C5 事件到 event_bus"""
-        try:
-            from app.service.event_bus import publish_event, EVENT_C5_RISK_FROM_CUSTOMER
-            payload = {
-                "source": "customer_agent",
-                "customer_id": user_id,
-                "session_id": session_id,
-                "signal_type": signal.signal_type,
-                "signal_level": signal.signal_level,
-                "confidence": signal.confidence,
-                "evidence": {
-                    "message": signal.evidence.get("message", "")[:200],
-                    "keywords_hit": signal.keywords_hit,
-                    "source": signal.evidence.get("source", "l1_l2"),
-                },
-                "timestamp": datetime.now().isoformat(),
-            }
-            await publish_event(EVENT_C5_RISK_FROM_CUSTOMER, payload)
-            logger.info(
-                "C5事件已发布 | user=%s | signal=%s | session=%s",
-                user_id, signal.signal_type, session_id,
-            )
-        except Exception as e:
-            logger.warning("C5事件发布失败(非阻断): %s", e)
-
-    @staticmethod
-    def _pick_best_signal(signals: list[RiskSignal]) -> Optional[RiskSignal]:
-        """从信号列表中选出最高优先级的信号"""
-        if not signals:
-            return None
-        level_order = {"high": 3, "medium": 2, "low": 1}
-        return max(signals, key=lambda s: (level_order.get(s.signal_level, 0), s.confidence))
-
-    def _get_signal_feedback_reply(self, signal: RiskSignal) -> str:
-        """
-        C5 反馈闭环：根据检测到的信号生成安抚/告知话术
-
-        风控Agent处理后会写入 Redis 反馈，此处先根据信号类型给出初步安抚。
-        """
-        feedback_templates = {
-            "account_compromise": (
-                "🔒 **安全提示**：我们已注意到您的账户安全异常，系统已自动上报安全团队。"
-                "为保障您的资金安全，建议您立即修改登录密码和交易密码。"
-                "如需紧急冻结账户，请拨打客服热线 400-XXX-XXXX。"
-            ),
-            "social_engineering": (
-                "⚠️ **安全提醒**：为保障您的信息安全，请勿向他人透露账户密码、验证码等敏感信息。"
-                "如有任何疑问，请通过官方渠道联系我们。"
-            ),
-            "abnormal_intent": (
-                "📋 **温馨提示**：大额交易可能需要额外的身份验证流程。"
-                "为保障您的资金安全，系统可能会对本次操作进行安全审核。感谢您的理解与配合。"
-            ),
-            "behavior_change": (
-                "📋 **温馨提示**：系统检测到您的账户操作模式有所变化。"
-                "为保障您的资金安全，部分操作可能需要额外的安全验证。如有疑问请联系客服。"
-            ),
-            "identity_failure": (
-                "🔐 **身份验证提示**：检测到多次身份验证未通过。"
-                "为保障您的账户安全，建议您通过官方APP重新进行身份认证，或携带有效证件前往柜台办理。"
-            ),
-        }
-        template = feedback_templates.get(signal.signal_type, "")
-        if not template:
-            return ""
-
-        # 尝试读取风控Agent的反馈（如果已处理完成）
-        # 此处为同步读取，实际反馈可能在下一条消息时才写入
-        return template
-
-    async def _query_c5_feedback(self, session_id: str, user_id: int) -> Optional[dict]:
-        """
-        查询风控Agent对C5信号的处理反馈
-
-        从 Redis cs_risk_feedback:{session_id}:{user_id} 读取
-        """
-        try:
-            from app.config.database import get_redis
-            r = await get_redis()
-            feedback_key = f"cs_risk_feedback:{session_id}:{user_id}"
-            data = await r.get(feedback_key)
-            if data:
-                return json.loads(data)
-        except Exception as e:
-            logger.debug("C5反馈查询失败(非阻断): %s", e)
-        return None
 
     async def _handle_chitchat(self, message: str, history: list[dict]) -> str:
         """处理闲聊"""
