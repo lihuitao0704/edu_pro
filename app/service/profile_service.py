@@ -53,6 +53,10 @@ class ProfileService:
         rejections of the same product type add a candidate-pool constraint.
         """
         current = dict(preference or {})
+        event_id = event.get("_event_id")
+        processed_ids = list(current.get("processed_feedback_event_ids") or [])
+        if event_id and event_id in processed_ids:
+            return current
         signals = dict(current.get("feedback_signals") or {})
         product_type = str(event.get("product_type") or "未知类型")
         signal = dict(signals.get(product_type) or {})
@@ -70,6 +74,8 @@ class ProfileService:
         if int(signal.get("rejected_count", 0)) >= 3:
             avoided.add(product_type)
         current["avoid_product_types"] = sorted(avoided)
+        if event_id:
+            current["processed_feedback_event_ids"] = (processed_ids + [event_id])[-100:]
         return current
 
     async def apply_recommendation_feedback(self, event: dict, customer_id: int) -> None:

@@ -284,7 +284,9 @@ async def handle_domain_event(event) -> None:
         from app.service.profile_service import ProfileService
 
         async with async_session_factory() as db:
-            await ProfileService(db).apply_recommendation_feedback(event.payload, event.customer_id)
+            await ProfileService(db).apply_recommendation_feedback(
+                {**event.payload, "_event_id": event.event_id}, event.customer_id
+            )
             await db.commit()
 
 
@@ -506,7 +508,7 @@ async def _handle_c4_customer_context(payload: dict) -> None:
                 customer_id, payload.get("action", ""),
             )
         except Exception as e:
-            logger.warning("C4客服联动 Redis 写入失败: %s", e)
+            raise RuntimeError("customer-service risk context update failed") from e
 
 
 async def _handle_c5_risk_from_customer(payload: dict) -> None:
@@ -594,7 +596,7 @@ async def _handle_risk_alert(payload: dict) -> None:
             "风控联动(MySQL): 客户%s 画像 risk_flag 更新为 %s", customer_id, risk_flag
         )
     except Exception as e:
-        _subscriber_logger.warning("更新画像 risk_flag(MySQL) 失败: %s", e)
+        raise RuntimeError("profile risk flag update failed") from e
 
     # 2. 设置 Redis 风险标记 + 清除画像缓存
     try:
@@ -609,7 +611,7 @@ async def _handle_risk_alert(payload: dict) -> None:
             customer_id, risk_flag,
         )
     except Exception as e:
-        _subscriber_logger.warning("Redis 操作失败(不影响MySQL更新): %s", e)
+        raise RuntimeError("risk cache update failed") from e
 
 
 async def _handle_profile_update(payload: dict) -> None:

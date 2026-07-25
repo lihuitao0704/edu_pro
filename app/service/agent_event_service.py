@@ -90,6 +90,19 @@ class EventDispatcher:
         """Write the event inside the caller's transaction for later publishing."""
         from app.model.entities import AgentEventOutbox
 
+        # Derived events can be regenerated if a relay crashes after their
+        # side-effect succeeds. Correlation identity makes that enqueue idempotent.
+        if hasattr(db, "execute"):
+            existing = await db.execute(
+                select(AgentEventOutbox.event_id).where(
+                    AgentEventOutbox.event_type == event.event_type,
+                    AgentEventOutbox.source_agent == event.source_agent,
+                    AgentEventOutbox.customer_id == event.customer_id,
+                    AgentEventOutbox.correlation_id == event.correlation_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                return
         db.add(
             AgentEventOutbox(
                 event_id=event.event_id,

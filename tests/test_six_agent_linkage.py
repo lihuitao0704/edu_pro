@@ -81,6 +81,12 @@ class RecommendationFeedbackTests(unittest.TestCase):
         self.assertIn("混合基金", preference["avoid_product_types"])
         self.assertEqual(3, preference["feedback_signals"]["混合基金"]["rejected_count"])
 
+    def test_replayed_feedback_event_is_counted_once(self):
+        event = {"_event_id": "evt-1", "product_type": "混合基金", "status": "rejected"}
+        preference = ProfileService.merge_recommendation_feedback({}, event)
+        preference = ProfileService.merge_recommendation_feedback(preference, event)
+        self.assertEqual(1, preference["feedback_signals"]["混合基金"]["rejected_count"])
+
     def test_candidate_filter_excludes_rejected_product_type(self):
         candidates = [
             {"product_code": "F1", "product_type": "混合基金"},
