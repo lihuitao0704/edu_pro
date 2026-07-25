@@ -102,6 +102,8 @@ async function send() {
     content: '',
   }
   conversations.appendMessage(userKey.value, assistantMsg)
+  // 关键修复：通过 store 拿到 Vue 的响应式代理对象，后续修改它才能触发视图更新
+  const reactiveMsg = session.value.messages[session.value.messages.length - 1] as typeof assistantMsg
 
   try {
     await streamChat('/chat/stream/v2', {
@@ -113,14 +115,14 @@ async function send() {
       switch (event) {
         case 'token':
         case 'delta':
-          assistantMsg.content += data.content || ''
+          reactiveMsg.content += data.content || ''
           scrollToBottom()
           break
         case 'done':
           loading.value = false
           if (data.session_id) conversations.setSessionId(userKey.value, data.session_id)
-          if (data.reply) assistantMsg.content = data.narrative || data.reply
-          assistantMsg.response = normalizeStreamResponse(data, activeAgent.value)
+          if (data.reply) reactiveMsg.content = data.narrative || data.reply
+          reactiveMsg.response = normalizeStreamResponse(data, activeAgent.value)
           scrollToBottom()
           break
         case 'error':
@@ -128,7 +130,7 @@ async function send() {
           error.value = data.message || '流式服务异常'
           // 移除空消息
           const msgs = session.value.messages
-          if (msgs[msgs.length - 1] === assistantMsg) msgs.pop()
+          if (msgs[msgs.length - 1] === reactiveMsg) msgs.pop()
           break
         case 'meta':
           activeAgent.value = data.agent || data.agent_type || ''
@@ -139,7 +141,7 @@ async function send() {
     error.value = reason instanceof Error ? reason.message : '金融服务暂时不可用'
     // 流式失败，移除空消息并回退 mock
     const msgs = session.value.messages
-    if (msgs[msgs.length - 1] === assistantMsg) msgs.pop()
+    if (msgs[msgs.length - 1] === reactiveMsg) msgs.pop()
     if (mockEnabled) {
       const response = createMockChatResponse(message)
       conversations.appendMessage(userKey.value, { role: 'assistant', content: response.answer, response, isMock: true })
