@@ -29,6 +29,7 @@ from app.config.settings import get_settings
 from sqlalchemy import select
 from app.service.memory_service import MemoryService
 from app.common_services.orchestration.chat_orchestrator import ChatOrchestrator
+from app.common_services.context_manager.memory_manager import MemoryManager
 from app.common_services.safety_guard.input_filter import InputSafetyFilter
 from app.common_services.platform_persistence import PlatformPersistenceService
 
@@ -283,17 +284,60 @@ async def unified_chat_stream_v2(
         or uuid.uuid4().hex
     )
 
-    # ── 轻量意图分类（不阻塞，快速判断是否投顾）──
-    try:
-        from app.service.intent_service import get_intent_service
-        intent_svc = get_intent_service()
-        intent, confidence, _params = await intent_svc.classify_router(req.message)
-    except Exception:
-        intent = "unknown"
+    # ── 先执行输入安全过滤，再生成一次可复用的顶层路由决策 ──
+    input_decision = InputSafetyFilter().inspect(req.message)
+    routing_message = input_decision.sanitized_text
+    if input_decision.blocked:
+        # ChatOrchestrator owns the standard safety-block response.
+        route_decision = None
+        route_plan = None
+        intent = "safety_block"
+        confidence = 1.0
+    else:
+        try:
+            from app.service.intent_service import get_intent_service
+            from app.service.route_validator import get_route_validator
+
+            intent_svc = get_intent_service()
+            actor_role = get_request_role_from_user(user)
+            route_context = await MemoryManager(db=db).load_context(
+                session_id, actor_id
+            )
+            route_plan = await intent_svc.plan_route(
+                routing_message,
+                user_role=actor_role,
+                context=route_context,
+            )
+            route_plan.tasks = [
+                get_route_validator().validate(
+                    decision,
+                    user_role=actor_role,
+                    context=route_context,
+                )
+                for decision in route_plan.tasks
+            ]
+            route_decision = (
+                route_plan.tasks[0] if not route_plan.is_multi_intent else None
+            )
+            intent = (
+                "multi_intent"
+                if route_plan.is_multi_intent
+                else route_decision.intent
+            )
+            confidence = min(
+                (decision.confidence for decision in route_plan.tasks),
+                default=0.0,
+            )
+        except Exception as exc:
+            logger.warning("流式入口路由预判失败，交由编排层澄清: %s", exc)
+            route_decision = None
+            route_plan = None
+            intent = "clarification"
+            confidence = 0.0
 
     # ── 投顾意图 → 真流式 ──
     if intent == "investment_recommendation":
-        safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+        safe_input = routing_message
 
         async def advisor_event_stream():
             from app.agent.advisor_agent import AdvisorAgent
@@ -301,14 +345,18 @@ async def unified_chat_stream_v2(
             final_payload: dict = {}
             try:
                 async for evt in agent.stream_execute(
-                    req.message,
+                    safe_input,
                     customer_id=get_subject_customer_id(user, req.user_id),
+                    audience_role=get_request_role_from_user(user),
                 ):
                     # 过滤掉 py 对象，确保 JSON 可序列化
                     event_payload = dict(evt)
                     evt_type = event_payload.pop("type", "message")
                     safe = _make_json_safe(event_payload)
                     if evt_type == "done":
+                        safe["route_decision"] = route_decision.model_dump(
+                            mode="json"
+                        )
                         final_payload = safe
                     yield {
                         "event": evt_type,
@@ -350,6 +398,8 @@ async def unified_chat_stream_v2(
             req.message, session_id, actor_id,
             get_request_role_from_user(user),
             customer_id=get_subject_customer_id(user, req.user_id),
+            route_decision=route_decision,
+            route_plan=route_plan,
         )
         safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
         if result.agent != "safety_guard":
@@ -410,7 +460,9 @@ async def chat_recommend(
     )
     agent = AdvisorAgent(db, session_id, actor_id=actor_id)
     result = await agent.execute(
-        req.message, customer_id=get_subject_customer_id(user, req.user_id)
+        req.message,
+        customer_id=get_subject_customer_id(user, req.user_id),
+        audience_role=get_request_role_from_user(user),
     )
     return success(data={
         "reply": result.get("reply", ""),

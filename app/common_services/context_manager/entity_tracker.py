@@ -45,7 +45,7 @@ class EntityTracker:
 
     # 风险等级匹配
     _RISK_LEVEL_PATTERN = re.compile(
-        r"\b([RrCc][1-5])\b|(保守型|稳健型|平衡型|进取型|激进型)"
+        r"(?<![A-Za-z0-9])([RrCc][1-5])(?![A-Za-z0-9])|(保守型|稳健型|平衡型|进取型|激进型)"
     )
 
     # 金额匹配
@@ -70,6 +70,20 @@ class EntityTracker:
         """
         previous_entities = previous_entities or {}
         result: dict[str, Any] = {}
+
+        customer_id = re.search(
+            r"客户(?:ID|编号)\s*(?:是|为|=|[:：])?\s*(\d+)",
+            message,
+            re.I,
+        )
+        if customer_id:
+            result["customer_id"] = int(customer_id.group(1))
+            result["customer_id_source"] = "message"
+        elif any(
+            word in message for word in self._REFERENCE_PATTERNS["customer"]
+        ) and previous_entities.get("customer_id"):
+            result["customer_id"] = previous_entities["customer_id"]
+            result["customer_id_source"] = "session_reference"
 
         # 1. 产品名称提取
         product = self._extract_product(message, previous_entities)
@@ -102,6 +116,11 @@ class EntityTracker:
         if amount_match:
             result["amount_value"] = float(amount_match.group(1))
             result["amount_unit"] = amount_match.group(2)
+            result["amount"] = (
+                result["amount_value"] * 10000
+                if result["amount_unit"] in {"万", "万元"}
+                else result["amount_value"]
+            )
 
         return result
 

@@ -18,7 +18,9 @@ LLM 根据用户自然语言自动决定：
 """
 
 from typing import Optional
+import re
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from langchain.agents import create_agent
@@ -28,6 +30,7 @@ from langchain_core.tools import tool
 
 from app.agent.base_agent import BaseAgent
 from app.config.settings import get_settings
+from app.model.entities import SysUser
 from app.tool.profile_tool import ProfileTool
 from app.tool.holding_tool import HoldingTool
 from app.tool.comparison_tool import ComparisonTool
@@ -232,6 +235,57 @@ class AdvisorAgent(BaseAgent):
              "holdings_analysis": dict, "reasoning": str, "session_id": str}
         """
         customer_id = kwargs.get("customer_id")
+        audience_role = str(kwargs.get("audience_role") or "")
+        if customer_id is not None:
+            try:
+                normalized_customer_id = int(customer_id)
+            except (TypeError, ValueError):
+                return {
+                    "reply": f"客户ID {customer_id} 格式无效，请提供有效的数字客户ID。",
+                    "recommendations": [],
+                    "customer_profile": None,
+                    "status": "invalid_customer",
+                    "session_id": self.session_id,
+                }
+
+            identity = (
+                await self.db.execute(
+                    select(
+                        SysUser.user_type,
+                        SysUser.employee_role,
+                        SysUser.status,
+                    ).where(SysUser.id == normalized_customer_id)
+                )
+            ).first()
+            if identity is None:
+                return {
+                    "reply": f"未找到客户ID {normalized_customer_id}，请核对后重试。",
+                    "recommendations": [],
+                    "customer_profile": None,
+                    "status": "invalid_customer",
+                    "session_id": self.session_id,
+                }
+            if str(identity.user_type or "").upper() != "CUSTOMER":
+                role = identity.employee_role or "员工"
+                return {
+                    "reply": (
+                        f"ID {normalized_customer_id} 对应{role}账号，不是客户，"
+                        "不能用于客户画像、产品推荐或业务办理。"
+                    ),
+                    "recommendations": [],
+                    "customer_profile": None,
+                    "status": "invalid_customer",
+                    "session_id": self.session_id,
+                }
+            if str(identity.status or "") != "正常":
+                return {
+                    "reply": f"客户ID {normalized_customer_id} 当前状态异常，暂不能生成产品推荐。",
+                    "recommendations": [],
+                    "customer_profile": None,
+                    "status": "customer_unavailable",
+                    "session_id": self.session_id,
+                }
+            customer_id = normalized_customer_id
 
         # ── 意图分类（轻量预筛，辅助LLM更快决策）──
         advisor_intent = None
@@ -366,6 +420,12 @@ class AdvisorAgent(BaseAgent):
             allocation = None
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
+        if audience_role == "客户" and smart_rec:
+            from app.service.advisor_narrative_service import AdvisorNarrativeService
+
+            reply = AdvisorNarrativeService.render_customer(smart_rec)
+            reasoning = None
+            customer_profile = self._customer_profile_summary(customer_profile)
 
         # ── 记忆写入：保存本轮对话到短期记忆 + 异步归档 ──
         if self.memory:
@@ -400,6 +460,7 @@ class AdvisorAgent(BaseAgent):
         import asyncio
 
         customer_id = kwargs.get("customer_id")
+        audience_role = str(kwargs.get("audience_role") or "")
 
         # ── 预处理：意图分类 + 记忆召回 + 消息构造（同 execute）──
         cross_session_context = ""
@@ -478,7 +539,8 @@ class AdvisorAgent(BaseAgent):
                         token = getattr(chunk, "content", None)
                         if token and isinstance(token, str):
                             full_reply += token
-                            yield {"type": "token", "content": token}
+                            if audience_role != "客户":
+                                yield {"type": "token", "content": token}
 
                 elif kind == "on_tool_end":
                     name = event.get("name", "")
@@ -561,14 +623,18 @@ class AdvisorAgent(BaseAgent):
         # summary after invoking a recommendation tool.
         from app.service.advisor_narrative_service import AdvisorNarrativeService
         narrative_service = AdvisorNarrativeService()
-        final_reply = (
-            narrative_service.ensure_disclaimer(full_reply)
-            if full_reply
-            else narrative_service.render_template({
-                "customer_profile": customer_profile,
-                "recommendations": recommendations,
-            })
-        )
+        if audience_role == "客户" and smart_rec:
+            final_reply = narrative_service.render_customer(smart_rec)
+            customer_profile = self._customer_profile_summary(customer_profile)
+        else:
+            final_reply = (
+                narrative_service.ensure_disclaimer(full_reply)
+                if full_reply
+                else narrative_service.render_template({
+                    "customer_profile": customer_profile,
+                    "recommendations": recommendations,
+                })
+            )
 
         yield {
             "type": "done",
@@ -740,12 +806,26 @@ class AdvisorAgent(BaseAgent):
                     assessment = profile_data.get("assessment", {})
                     risk_level = assessment.get("risk_level")
 
+            # 将画像熔断和实时风控预警合并成一个确定性的适当性上限。
+            constraint_text = json.dumps(
+                {
+                    "circuit_breakers": profile_data.get("circuit_breakers", []),
+                    "warnings": profile_data.get("warnings", []),
+                },
+                ensure_ascii=False,
+            ) if isinstance(profile_data, dict) else ""
+            circuit_limits = [
+                int(value)
+                for value in re.findall(r"R1\s*[-~至]\s*R([1-5])", constraint_text)
+            ]
+            circuit_max_risk = min(circuit_limits) if circuit_limits else None
+
             # ── Issue #6 修复：高风险客户限制产品推荐范围 ──
             effective_top_n = top_n
-            restricted_risk = None
+            alert_max_risk = None
             if risk_alert_level == "high":
                 # 高风险预警客户：限制只能推荐 R1-R2 产品
-                restricted_risk = "C2"  # 对应 R2
+                alert_max_risk = 2
                 effective_top_n = max(top_n, 5)  # 多取一些以防过滤后不够
                 logger.info(
                     "客户 %s 存在高风险预警，产品推荐限制为 R1-R2",
@@ -753,20 +833,26 @@ class AdvisorAgent(BaseAgent):
                 )
             elif risk_alert_level == "medium":
                 # 中风险预警客户：限制只能推荐 R1-R3 产品
-                restricted_risk = "C3"  # 对应 R3
+                alert_max_risk = 3
                 logger.info(
                     "客户 %s 存在中风险预警，产品推荐限制为 R1-R3",
                     customer_id,
                 )
 
-            # 用风控限制后的风险等级做推荐
-            effective_risk = restricted_risk or risk_level
+            limits = [
+                value
+                for value in (circuit_max_risk, alert_max_risk)
+                if value is not None
+            ]
+            max_allowed_risk = min(limits) if limits else None
+            effective_risk = (
+                f"C{max_allowed_risk}" if max_allowed_risk else risk_level
+            )
             rec_result = await rec_tool.recommend(customer_id, effective_top_n, fallback_risk=effective_risk)
 
-            # ── Issue #6 修复：对高风险客户过滤推荐结果 ──
+            # 画像熔断与实时预警使用同一上限过滤产品和资产配置。
             recommendations = rec_result.get("recommendations", [])
-            if risk_alert_level in ("high", "medium"):
-                max_allowed_risk = 2 if risk_alert_level == "high" else 3  # R2 or R3
+            if max_allowed_risk:
                 recommendations = [
                     r for r in recommendations
                     if AdvisorAgent._product_risk_num(r.get("risk_level", "R5")) <= max_allowed_risk
@@ -774,6 +860,12 @@ class AdvisorAgent(BaseAgent):
                 # 如果过滤后不够 top_n，补足
                 if len(recommendations) < top_n:
                     recommendations = recommendations[:top_n] if recommendations else []
+                alloc_result = AdvisorAgent._constrain_allocation(
+                    alloc_result,
+                    customer_id=customer_id,
+                    max_allowed_risk=max_allowed_risk,
+                    original_risk_level=risk_level or "C2",
+                )
 
             # 构建最终的推荐结果
             rec_result_filtered = {
@@ -842,6 +934,34 @@ class AdvisorAgent(BaseAgent):
         if level in ("R4", "C4"):
             return 4
         return 5
+
+    @staticmethod
+    def _constrain_allocation(
+        allocation: dict,
+        *,
+        customer_id: int,
+        max_allowed_risk: int,
+        original_risk_level: str,
+    ) -> dict:
+        """Use a conservative allocation that cannot contradict a product cap."""
+        templates = {
+            1: {"货币类": 60.0, "债券类": 0.0, "混合类": 0.0, "股票类": 0.0, "现金": 40.0},
+            2: {"货币类": 30.0, "债券类": 60.0, "混合类": 0.0, "股票类": 0.0, "现金": 10.0},
+            3: {"货币类": 15.0, "债券类": 50.0, "混合类": 25.0, "股票类": 0.0, "现金": 10.0},
+        }
+        if max_allowed_risk not in templates:
+            return allocation
+        return {
+            "customer_id": customer_id,
+            "risk_level": f"C{max_allowed_risk}",
+            "original_risk_level": original_risk_level,
+            "allocation": templates[max_allowed_risk],
+            "explanation": (
+                f"已按适当性限制 R1-R{max_allowed_risk} 调整配置，"
+                "不配置超过当前风险上限的资产类别。"
+            ),
+            "constraint_applied": True,
+        }
 
     @staticmethod
     def _make_recommend_tool(db: AsyncSession):
@@ -1000,3 +1120,12 @@ class AdvisorAgent(BaseAgent):
             if content and isinstance(content, str) and len(content) > 50:
                 return content[:200] + ("..." if len(content) > 200 else "")
         return None
+
+    @staticmethod
+    def _customer_profile_summary(profile: dict | None) -> dict | None:
+        """Expose only the profile fields required by the customer presentation."""
+        if not isinstance(profile, dict):
+            return None
+        assessment = profile.get("assessment") or {}
+        risk_level = assessment.get("risk_level") or profile.get("risk_level")
+        return {"risk_level": risk_level} if risk_level else None

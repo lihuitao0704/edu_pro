@@ -31,7 +31,7 @@
             <tbody>
               <tr v-for="(row, i) in displayRows" :key="(page - 1) * pageSize + i">
                 <td class="dt-row-num">{{ (page - 1) * pageSize + i + 1 }}</td>
-                <td v-for="col in columns" :key="col">{{ formatCell(row[col]) }}</td>
+                <td v-for="col in columns" :key="col">{{ formatTableCell(row[col], col) }}</td>
               </tr>
             </tbody>
           </table>
@@ -53,6 +53,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { formatTableCell } from '../utils/table-format'
 
 const props = defineProps<{
   rows: Record<string, any>[]
@@ -114,18 +115,6 @@ const COL_WIDTH: Record<string, string> = {
 function colWidth(key: string): Record<string, string> | undefined {
   const w = COL_WIDTH[key]
   return w ? { width: w, minWidth: w } : undefined
-}
-
-function formatCell(val: any): string {
-  if (val === null || val === undefined) return '—'
-  const num = typeof val === 'number' ? val : Number(val)
-  if (!isNaN(num)) {
-    if (Math.abs(num) >= 100 || String(val).includes('.')) {
-      return `¥${num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    }
-    return num.toLocaleString()
-  }
-  return String(val)
 }
 
 function copySql() {

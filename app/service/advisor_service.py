@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.model.schemas import ProductRecommend, AllocationResult
-from app.model.entities import ProductRecommendation, FinCustomerProfile
+from app.model.entities import FinProduct, ProductRecommendation, FinCustomerProfile
 from app.service.profile_service import ProfileService
 from app.service.agent_event_service import AgentDomainEvent, EventDispatcher
 from app.tool.graph_tool import GraphTool
@@ -21,20 +21,6 @@ from app.config.rules_config import (
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-# Mock 产品数据（实际应从数据库获取）
-MOCK_PRODUCTS = [
-    {"product_code": "F100001", "product_name": "现金宝货币A", "risk_level": "R1", "expected_return": 2.5, "product_type": "货币基金", "term_days": 0},
-    {"product_code": "F100002", "product_name": "天添利货币B", "risk_level": "R1", "expected_return": 2.8, "product_type": "货币基金", "term_days": 0},
-    {"product_code": "F200001", "product_name": "XX稳健增利债券A", "risk_level": "R2", "expected_return": 4.5, "product_type": "债券基金", "term_days": 180},
-    {"product_code": "F200002", "product_name": "XX纯债优选", "risk_level": "R2", "expected_return": 4.0, "product_type": "债券基金", "term_days": 90},
-    {"product_code": "F300001", "product_name": "XX平衡混合基金", "risk_level": "R3", "expected_return": 6.5, "product_type": "混合基金", "term_days": 365},
-    {"product_code": "F300002", "product_name": "XX灵活配置混合", "risk_level": "R3", "expected_return": 7.0, "product_type": "混合基金", "term_days": 365},
-    {"product_code": "F400001", "product_name": "XX价值成长股票", "risk_level": "R4", "expected_return": 10.0, "product_type": "股票基金", "term_days": 365},
-    {"product_code": "F400002", "product_name": "XX行业精选ETF", "risk_level": "R4", "expected_return": 12.0, "product_type": "股票基金", "term_days": 365},
-    {"product_code": "F500001", "product_name": "XX量化对冲私募", "risk_level": "R5", "expected_return": 15.0, "product_type": "私募产品", "term_days": 730},
-]
 
 
 class AdvisorService:
@@ -52,6 +38,87 @@ class AdvisorService:
         """Apply non-regulatory feedback constraints to the candidate pool."""
         avoided = set((preference or {}).get("avoid_product_types") or [])
         return [dict(product) for product in candidates if product.get("product_type") not in avoided]
+
+    @classmethod
+    def _product_quality_issue(cls, product: dict) -> str | None:
+        """Reject internally inconsistent or implausible product master data."""
+        risk_text = str(product.get("risk_level") or "").strip().upper()
+        if len(risk_text) != 2 or not risk_text.startswith("R") or not risk_text[1].isdigit():
+            return "invalid_risk_level"
+        risk_num = int(risk_text[1])
+        if risk_num < 1 or risk_num > 5:
+            return "invalid_risk_level"
+
+        product_type = str(product.get("product_type") or "")
+        product_name = str(product.get("product_name") or "")
+        category_text = f"{product_type} {product_name}".lower()
+        expected_return = float(product.get("expected_return") or 0)
+        if expected_return < 0:
+            return "negative_expected_return"
+
+        if any(word in category_text for word in ("股票", "权益", "equity", "etf")):
+            if risk_num < 4:
+                return "equity_risk_level_too_low"
+            max_return = 35.0
+        elif any(word in category_text for word in ("混合", "mixed")):
+            if risk_num < 3:
+                return "mixed_risk_level_too_low"
+            max_return = 20.0
+        elif any(word in category_text for word in ("债券", "固收", "bond")):
+            if risk_num < 2:
+                return "fixed_income_risk_level_too_low"
+            max_return = 8.0
+        elif any(word in category_text for word in ("货币", "现金", "cash", "money")):
+            max_return = 6.0
+        else:
+            max_return = 20.0
+
+        if expected_return > max_return:
+            return "expected_return_outlier"
+        return None
+
+    @classmethod
+    def _filter_product_quality(cls, products: list[dict]) -> list[dict]:
+        safe_products: list[dict] = []
+        for product in products:
+            issue = cls._product_quality_issue(product)
+            if issue:
+                logger.warning(
+                    "推荐候选产品数据质量拦截 | product_id=%s | code=%s | issue=%s",
+                    product.get("product_id"),
+                    product.get("product_code"),
+                    issue,
+                )
+                continue
+            safe_products.append(product)
+        return safe_products
+
+    async def _load_active_products(self, allowed_levels: list[str]) -> list[dict]:
+        """Load an isolated snapshot of currently saleable products."""
+        result = await self.db.execute(
+            select(FinProduct).where(
+                FinProduct.status == "在售",
+                FinProduct.risk_level.in_(allowed_levels),
+            )
+        )
+        products = result.scalars().all()
+        snapshots: list[dict] = []
+        for product in products:
+            snapshot_time = product.update_time or product.create_time
+            snapshots.append({
+                "product_id": int(product.id),
+                "product_code": product.product_code,
+                "product_name": product.product_name,
+                "risk_level": product.risk_level,
+                "expected_return": float(product.expected_return or 0),
+                "product_type": product.product_type,
+                "min_amount": float(product.min_amount) if product.min_amount is not None else None,
+                "term_days": product.term_days,
+                "data_source": "fin_product",
+                "product_snapshot_time": snapshot_time.isoformat() if snapshot_time else None,
+                "rule_version": "suitability-v1",
+            })
+        return snapshots
 
     async def recommend_products(
         self, customer_id: int, top_n: int = 3, risk_level: Optional[str] = None,
@@ -81,8 +148,9 @@ class AdvisorService:
             ) or "C2"
         allowed_levels = SUITABILITY_MATRIX.get(customer_risk, ["R1", "R2"])
 
-        # 筛选
-        candidates = [p for p in MOCK_PRODUCTS if p["risk_level"] in allowed_levels]
+        # 只从当前在售产品中筛选，不再使用演示产品回退。
+        candidates = await self._load_active_products(allowed_levels)
+        candidates = self._filter_product_quality(candidates)
         preference = (
             profile.get("product_preference") if isinstance(profile, dict)
             else getattr(profile, "product_preference", None)
@@ -184,14 +252,20 @@ class AdvisorService:
 
         recommendations = [
             ProductRecommend(
+                product_id=p["product_id"],
                 product_code=p["product_code"],
                 product_name=p["product_name"],
                 risk_level=p["risk_level"],
                 product_type=p.get("product_type"),
                 expected_return=p["expected_return"],
+                min_amount=p.get("min_amount"),
+                term_days=p.get("term_days"),
                 match_score=round(p["match_score"], 2),
                 match_level=_score_to_match_level(p["match_score"]),
                 reason=await self._generate_reason(p, customer_risk, profile),
+                data_source=p["data_source"],
+                product_snapshot_time=p.get("product_snapshot_time"),
+                rule_version=p["rule_version"],
             ).model_dump()
             for p in top
         ]
@@ -249,9 +323,15 @@ class AdvisorService:
                 product_code=rec["product_code"],
                 match_score=rec["match_score"],
                 score_detail={
+                    "product_id": rec.get("product_id"),
                     "risk_level": rec["risk_level"],
                     "expected_return": rec["expected_return"],
                     "product_type": rec.get("product_type", ""),
+                    "min_amount": rec.get("min_amount"),
+                    "term_days": rec.get("term_days"),
+                    "data_source": rec.get("data_source", "fin_product"),
+                    "product_snapshot_time": rec.get("product_snapshot_time"),
+                    "rule_version": rec.get("rule_version", "suitability-v1"),
                 },
                 reasoning=rec["reason"],
             )
@@ -482,53 +562,12 @@ class AdvisorService:
     # ═══════════════════════════════════════════════════════════════
 
     async def _generate_reason(self, product: dict, customer_risk: str, profile) -> str:
-        """
-        使用 LLM 生成个性化推荐理由。
-
-        Prompt 包含客户画像信息（风险等级、资产规模、偏好）和产品信息，
-        要求 LLM 引用画像说明为什么适合该客户，语气专业亲切，50字以内。
-        """
+        """Generate a deterministic user-facing reason without prompt leakage."""
         risk_map = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}
         risk_name = risk_map.get(customer_risk, customer_risk)
-
-        total_assets = "未知"
-        if profile and hasattr(profile, "total_assets") and profile.total_assets:
-            total_assets = f"{float(profile.total_assets):,.0f}元"
-
-        product_preference = "均衡配置"
-        if customer_risk in ("C1", "C2"):
-            product_preference = "偏好低风险稳健收益"
-        elif customer_risk in ("C4", "C5"):
-            product_preference = "偏好高风险高收益"
-
-        prompt = (
-            f"根据以下客户画像信息，为推荐的产品生成个性化推荐理由：\n"
-            f"客户风险等级：{risk_name}（{customer_risk}级）\n"
-            f"资产规模：{total_assets}\n"
-            f"投资偏好：{product_preference}\n"
-            f"推荐产品：{product['product_name']}（{product['risk_level']}级{product['product_type']}"
-            f"，预期年化{product['expected_return']}%）\n"
-            f"\n"
-            f"要求：引用画像信息说明为什么适合该客户，语气专业亲切，50字以内。"
+        product_type = str(product.get("product_type") or "产品")
+        reason = (
+            f"该{product_type}风险等级为{product['risk_level']}，"
+            f"与您的{risk_name}风险承受能力相匹配，可作为分散配置参考。"
         )
-
-        try:
-            reason = await self._llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-                max_tokens=128,
-            )
-            # 清理：去掉可能的引号、换行
-            reason = reason.strip().strip('"').strip("'").replace("\n", " ")
-            if not reason:
-                raise ValueError("LLM 返回空推荐理由")
-        except Exception as e:
-            logger.warning(f"LLM 生成推荐理由失败: {e}，回退为模板")
-            # 回退：仍用原来的拼接方式
-            reason = (
-                f"该产品为{product['risk_level']}级{product['product_type']}，"
-                f"预期年化{product['expected_return']}%，"
-                f"与您的{risk_name}风险偏好匹配"
-            )
-
-        return reason
+        return reason[:80]

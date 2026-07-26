@@ -12,6 +12,7 @@
         <span class="trace-result" :class="node.result">{{ node.result === 'success' ? '成功' : '处理中' }}</span>
       </li>
     </ol>
+    <p v-if="!nodes.length" class="trace-empty">当前账户暂无可展示的真实执行链路。</p>
   </section>
 </template>
 
@@ -20,3 +21,11 @@ import type { TraceNode } from '../mocks/platform'
 
 defineProps<{ nodes: TraceNode[] }>()
 </script>
+
+<style scoped>
+.trace-empty {
+  margin: 24px 0 0;
+  color: #8798ae;
+  font-size: 12px;
+}
+</style>

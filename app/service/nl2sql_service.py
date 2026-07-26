@@ -7,6 +7,7 @@ from app.tool.llm_client import LLMClient
 from app.model import entities
 from app.config.redis_client import get_redis_client
 from app.config.settings import get_settings
+from app.utils.data_masking import mask_query_rows
 from sqlalchemy import text
 from typing import List, Dict, Optional, Tuple
 import hashlib
@@ -395,7 +396,11 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                 cached = r.get(cache_key)
                 if cached:
                     logger.info(f"命中缓存: {cache_key}")
-                    return json.loads(cached)
+                    cached_response = json.loads(cached)
+                    cached_response["query_result"] = mask_query_rows(
+                        cached_response.get("query_result")
+                    )
+                    return cached_response
         except Exception as e:
             logger.warning(f"Redis 读取缓存失败（不影响查询）: {e}")
 
@@ -451,7 +456,8 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
                 }
 
             t3 = time.time()
-            explanation = self.llm.explain_result(query, result["rows"])
+            safe_rows = mask_query_rows(result["rows"])
+            explanation = self.llm.explain_result(query, safe_rows)
             t_explain = time.time() - t3
 
             exceeded = result.get("row_count", 0) >= _settings.nl2sql.max_rows
@@ -459,7 +465,7 @@ SQL：SELECT COUNT(*) FROM `fin_customer_profile` WHERE `total_assets` > 1000000
             response = {
                 "success": True,
                 "sql": sql,
-                "query_result": result["rows"],
+                "query_result": safe_rows,
                 "explanation": explanation,
                 "error": None,
                 "safety": {

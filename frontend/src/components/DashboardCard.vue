@@ -2,7 +2,7 @@
   <article class="dashboard-metric-card" :class="`metric-${tone}`">
     <span>{{ label }}</span>
     <strong>{{ value }}</strong>
-    <small>{{ trend }} 较昨日</small>
+    <small>{{ trend }}</small>
   </article>
 </template>
 

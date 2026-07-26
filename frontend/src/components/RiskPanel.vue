@@ -1,12 +1,29 @@
 <template>
   <aside class="risk-panel">
     <header><span class="section-kicker">RISK WATCH</span><h3>风险关注事项</h3></header>
-    <div class="risk-score"><strong>36</strong><span>待关注事件</span><em>−8.2%</em></div>
+    <div class="risk-score"><strong>{{ totalAlerts }}</strong><span>累计风险预警</span><em>实时汇总</em></div>
     <ul>
-      <li><i class="high" /><span><strong>高波动产品集中度</strong><small>12 位客户需要复核</small></span></li>
-      <li><i class="medium" /><span><strong>适当性测评即将到期</strong><small>18 位客户需要提醒</small></span></li>
-      <li><i class="low" /><span><strong>账户异常行为</strong><small>6 项待确认操作</small></span></li>
+      <li v-for="item in normalizedDistribution" :key="item.name">
+        <i :class="item.name" />
+        <span><strong>{{ item.label }}</strong><small>{{ item.count }} 条预警</small></span>
+      </li>
+      <li v-if="!normalizedDistribution.length">
+        <span><strong>暂无风险分布数据</strong><small>请检查风险统计服务</small></span>
+      </li>
     </ul>
-    <button type="button">进入风控工作台 →</button>
   </aside>
 </template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+
+const props = defineProps<{
+  totalAlerts: number
+  distribution: Array<{ name: string; count: number; label?: string }>
+}>()
+
+const normalizedDistribution = computed(() => props.distribution.map(item => ({
+  ...item,
+  label: item.label || ({ high: '高风险', medium: '中风险', low: '低风险' }[item.name] || item.name),
+})))
+</script>

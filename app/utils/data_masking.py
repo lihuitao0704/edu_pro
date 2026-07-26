@@ -1,13 +1,13 @@
 """
 数据脱敏工具
-对敏感信息（身份证、手机号、姓名、银行卡）进行脱敏处理
+对敏感信息（身份证、手机号、邮箱、姓名、银行卡）进行脱敏处理
 用途：日志输出、SSE 流式推送、会话归档
 
 负责人: LHG
 """
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
 
 def mask_id_card(s: Optional[str]) -> str:
@@ -34,6 +34,53 @@ def mask_phone(s: Optional[str]) -> str:
     if len(s) < 7:
         return s
     return s[:3] + "****" + s[-4:]
+
+
+def mask_email(s: Optional[str]) -> str:
+    """
+    邮箱脱敏: 短前缀保留首位，较长前缀保留前三位，域名保持可辨认。
+    例: abc@example.com → a**@example.com
+        zhangsan@example.com → zha*****@example.com
+    """
+    if not s:
+        return ""
+    value = str(s).strip()
+    if "@" not in value:
+        return value
+    local, domain = value.rsplit("@", 1)
+    if not local or not domain:
+        return value
+    visible = 1 if len(local) <= 3 else 3
+    masked_local = local[:visible] + "*" * max(2, len(local) - visible)
+    return f"{masked_local}@{domain}"
+
+
+_PHONE_FIELDS = {
+    "phone", "phone_number", "mobile", "mobile_phone", "telephone", "手机号",
+}
+_EMAIL_FIELDS = {
+    "email", "email_address", "mail", "邮箱",
+}
+
+
+def mask_query_rows(rows: Any) -> Any:
+    """Mask contact fields in tabular query results without mutating source rows."""
+    if not isinstance(rows, list):
+        return rows
+    safe_rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            safe_rows.append(row)
+            continue
+        safe_row = dict(row)
+        for key, value in safe_row.items():
+            normalized = str(key).strip().lower()
+            if normalized in _PHONE_FIELDS:
+                safe_row[key] = mask_phone(value)
+            elif normalized in _EMAIL_FIELDS:
+                safe_row[key] = mask_email(value)
+        safe_rows.append(safe_row)
+    return safe_rows
 
 
 def mask_name(s: Optional[str]) -> str:

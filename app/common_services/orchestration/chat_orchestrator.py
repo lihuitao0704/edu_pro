@@ -13,6 +13,7 @@ from app.common_services.orchestration.response_enhancer import ResponseEnhancer
 from app.common_services.safety_guard.input_filter import InputSafetyFilter
 from app.common_services.safety_guard.output_filter import OutputSafetyFilter
 from app.common_services.trace_service.trace_service import TraceService
+from app.model.route_decision import RouteDecision, RoutePlan
 from app.model.schemas import UnifiedChatResponse
 
 # ── C4 风控联动：敏感操作关键词 ──
@@ -75,6 +76,8 @@ class ChatOrchestrator:
         actor_id: int,
         actor_role: str,
         customer_id: int | None = None,
+        route_decision: RouteDecision | None = None,
+        route_plan: RoutePlan | None = None,
     ) -> UnifiedChatResponse:
         session_id = session_id or uuid.uuid4().hex
         trace_id = uuid.uuid4().hex
@@ -137,17 +140,31 @@ class ChatOrchestrator:
         route_context: dict[str, Any] = {
             "entities": {**previous_context.get("entities", {}), **entities},
         }
+        for optional_key in (
+            "last_intent",
+            "last_agent",
+            "pending_route_decision",
+        ):
+            if previous_context.get(optional_key) is not None:
+                route_context[optional_key] = previous_context[optional_key]
         if risk_context["is_sensitive"] and risk_context["risk_level"] == "medium":
             # 中风险 + 敏感操作：注入风控上下文，下游 Agent 可在回复中附加提示
             route_context["risk_context"] = risk_context
             route_context["risk_warning"] = _RISK_AWARE_REPLY_MEDIUM
 
+        route_kwargs: dict[str, Any] = {
+            "message": input_decision.sanitized_text,
+            "session_id": session_id,
+            "user_id": actor_id,
+            "user_role": actor_role,
+            "context": route_context,
+        }
+        if route_plan is not None:
+            route_kwargs["route_plan"] = route_plan
+        elif route_decision is not None:
+            route_kwargs["route_decision"] = route_decision
         routed = await self.router.route(
-            message=input_decision.sanitized_text,
-            session_id=session_id,
-            user_id=actor_id,
-            user_role=actor_role,
-            context=route_context,
+            **route_kwargs,
         )
         trace.add_span("router_agent")
         trace.add_span(routed.agent)
@@ -168,12 +185,33 @@ class ChatOrchestrator:
 
         output_decision = self.output_filter.inspect(agent_result.reply)
         agent_result.reply = output_decision.safe_reply
+        routed_decision = (
+            (routed.data or {}).get("route_decision")
+            if isinstance(routed.data, dict)
+            else None
+        )
+        if isinstance(routed_decision, dict) and isinstance(
+            routed_decision.get("entities"), dict
+        ):
+            entities = {**entities, **routed_decision["entities"]}
+        elif isinstance(routed.data, dict):
+            route_plan = routed.data.get("route_plan")
+            if isinstance(route_plan, dict):
+                for task in route_plan.get("tasks", []):
+                    if isinstance(task, dict) and isinstance(
+                        task.get("entities"), dict
+                    ):
+                        entities = {**entities, **task["entities"]}
+        pending_route_decision = (
+            routed_decision if routed.intent == "clarification" else None
+        )
         context = await self.memory_manager.save_context(
             session_id,
             actor_id,
             entities,
             last_intent=agent_result.intent,
             last_agent=agent_result.agent_name,
+            pending_route_decision=pending_route_decision,
         )
         trace.finish("ok" if output_decision.allowed else "sanitized", agent_result.reply)
         data = dict(agent_result.data or {})

@@ -7,6 +7,15 @@
       </div>
       <div class="header-right">
         <span class="header-status">{{ statusText }}</span>
+        <button
+          v-if="!messages.length"
+          class="new-chat-btn"
+          :disabled="historyLoading"
+          @click="restoreHistory"
+          title="恢复当前账户最近一次对话"
+        >
+          {{ historyLoading ? '加载中' : '历史对话' }}
+        </button>
         <button class="new-chat-btn" @click="newChat" title="开始新对话">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           新聊天
@@ -23,7 +32,13 @@
           <button v-for="prompt in prompts" :key="prompt" type="button" @click="ask(prompt)">{{ prompt }}</button>
         </div>
       </div>
-      <MessageCard v-for="(message, index) in messages" :key="index" :message="message" @open-assessment="emit('open-assessment')" />
+      <MessageCard
+        v-for="(message, index) in messages"
+        :key="index"
+        :message="message"
+        @open-assessment="emit('open-assessment')"
+        @select-suggestion="ask"
+      />
       <div v-if="loading" class="assistant-loading"><i /> 正在协调金融智能服务…</div>
     </div>
 
@@ -39,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
 import { createMockChatResponse, getChatHistory, type ChatResponse } from '../api/chat'
 import MessageCard from './MessageCard.vue'
@@ -56,6 +71,7 @@ const mockEnabled = import.meta.env.DEV && import.meta.env.VITE_ENABLE_CHAT_MOCK
 const prompts = ['我有 50 万，如何稳健配置？', '帮我评估当前投资风险', '有哪些适合长期持有的产品？', '我想了解账户赎回流程']
 const input = ref('')
 const loading = ref(false)
+const historyLoading = ref(false)
 const error = ref('')
 const activeAgent = ref('')
 const scrollArea = ref<HTMLElement>()
@@ -66,21 +82,28 @@ const agentLabels: Record<string, string> = {
   risk_monitor: '风控助手正在核查',
   nl2sql: '数据分析助手正在处理',
   operator: '业务助手正在处理',
+  router_supervisor: '多任务协调器正在处理',
 }
 const statusText = computed(() => {
   if (loading.value) return agentLabels[activeAgent.value] || '正在识别您的需求'
   return props.customerName || `${messages.value.length} 条对话`
 })
 
-async function hydrateHistory() {
+async function restoreHistory() {
+  if (historyLoading.value) return
   const requestedUserKey = userKey.value
+  historyLoading.value = true
+  error.value = ''
   try {
     const history = await getChatHistory()
     if (requestedUserKey !== userKey.value) return
     conversations.hydrateUserSession(requestedUserKey, history)
+    if (!history.messages.length) error.value = '当前账户暂无历史对话'
     await scrollToBottom()
   } catch {
-    // 历史读取失败不阻塞当前会话；发送下一条消息会建立新会话。
+    error.value = '历史对话加载失败，请稍后重试'
+  } finally {
+    historyLoading.value = false
   }
 }
 
@@ -166,6 +189,9 @@ async function send() {
 
 function normalizeStreamResponse(data: Record<string, any>, agent: string): ChatResponse & { _queryResult?: any[]; _sql?: string } {
   const structuredData = data.data && typeof data.data === 'object' ? data.data : data
+  const clarificationChoices = Array.isArray(structuredData.clarification?.choices)
+    ? structuredData.clarification.choices.filter((choice: unknown): choice is string => typeof choice === 'string')
+    : []
   const product = Array.isArray(data.recommendations)
     ? data.recommendations[0]
     : Array.isArray(structuredData.recommendations) ? structuredData.recommendations[0] : undefined
@@ -180,8 +206,15 @@ function normalizeStreamResponse(data: Record<string, any>, agent: string): Chat
     answer: data.narrative || data.reply || '',
     agent: data.agent || data.agent_type || agent || 'service',
     confidence: Number(data.confidence) || 0.9,
-    suggestions: recommendation ? ['查看方案详情', '比较同类产品'] : [],
-    metadata: { recommendation, session_id: data.session_id },
+    suggestions: clarificationChoices.length
+      ? clarificationChoices
+      : recommendation ? ['查看方案详情', '比较同类产品'] : [],
+    metadata: {
+      recommendation,
+      session_id: data.session_id,
+      route_decision: structuredData.route_decision,
+      clarification: structuredData.clarification,
+    },
     // 透传数据查询结果（供 MessageCard 渲染表格）
     _queryResult: structuredData.query_result || [],
     _sql: structuredData.sql || '',
@@ -202,10 +235,6 @@ function newChat() {
   error.value = ''
   activeAgent.value = ''
 }
-
-onMounted(() => {
-  void hydrateHistory()
-})
 
 onBeforeUnmount(() => {
   activeRequest?.abort()
