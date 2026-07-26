@@ -1,4 +1,4 @@
-"""Canonical in-process domain events for the six-Agent collaboration layer."""
+"""Canonical domain events and transactional outbox for Agent collaboration."""
 
 from __future__ import annotations
 
@@ -9,6 +9,28 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from typing import Awaitable, Callable
+
+
+EVENT_TRANSACTION_COMPLETED = "transaction.completed"
+EVENT_RISK_ALERT_CREATED = "risk.alert.created"
+EVENT_RISK_ALERT_PROCESSING = "risk.alert.processing"
+EVENT_RISK_ALERT_RESOLVED = "risk.alert.resolved"
+EVENT_RISK_ALERT_FALSE_POSITIVE = "risk.alert.false_positive"
+
+# Pending rows produced by an older application version must remain consumable
+# after deployment. Producers only emit the dotted business names above.
+LEGACY_EVENT_TYPE_ALIASES = {
+    "transaction_completed": EVENT_TRANSACTION_COMPLETED,
+    "risk_alert_created": EVENT_RISK_ALERT_CREATED,
+    "risk_alert_processing": EVENT_RISK_ALERT_PROCESSING,
+    "risk_alert_resolved": EVENT_RISK_ALERT_RESOLVED,
+    "risk_alert_false_positive": EVENT_RISK_ALERT_FALSE_POSITIVE,
+}
+
+
+def canonical_event_type(event_type: str) -> str:
+    """Return the stable business event name while accepting legacy outbox rows."""
+    return LEGACY_EVENT_TYPE_ALIASES.get(event_type, event_type)
 
 
 @dataclass(frozen=True)
@@ -173,16 +195,14 @@ async def relay_outbox_once(batch_size: int = 100) -> int:
             occurred_at=str((row.payload or {}).get("occurred_at")),
             payload=dict((row.payload or {}).get("payload") or {}),
         )
-        # The six Agent handlers run in this application. Execute them from the
-        # durable outbox and mark publication only after their work completes;
-        # Redis Pub/Sub cannot acknowledge an offline consumer.
-        from app.service.event_bus import handle_domain_event
+        # The outbox is the durable source. Redis is the real-time fan-out layer;
+        # logical consumers claim their own delivery after receiving the event.
+        from app.service.event_bus import publish_domain_event
 
         delivered = False
-        delivery_error = "Domain handler failed; retained for retry"
+        delivery_error = "Redis publication failed; retained for retry"
         try:
-            await handle_domain_event(event)
-            delivered = True
+            delivered = await publish_domain_event(event)
         except Exception as exc:
             delivery_error = str(exc)[:1000]
         async with async_session_factory() as db:
@@ -190,15 +210,33 @@ async def relay_outbox_once(batch_size: int = 100) -> int:
             if not record:
                 continue
             if delivered:
-                record.status = "published"
-                record.published_at = datetime.now()
-                record.last_error = None
-                published += 1
+                # A fast consumer failure may already have returned this row to
+                # pending. Never overwrite that retry request with published.
+                if record.status == "publishing":
+                    record.status = "published"
+                    record.published_at = datetime.now()
+                    record.last_error = None
+                    published += 1
             else:
                 record.status = "pending"
                 record.last_error = delivery_error
             await db.commit()
     return published
+
+
+async def mark_outbox_for_retry(event_id: str, error: str) -> None:
+    """Return a broadcast event to the relay when a logical consumer fails."""
+    from app.config.database import async_session_factory
+    from app.model.entities import AgentEventOutbox
+
+    async with async_session_factory() as db:
+        record = await db.get(AgentEventOutbox, event_id, with_for_update=True)
+        if not record:
+            return
+        record.status = "pending"
+        record.claimed_at = None
+        record.last_error = str(error)[:1000]
+        await db.commit()
 
 
 async def run_outbox_relay(poll_seconds: float = 1.0) -> None:

@@ -142,14 +142,21 @@ class _HandleDb:
     def __init__(self, alert, work_order):
         self.results = [_ScalarResult(alert), _ScalarResult(work_order)]
         self.flush = AsyncMock()
+        self.added = []
 
     async def execute(self, *args, **kwargs):
-        return self.results.pop(0)
+        if self.results:
+            return self.results.pop(0)
+        return _ScalarResult(None)
+
+    def add(self, value):
+        self.added.append(value)
 
 
 class AlertResolutionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_resolving_alert_closes_work_order_and_pending_marker(self):
+    async def test_resolving_alert_closes_work_order_and_enqueues_restore_event(self):
         from app.service.risk_monitor_service import RiskMonitorService
+        from app.service.agent_event_service import EVENT_RISK_ALERT_RESOLVED
 
         alert = SimpleNamespace(
             id=88,
@@ -165,20 +172,15 @@ class AlertResolutionTests(unittest.IsolatedAsyncioTestCase):
         )
         work_order = SimpleNamespace(status="处理中", current_node="待处理")
         db = _HandleDb(alert, work_order)
-        redis = SimpleNamespace(srem=AsyncMock())
-
-        with patch(
-            "app.config.database.get_redis",
-            new=AsyncMock(return_value=redis),
-        ):
-            result = await RiskMonitorService().handle_alert(
-                db, "88", "resolved", 2, "已核实"
-            )
+        result = await RiskMonitorService().handle_alert(
+            db, "88", "resolved", 2, "已核实"
+        )
 
         self.assertEqual("resolved", result["status"])
         self.assertEqual("已完成", work_order.status)
         self.assertEqual("已关闭", work_order.current_node)
-        redis.srem.assert_awaited_once_with("risk:alert:pending", "88")
+        self.assertEqual(EVENT_RISK_ALERT_RESOLVED, db.added[0].event_type)
+        self.assertEqual(5, db.added[0].customer_id)
 
 
 class WorkOrderClosureTests(unittest.IsolatedAsyncioTestCase):

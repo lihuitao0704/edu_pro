@@ -10,6 +10,7 @@ Router Agent — 统一路由层
 所有业务问题由下游 Agent 处理。
 """
 
+import asyncio
 import uuid
 from typing import Optional
 
@@ -31,6 +32,10 @@ INTENT_TO_AGENT = {
     "risk_control": "risk_monitor",
     "data_analysis": "nl2sql",
     "business_operation": "operator",
+    "customer_account_query": "customer_account",
+    "customer_risk_explanation": "customer_account",
+    "customer_recommendation_explanation": "customer_account",
+    "customer_transaction_guidance": "customer_account",
     "clarification": "router",
 }
 
@@ -77,7 +82,7 @@ class RouterAgent:
 
         # ── Step 0: 风控预检（C4联动）──
         # 对于有预警的客户，敏感操作强制走客服Agent路径，确保风控提示能触达
-        risk_intercept = await self._risk_precheck(message, user_id)
+        risk_intercept = await self._risk_precheck(message, user_id, user_role)
         if risk_intercept:
             logger.info(
                 f"风控预检拦截 | user={user_id} | msg={message[:50]}... | "
@@ -184,6 +189,12 @@ class RouterAgent:
         # 员工角色必须显式选择或解析客户，不能误用自己的员工账号。
         if agent_name == "advisor" and not customer_id and user_role == "客户":
             customer_id = user_id
+            decision.entities["customer_id"] = user_id
+            params["customer_id"] = user_id
+        if agent_name == "customer_account" and user_role == "客户":
+            customer_id = user_id
+            decision.entities["customer_id"] = user_id
+            params["customer_id"] = user_id
 
         # ── Step 3: 分发给业务 Agent ──
         try:
@@ -206,6 +217,10 @@ class RouterAgent:
             elif agent_name == "operator":
                 result = await self._dispatch_operator(
                     message, session_id, user_id, user_role
+                )
+            elif agent_name == "customer_account":
+                result = await self._dispatch_customer_account(
+                    message, user_id, decision
                 )
             else:
                 result = {"reply": f"未知Agent: {agent_name}", "data": None}
@@ -251,17 +266,80 @@ class RouterAgent:
         user_role: str,
         context: dict | None,
     ) -> UnifiedChatResponse:
-        """Execute validated read-only subtasks sequentially and aggregate safely."""
+        """Execute validated read-only subtasks with bounded parallel latency."""
         task_results: list[dict] = []
         sections: list[str] = []
         merged_data: dict = {}
-
-        for index, raw_decision in enumerate(plan.tasks, start=1):
-            decision = get_route_validator().validate(
+        validated_tasks = [
+            get_route_validator().validate(
                 raw_decision,
                 user_role=user_role,
                 context=context,
             )
+            for raw_decision in plan.tasks
+        ]
+        parallel_responses: dict[int, UnifiedChatResponse] = {}
+
+        # A shared AsyncSession cannot run concurrent statements. Runtime plans
+        # therefore use one short-lived session per read-only subtask. Unit-test
+        # doubles keep the original in-instance path so patched dispatchers remain
+        # observable.
+        if isinstance(self.db, AsyncSession):
+            from app.config.database import async_session_factory
+
+            async def execute_read_task(
+                index: int, decision: RouteDecision
+            ) -> tuple[int, UnifiedChatResponse]:
+                try:
+                    async with async_session_factory() as task_db:
+                        task_router = RouterAgent(task_db)
+                        response = await asyncio.wait_for(
+                            task_router.route(
+                                decision.request_text,
+                                session_id=session_id,
+                                user_id=user_id,
+                                user_role=user_role,
+                                context=context,
+                                route_decision=decision,
+                            ),
+                            timeout=45,
+                        )
+                        await task_db.commit()
+                        return index, response
+                except asyncio.TimeoutError:
+                    return index, UnifiedChatResponse(
+                        intent="task_timeout",
+                        agent="router_supervisor",
+                        confidence=decision.confidence,
+                        session_id=session_id,
+                        reply="该子任务处理时间较长，已停止等待。您可以稍后单独重试这项查询。",
+                        data={"timeout_seconds": 45},
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "复合任务执行失败 | index=%s | error=%s",
+                        index,
+                        type(exc).__name__,
+                        exc_info=True,
+                    )
+                    return index, UnifiedChatResponse(
+                        intent="task_error",
+                        agent="router_supervisor",
+                        confidence=decision.confidence,
+                        session_id=session_id,
+                        reply="该子任务暂时无法完成，其他任务不受影响。",
+                        data={"error_type": type(exc).__name__},
+                    )
+
+            runnable = [
+                execute_read_task(index, decision)
+                for index, decision in enumerate(validated_tasks, start=1)
+                if decision.task != RouteTask.EXECUTE
+            ]
+            if runnable:
+                parallel_responses = dict(await asyncio.gather(*runnable))
+
+        for index, decision in enumerate(validated_tasks, start=1):
             title = f"{decision.task.value} · {decision.domain.value}"
 
             if decision.task == RouteTask.EXECUTE:
@@ -280,17 +358,23 @@ class RouterAgent:
                 sections.append(f"### {index}. {title}\n{reply}")
                 continue
 
-            response = await self.route(
-                decision.request_text,
-                session_id=session_id,
-                user_id=user_id,
-                user_role=user_role,
-                context=context,
-                route_decision=decision,
-            )
+            response = parallel_responses.get(index)
+            if response is None:
+                response = await self.route(
+                    decision.request_text,
+                    session_id=session_id,
+                    user_id=user_id,
+                    user_role=user_role,
+                    context=context,
+                    route_decision=decision,
+                )
             status = (
                 "blocked"
                 if response.intent == "access_denied"
+                else "timeout"
+                if response.intent == "task_timeout"
+                else "error"
+                if response.intent == "task_error"
                 else "needs_clarification"
                 if response.intent == "clarification"
                 else "completed"
@@ -380,6 +464,57 @@ class RouterAgent:
         user_role: str = "",
     ) -> dict:
         """分发到投顾 Agent"""
+        if customer_id is None and any(
+            marker in message for marker in ("稳健型", "低风险", "保守型")
+        ):
+            from sqlalchemy import text
+
+            rows = (
+                await self.db.execute(
+                    text(
+                        "SELECT product_code, product_name, product_type, risk_level, "
+                        "expected_return, min_amount, term_days "
+                        "FROM fin_product "
+                        "WHERE status = '在售' AND risk_level IN ('R1', 'R2') "
+                        "ORDER BY risk_level ASC, expected_return DESC "
+                        "LIMIT 3"
+                    )
+                )
+            ).mappings().all()
+            recommendations = [
+                {
+                    "product_code": row["product_code"],
+                    "product_name": row["product_name"],
+                    "product_type": row["product_type"],
+                    "risk_level": row["risk_level"],
+                    "expected_return": float(row["expected_return"] or 0),
+                    "min_amount": float(row["min_amount"] or 0),
+                    "term_days": row["term_days"],
+                    "reason": "按在售状态及 R1-R2 风险范围筛选。",
+                }
+                for row in rows
+            ]
+            if recommendations:
+                lines = [
+                    "以下是未绑定具体客户的通用低风险产品筛选结果：",
+                    *[
+                        f"{index}. **{item['product_name']}**"
+                        f"（{item['risk_level']} · {item['product_type']}，"
+                        f"起投 {item['min_amount']:,.2f} 元）"
+                        for index, item in enumerate(recommendations, start=1)
+                    ],
+                    "\n如需个性化推荐，请提供真实客户ID，系统会继续执行画像、"
+                    "预警和适当性校验。",
+                    "\n投资有风险，入市需谨慎。以上内容不构成投资建议。",
+                ]
+                return {
+                    "reply": "\n".join(lines),
+                    "data": {
+                        "recommendations": recommendations,
+                        "recommendation_scope": "generic_r1_r2_screening",
+                    },
+                }
+
         from app.agent.advisor_agent import AdvisorAgent
         agent = AdvisorAgent(self.db, session_id, actor_id=user_id)
         # 如果消息中没有 customer_id 上下文，自动注入
@@ -483,6 +618,20 @@ class RouterAgent:
             },
         }
 
+    async def _dispatch_customer_account(
+        self, message: str, user_id: int, decision: RouteDecision
+    ) -> dict:
+        """Serve only the authenticated customer's own account data."""
+        from app.service.customer_account_service import CustomerAccountService
+
+        service = CustomerAccountService(self.db)
+        return await service.answer(
+            message,
+            customer_id=user_id,
+            intent=decision.intent,
+            entities=decision.entities,
+        )
+
     # ═══════════════════════════════════════════════════════════════
     # C4 风控预检
     # ═══════════════════════════════════════════════════════════════
@@ -494,7 +643,9 @@ class RouterAgent:
         "大额申购", "大额买入", "大笔买入",
     ]
 
-    async def _risk_precheck(self, message: str, user_id: int) -> Optional[dict]:
+    async def _risk_precheck(
+        self, message: str, user_id: int, user_role: str = "客户"
+    ) -> Optional[dict]:
         """
         C4 风控预检：在路由前检查是否需要拦截
 
@@ -506,8 +657,20 @@ class RouterAgent:
         Returns:
             命中时返回 {"risk_flag": "high"|"warning"}，未命中返回 None
         """
-        # 1. 检查消息是否包含敏感关键词
+        if user_role != "客户":
+            return None
+
+        # Only intercept a concrete transaction request. Questions and vague
+        # intent such as "我想申购" must first receive guidance, not a hard block.
         has_sensitive = any(kw in message for kw in self._SENSITIVE_PATTERNS)
+        has_amount = bool(
+            __import__("re").search(r"\d+(?:\.\d+)?\s*(?:万|万元|元|份)", message)
+        )
+        has_execute_marker = any(
+            marker in message
+            for marker in ("确认", "立即", "马上", "提交", "执行", "现在就")
+        )
+        has_sensitive = has_sensitive and has_amount and has_execute_marker
         if not has_sensitive:
             return None
 

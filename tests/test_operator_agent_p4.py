@@ -115,36 +115,39 @@ class TestDailyRedeemCount:
 
 class TestContactFormat:
     def test_valid_phone(self):
-        result = _check_contact_format("phone", "13900001234")
-        assert result is None
+        error, normalized = _check_contact_format("phone", "13900001234")
+        assert error is None
+        assert normalized == "13900001234"
 
     def test_invalid_phone_short(self):
-        result = _check_contact_format("phone", "1390000123")
-        assert result is not None
-        assert "格式错误" in result
+        error, _ = _check_contact_format("phone", "1390000123")
+        assert error is not None
+        assert "格式错误" in error
 
     def test_invalid_phone_prefix(self):
-        result = _check_contact_format("phone", "23900001234")
-        assert result is not None
-        assert "格式错误" in result
+        error, _ = _check_contact_format("phone", "23900001234")
+        assert error is not None
+        assert "格式错误" in error
 
     def test_valid_email(self):
-        result = _check_contact_format("email", "test@example.com")
-        assert result is None
+        error, normalized = _check_contact_format("email", "test@example.com")
+        assert error is None
+        assert normalized == "test@example.com"
 
     def test_invalid_email(self):
-        result = _check_contact_format("email", "not-an-email")
-        assert result is not None
-        assert "格式错误" in result
+        error, _ = _check_contact_format("email", "not-an-email")
+        assert error is not None
+        assert "格式错误" in error
 
     def test_empty_value(self):
-        result = _check_contact_format("phone", "")
-        assert result is not None
-        assert "不能为空" in result
+        error, _ = _check_contact_format("phone", "")
+        assert error is not None
+        assert "不能为空" in error
 
     def test_unknown_field_passes(self):
-        result = _check_contact_format("address", "上海市")
-        assert result is None
+        error, normalized = _check_contact_format("address", "上海市")
+        assert error is None
+        assert normalized == "上海市"
 
 
 class TestMinRemainingShares:
@@ -221,7 +224,10 @@ class TestP4Integration:
     async def test_update_contact_invalid_phone(self):
         """update_contact 校验无效手机号应阻断"""
         with patch("app.agent.operator_agent.resolve_customer_id", return_value=1), \
-             patch("app.agent.operator_agent._check_contact_format", return_value="手机号格式错误"):
+             patch(
+                 "app.agent.operator_agent._check_contact_format",
+                 return_value=("手机号格式错误", "123"),
+             ):
             result = await execute_tool("update_contact", {
                 "customer_name": "张三",
                 "field": "phone",
@@ -286,7 +292,7 @@ class TestP4Integration:
              patch("app.agent.operator_agent._check_pending_risk_alerts", return_value=None), \
              patch("app.agent.operator_agent._check_trading_hours", return_value=None), \
              patch("app.agent.operator_agent.redeem_product", new=AsyncMock(return_value=mock_api_result)), \
-             patch("app.config.database.async_session_factory") as mock_factory:
+             patch("app.agent.operator_agent.async_session_factory") as mock_factory:
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_db
             mock_ctx.__aexit__.return_value = None

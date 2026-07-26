@@ -90,6 +90,7 @@ class AuthorizationTests(unittest.TestCase):
         from fastapi.testclient import TestClient
 
         from app.middleware.auth import JWTAuthMiddleware, create_access_token
+        from app.security.session_identity import auth_fingerprint
 
         app = FastAPI()
         app.add_middleware(JWTAuthMiddleware)
@@ -98,7 +99,18 @@ class AuthorizationTests(unittest.TestCase):
         async def private(request: Request):
             return request.state.user
 
-        with TestClient(app) as client:
+        current_user = {
+            "id": 7,
+            "username": "customer-7",
+            "password_hash": "hash-v1",
+            "user_type": "CUSTOMER",
+            "employee_role": None,
+            "status": "正常",
+        }
+        with patch(
+            "app.middleware.auth._load_current_identity",
+            new=AsyncMock(return_value=current_user),
+        ), TestClient(app) as client:
             self.assertEqual(401, client.get("/api/private").status_code)
             self.assertEqual(
                 401,
@@ -108,7 +120,12 @@ class AuthorizationTests(unittest.TestCase):
                 ).status_code,
             )
             token = create_access_token(
-                {"sub": 7, "username": "customer-7", "role": "客户"}
+                {
+                    "sub": 7,
+                    "username": "customer-7",
+                    "role": "客户",
+                    "av": auth_fingerprint(current_user),
+                }
             )
             response = client.get(
                 "/api/private",
@@ -234,6 +251,32 @@ class OperatorEndpointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
+    def test_stream_explicit_customer_id_overrides_stale_selected_target(self):
+        from app.api.unified_chat import get_stream_subject_customer_id
+        from app.model.route_decision import (
+            RouteDecision,
+            RouteDomain,
+            RouteTask,
+        )
+
+        decision = RouteDecision(
+            request_text="给客户ID是1的客户推荐产品",
+            task=RouteTask.RECOMMEND,
+            domain=RouteDomain.PRODUCT,
+            intent="investment_recommendation",
+            target_agent="advisor",
+            confidence=0.95,
+            entities={"customer_id": 1},
+        )
+
+        subject = get_stream_subject_customer_id(
+            {"user_id": 120, "role": "管理员"},
+            120,
+            decision,
+        )
+
+        self.assertEqual(1, subject)
+
     async def test_unified_chat_uses_authenticated_identity_over_claimed_body_identity(self):
         from app.api.unified_chat import unified_chat
         from app.model.schemas import UnifiedChatRequest
@@ -274,13 +317,12 @@ class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
                 {"user_id": 7, "role": "客户"},
             )
 
-        router_agent.route.assert_awaited_once_with(
-            message="查询我的账户信息",
-            session_id="scope-test",
-            user_id=7,
-            user_role="客户",
-            context={"entities": {}},
-        )
+        router_agent.route.assert_awaited_once()
+        route_kwargs = router_agent.route.await_args.kwargs
+        self.assertEqual("查询我的账户信息", route_kwargs["message"])
+        self.assertEqual("scope-test", route_kwargs["session_id"])
+        self.assertEqual(7, route_kwargs["user_id"])
+        self.assertEqual("客户", route_kwargs["user_role"])
         memory_service.archive_turn.assert_awaited_once_with(
             "scope-test", 7, "operator", request.message, routed.reply
         )

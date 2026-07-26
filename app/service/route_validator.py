@@ -12,11 +12,15 @@ AGENT_BY_INTENT = {
     "risk_control": "risk_monitor",
     "data_analysis": "nl2sql",
     "business_operation": "operator",
+    "customer_account_query": "customer_account",
+    "customer_risk_explanation": "customer_account",
+    "customer_recommendation_explanation": "customer_account",
+    "customer_transaction_guidance": "customer_account",
     "clarification": "router",
 }
 
 ROLE_ALLOWED_AGENTS = {
-    "客户": {"customer_service", "advisor", "operator"},
+    "客户": {"customer_service", "advisor", "customer_account"},
     "理财顾问": {"customer_service", "advisor", "nl2sql", "operator"},
     "客户经理": {"customer_service", "advisor", "nl2sql", "operator"},
     "风控专员": {"customer_service", "risk_monitor", "nl2sql", "operator"},
@@ -67,6 +71,21 @@ class RouteValidator:
         context: dict | None = None,
     ) -> RouteDecision:
         validated = decision.model_copy(deep=True)
+
+        # A customer's operation wording expresses an intent, not authority to
+        # invoke an employee-side write tool. Convert it to a safe transaction
+        # draft/guidance flow instead of returning a blunt RBAC denial.
+        if user_role == "客户" and (
+            validated.task == RouteTask.EXECUTE
+            or validated.target_agent == "operator"
+        ):
+            validated.intent = "customer_transaction_guidance"
+            validated.target_agent = "customer_account"
+            validated.requires_confirmation = False
+            validated.validation_notes.append(
+                "customer operation converted to transaction guidance"
+            )
+
         expected_agent = AGENT_BY_INTENT.get(validated.intent)
 
         if expected_agent and expected_agent != validated.target_agent:
@@ -87,7 +106,10 @@ class RouteValidator:
             validated.validation_notes.append("role permission denied")
             return validated
 
-        if validated.task == RouteTask.EXECUTE:
+        if (
+            validated.task == RouteTask.EXECUTE
+            and validated.target_agent == "operator"
+        ):
             validated.requires_confirmation = True
 
         if validated.task == RouteTask.UNKNOWN:

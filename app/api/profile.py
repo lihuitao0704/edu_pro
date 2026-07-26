@@ -109,9 +109,19 @@ async def get_profile(
         # 获取基础画像数据
         profile_data = service._profile_to_dict(profile)
 
-        # 追加 AML 风险等级（实时计算，不缓存）
-        aml_info = await service.get_aml_risk_level(customer_id)
-        profile_data.update(aml_info)
+        # AML enrichment is useful but must not make the core profile endpoint
+        # unavailable when its dependent query is temporarily degraded.
+        try:
+            aml_info = await service.get_aml_risk_level(customer_id)
+            profile_data.update(aml_info)
+        except Exception as exc:
+            logger.warning(
+                "AML画像补充失败 | customer_id=%s | error=%s",
+                customer_id,
+                type(exc).__name__,
+            )
+            profile_data["aml_risk_level"] = "unknown"
+            profile_data["aml_status"] = "temporarily_unavailable"
 
         return success(data=profile_data)
     except HTTPException:

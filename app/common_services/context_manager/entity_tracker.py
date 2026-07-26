@@ -122,6 +122,18 @@ class EntityTracker:
                 else result["amount_value"]
             )
 
+        term_match = re.search(r"(\d+)\s*(年|个月|月|天)", message)
+        if term_match:
+            value = int(term_match.group(1))
+            unit = term_match.group(2)
+            result["term_days"] = (
+                value * 365
+                if unit == "年"
+                else value * 30
+                if unit in {"个月", "月"}
+                else value
+            )
+
         return result
 
     def _extract_product(

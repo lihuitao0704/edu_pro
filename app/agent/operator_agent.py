@@ -36,6 +36,10 @@ from app.tool.graph_query_tool import (
     resolve_product_id,
 )
 from app.service.event_bus import publish_operation_event
+from app.service.suitability_policy import (
+    SuitabilityDecision,
+    evaluate_suitability,
+)
 from app.memory.session_memory import SessionMemory
 from app.utils.data_masking import mask_text
 from app.config.database import async_session_factory, get_redis
@@ -82,35 +86,39 @@ _CONFIRM_RE = re.compile(
     r"(?:\s*(?:[,，:：]?\s*)备注\s*[:：]\s*(?P<note>.+))?$",
     re.IGNORECASE,
 )
+_DISCLOSURE_CONFIRM_RE = re.compile(
+    r"^(?:确认风险揭示|已阅读并同意风险揭示)"
+    r"(?:\s*(?:[,，:：]?\s*)备注\s*[:：]\s*(?P<note>.+))?$",
+    re.IGNORECASE,
+)
 
 # 审计日志查询 transaction_type 白名单
 _TRANSACTION_TYPE_WHITELIST = {"purchase", "redeem", "transfer_out", "transfer_in"}
 
 # ==================== 适当性匹配矩阵 ====================
-# 按设计文档《个人投资者适当性管理指南》§12
-_SUITABILITY_MAP = {
-    "C1": ["R1", "R2"],
-    "C2": ["R1", "R2", "R3"],
-    "C3": ["R1", "R2", "R3", "R4"],
-    "C4": ["R1", "R2", "R3", "R4", "R5"],
-    "C5": ["R1", "R2", "R3", "R4", "R5"],
-    "保守型": ["R1", "R2"],
-    "稳健型": ["R1", "R2", "R3"],
-    "平衡型": ["R1", "R2", "R3", "R4"],
-    "进取型": ["R1", "R2", "R3", "R4", "R5"],
-    "激进型": ["R1", "R2", "R3", "R4", "R5"],
-}
-
-# 豁免规则：C3→R4 / C4→R5 需签署风险揭示书（非阻断警告）
-_SUITABILITY_EXEMPTION = {
-    "C3": {"R4": "C3平衡型投资者购买R4中高风险产品，须签署《产品风险超越投资者风险承受能力揭示书》，且单只R4产品持仓不超过总资产20%"},
-    "C4": {"R5": "C4进取型投资者购买R5高风险产品，须签署《产品风险超越投资者风险承受能力揭示书》，且单只R5产品持仓不超过总资产10%"},
-}
-
 _RISK_LEVEL_NORMALIZE = {
     "保守型": "C1", "稳健型": "C2", "平衡型": "C3", "进取型": "C4", "激进型": "C5",
     "R1": "C1", "R2": "C2", "R3": "C3", "R4": "C4", "R5": "C5",
 }
+
+# Backwards-compatible view used by existing diagnostics/tests. Decisions are
+# evaluated by app.service.suitability_policy, which is also used by the API.
+_SUITABILITY_MAP = {
+    level: list(evaluate_suitability(level, "R1").allowed_product_levels)
+    for level in ("C1", "C2", "C3", "C4", "C5")
+}
+_SUITABILITY_MAP.update(
+    {
+        name: _SUITABILITY_MAP[level]
+        for name, level in {
+            "保守型": "C1",
+            "稳健型": "C2",
+            "平衡型": "C3",
+            "进取型": "C4",
+            "激进型": "C5",
+        }.items()
+    }
+)
 
 
 def _safe_float(value, field: str = "金额") -> tuple[float, Optional[str]]:
@@ -146,7 +154,8 @@ _CONFIRM_TTL = 120
 async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
                                  user_id: int, user_role: str,
                                  note_required: bool = False,
-                                 estimated_amount: float = 0) -> bool:
+                                 estimated_amount: float = 0,
+                                 risk_disclosure: dict | None = None) -> bool:
     """将待确认操作存入 Redis。note_required: 大额(>=50万)是否强制要求备注。"""
     try:
         r = await get_redis()
@@ -157,6 +166,7 @@ async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
             json.dumps({"action": action, "arguments": arguments,
                         "user_id": user_id, "user_role": user_role,
                         "summary": summary, "note_required": note_required,
+                        "risk_disclosure": risk_disclosure,
                         "session_id": session_id}),
         )
         return True
@@ -208,6 +218,46 @@ def _build_confirmation_summary(action: str, arguments: dict,
             summary += "\n⚠️ 大额操作，请回复'确认 备注：<原因>'（如：确认 备注：内部资金调拨）"
         return summary
     return f"执行 {action}，参数 {arguments}"
+
+
+async def _resolve_purchase_disclosure(arguments: dict) -> dict | None:
+    """Resolve whether a purchase needs explicit suitability disclosure."""
+    customer_name = arguments.get("customer_name", "")
+    product_name = arguments.get("product_name", "")
+    if not customer_name or not product_name:
+        return None
+    customer_id = await resolve_customer_id(customer_name)
+    product_id = await resolve_product_id(product_name)
+    if not customer_id or not product_id:
+        return None
+    async with async_session_factory() as db:
+        decision = await _get_suitability_decision(customer_id, product_id, db)
+    if decision is None or not decision.disclosure_required:
+        return None
+    disclosure = decision.to_dict()
+    disclosure["text"] = decision.disclosure_text
+    disclosure["customer_id"] = customer_id
+    disclosure["product_id"] = product_id
+    return disclosure
+
+
+def _build_disclosure_ack(
+    disclosure: dict,
+    *,
+    operator_id: int,
+) -> dict:
+    return {
+        "accepted": True,
+        "rule_version": disclosure["rule_version"],
+        "rule_code": disclosure["rule_code"],
+        "customer_level": disclosure["customer_level"],
+        "product_level": disclosure["product_level"],
+        "document": disclosure["disclosure_document"],
+        "max_position_ratio": disclosure["max_position_ratio"],
+        "acknowledged_at": datetime.now().isoformat(timespec="seconds"),
+        "acknowledged_by": operator_id,
+        "acknowledgement_source": "operator_chat",
+    }
 
 # ==================== RBAC 权限矩阵 ====================
 
@@ -404,16 +454,26 @@ async def _check_suitability_combined(customer_id: int, product_id: int, db) -> 
     product_level = await _get_product_risk_level(product_id, db)
     if not product_level:
         return None, None
-    allowed_levels = _SUITABILITY_MAP.get(customer_level, [])
-    if product_level not in allowed_levels:
+    decision = evaluate_suitability(customer_level, product_level)
+    if not decision.allowed:
         return (f"⚠️ 适当性不匹配：客户风险等级 {customer_level}，"
                 f"产品风险等级 {product_level}，"
-                f"允许购买 {', '.join(allowed_levels)} 级别产品"), None
-    exemption_rules = _SUITABILITY_EXEMPTION.get(customer_level, {})
-    warning_text = exemption_rules.get(product_level)
-    if warning_text:
-        return None, f"⚠️ 豁免购买提示：{warning_text}"
+                f"允许购买 {', '.join(decision.allowed_product_levels)} 级别产品"), None
+    if decision.disclosure_required:
+        return None, f"⚠️ 风险揭示要求：{decision.disclosure_text}"
     return None, None
+
+
+async def _get_suitability_decision(
+    customer_id: int,
+    product_id: int,
+    db,
+) -> SuitabilityDecision | None:
+    customer_level = await _get_customer_risk_level(customer_id, db)
+    product_level = await _get_product_risk_level(product_id, db)
+    if not customer_level or not product_level:
+        return None
+    return evaluate_suitability(customer_level, product_level)
 
 
 async def _check_product_status(product_id: int, operation: str, db) -> Optional[str]:
@@ -778,6 +838,13 @@ async def _create_audit_work_order(action: str, arguments: dict, data: dict,
         note = arguments.get("operator_note", "")
         if note:
             detail += f"，操作员备注：{note}"
+        disclosure_ack = arguments.get("risk_disclosure_ack")
+        if isinstance(disclosure_ack, dict) and disclosure_ack.get("accepted"):
+            detail += (
+                f"，风险揭示已确认：{disclosure_ack.get('rule_code', '')}"
+                f"/{disclosure_ack.get('rule_version', '')}"
+                f"@{disclosure_ack.get('acknowledged_at', '')}"
+            )
 
         wo_no = f"AUD{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
         biz_json = json.dumps({
@@ -905,7 +972,16 @@ async def _tool_purchase(arguments: dict, operator_id: int | None) -> dict:
             risk_warnings.append(w)
 
         result = await purchase_product(
-            body={"customer_id": cid, "product_id": pid, "amount": amount, "operator_id": operator_id}, db=db)
+            body={
+                "customer_id": cid,
+                "product_id": pid,
+                "amount": amount,
+                "operator_id": operator_id,
+                "risk_disclosure_ack": arguments.get("risk_disclosure_ack"),
+                "operator_note": arguments.get("operator_note", ""),
+            },
+            db=db,
+        )
         msg = result.message
         if result.code == 200 and trading_warn:
             msg = f"{msg}（{trading_warn}）"
@@ -1441,17 +1517,39 @@ async def operator_chat(
     msg_stripped = message.strip()
 
     # 0. 确认/取消
-    _is_confirm = bool(_CONFIRM_RE.match(msg_stripped))
-    _note_match = _CONFIRM_RE.match(msg_stripped)
+    _disclosure_match = _DISCLOSURE_CONFIRM_RE.match(msg_stripped)
+    _note_match = _disclosure_match or _CONFIRM_RE.match(msg_stripped)
+    _is_confirm = bool(_note_match)
     _parsed_note = _note_match.group("note").strip() if _note_match and _note_match.group("note") else ""
 
     if _is_confirm:
         pending = await _load_pending_confirm(session_id, user_id)
         if pending:
+            risk_disclosure = pending.get("risk_disclosure")
+            if risk_disclosure and not _disclosure_match:
+                reply = (
+                    f"⚠️ 本次申购需要客户明确确认风险揭示：\n"
+                    f"{risk_disclosure.get('text', '')}\n\n"
+                    "请在客户已阅读并同意后回复“确认风险揭示”；"
+                    "如同时需要大额备注，请回复“确认风险揭示 备注：<原因>”。"
+                )
+                await memory.add_message("assistant", reply)
+                return {
+                    "reply": reply,
+                    "action": pending["action"],
+                    "params": pending["arguments"],
+                    "status": "disclosure_required",
+                    "session_id": session_id,
+                }
             note_required = pending.get("note_required", False)
             if note_required and not _parsed_note:
                 reply = ("⚠️ 该操作金额超过 50 万元，请回复备注原因。\n"
                          "格式：确认 备注：<原因>\n例如：确认 备注：客户主动要求购买")
+                if risk_disclosure:
+                    reply = (
+                        "⚠️ 该操作同时需要风险揭示确认和大额备注。\n"
+                        "格式：确认风险揭示 备注：<原因>"
+                    )
                 await memory.add_message("assistant", reply)
                 return {"reply": reply, "action": pending["action"],
                         "params": pending["arguments"], "status": "note_required", "session_id": session_id}
@@ -1459,6 +1557,11 @@ async def operator_chat(
             await _delete_pending_confirm(session_id, user_id)
             action = pending["action"]
             arguments = pending["arguments"]
+            if risk_disclosure:
+                arguments["risk_disclosure_ack"] = _build_disclosure_ack(
+                    risk_disclosure,
+                    operator_id=pending["user_id"],
+                )
             if _parsed_note:
                 arguments["operator_note"] = _parsed_note
             summary = pending.get("summary", _build_confirmation_summary(action, arguments))
@@ -1542,7 +1645,8 @@ async def operator_chat(
             actions_taken.append({"action": action, "status": "permission_denied"})
             continue
 
-        # 6. 二次确认（赎回按估算金额判断）
+        # 6. 二次确认（赎回按估算金额判断；越级适当性购买必须确认风险揭示）
+        risk_disclosure = None
         if action == "redeem_product":
             shares_val, amt_err = _safe_float(arguments.get("shares", 0), "赎回份额")
             if amt_err:
@@ -1569,21 +1673,34 @@ async def operator_chat(
                 replies.append(f"⚠️ {amt_err}，无法执行 {action}")
                 actions_taken.append({"action": action, "status": "param_error"})
                 continue
+            if action == "purchase_product":
+                risk_disclosure = await _resolve_purchase_disclosure(arguments)
 
-        if needs_confirmation(action, confirm_value):
+        if needs_confirmation(action, confirm_value) or risk_disclosure:
             note_required = confirm_value >= _LARGE_AMOUNT_NOTE_THRESHOLD
             # 赎回的 confirm_value 是估算金额，传入 summary 生成大额备注提示
             est_amt = confirm_value if action == "redeem_product" else 0
             saved = await _save_pending_confirm(
                 session_id, action, arguments, user_id, user_role,
-                note_required=note_required, estimated_amount=est_amt)
+                note_required=note_required, estimated_amount=est_amt,
+                risk_disclosure=risk_disclosure)
             if not saved:
                 replies.append(f"系统暂忙，无法处理大额 {action} 操作，请稍后再试")
                 actions_taken.append({"action": action, "status": "system_error"})
                 continue
             summary = _build_confirmation_summary(action, arguments, estimated_amount=est_amt)
             pending_count = len(msg.tool_calls) - len(actions_taken) - 1
-            reply = f"⚠️ 大额操作需确认：{summary}\n\n请回复 '确认' 执行，或 '取消' 放弃。"
+            if risk_disclosure:
+                reply = (
+                    f"⚠️ 本次申购需要风险揭示确认：{summary}\n\n"
+                    f"{risk_disclosure['text']}\n\n"
+                    "请在客户已阅读并同意后回复“确认风险揭示”，"
+                    "或回复“取消”放弃。"
+                )
+                if note_required:
+                    reply += "\n大额操作还需备注，格式：确认风险揭示 备注：<原因>。"
+            else:
+                reply = f"⚠️ 大额操作需确认：{summary}\n\n请回复 '确认' 执行，或 '取消' 放弃。"
             if replies:
                 reply = "\n\n".join(replies) + "\n\n" + reply
             if pending_count > 0:

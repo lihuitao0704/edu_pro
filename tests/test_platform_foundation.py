@@ -11,25 +11,25 @@ class EntityTrackerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual("稳健增长混合A", entity["product_name"])
-        self.assertEqual("session", entity["product_source"])
+        self.assertEqual("session_reference", entity["product_source"])
 
-    def test_session_context_keeps_entities_for_the_next_turn(self):
+    async def test_session_context_keeps_entities_for_the_next_turn(self):
         from app.common_services.context_manager.session_context import SessionContextStore
 
         store = SessionContextStore()
-        store.update("session-1", 7, {"product_name": "稳健增长混合A"})
+        await store.update("session-1", 7, {"product_name": "稳健增长混合A"})
 
-        context = store.get("session-1", 7)
+        context = await store.get("session-1", 7)
 
         self.assertEqual("稳健增长混合A", context["entities"]["product_name"])
 
-    def test_session_context_does_not_return_another_users_entities(self):
+    async def test_session_context_does_not_return_another_users_entities(self):
         from app.common_services.context_manager.session_context import SessionContextStore
 
         store = SessionContextStore()
-        store.update("session-2", 7, {"product_name": "稳健增长混合A"})
+        await store.update("session-2", 7, {"product_name": "稳健增长混合A"})
 
-        self.assertEqual({}, store.get("session-2", 8))
+        self.assertEqual({}, await store.get("session-2", 8))
 
     async def test_memory_manager_restores_persisted_context_for_session_owner(self):
         from types import SimpleNamespace

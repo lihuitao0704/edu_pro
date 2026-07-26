@@ -65,8 +65,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"  Scheduler: 图谱同步重试启动失败 ({e})")
 
-    # 启动事件总线订阅消费者（多 Agent 协作闭环）
-    # 统一订阅者：同时处理 risk_alert → risk_flag(MySQL+Redis) + cache clear + profile_update + work_order_change
+    # 启动事件总线：Outbox 可靠投递 + Redis 广播 + 多 Agent 独立消费者
     event_subscriber_task = None
     event_outbox_task = None
     try:
@@ -75,7 +74,7 @@ async def lifespan(app: FastAPI):
         from app.service.agent_event_service import run_outbox_relay
         event_subscriber_task = asyncio.create_task(start_event_subscriber())
         event_outbox_task = asyncio.create_task(run_outbox_relay())
-        print("  EventBus: 事件订阅消费者已启动（risk_alert + profile_update + work_order_change + graph_sync）")
+        print("  EventBus: Outbox→Redis 广播已启动（画像/投顾/客服/风控独立消费者）")
     except Exception as e:
         print(f"  EventBus: 启动失败 ({e})")
 
@@ -263,14 +262,62 @@ for _name, _prefix in [
         print(f"  [WARN] {_name}路由加载失败: {e}")
 
 
-@app.get("/api/health")
-async def health_check():
+@app.get("/api/health/live")
+async def health_live():
+    """Process liveness only; no dependency calls."""
     return success(data={
+        "status": "alive",
+        "service": "wealth-manager",
+        "version": "1.0.0",
+    })
+
+
+async def _readiness_payload() -> dict:
+    from sqlalchemy import text
+    from app.config.database import async_session_factory, get_redis
+    from app.service.runtime_health_service import get_runtime_health
+
+    checks: dict[str, dict] = {}
+    try:
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        checks["mysql"] = {"status": "ok"}
+    except Exception as exc:
+        checks["mysql"] = {"status": "unavailable", "error_type": type(exc).__name__}
+
+    try:
+        redis = await get_redis()
+        await redis.ping()
+        checks["redis"] = {"status": "ok"}
+    except Exception as exc:
+        checks["redis"] = {"status": "unavailable", "error_type": type(exc).__name__}
+
+    checks.update(get_runtime_health())
+    unavailable = [
+        name
+        for name, detail in checks.items()
+        if detail.get("status") == "unavailable"
+    ]
+    return {
+        "status": "ready" if not unavailable else "degraded",
         "service": "wealth-manager",
         "version": "1.0.0",
         "llm_model": settings.llm.openai_model_chat,
         "auth_mode": "mock" if settings.jwt.mock_mode else "jwt",
-    })
+        "checks": checks,
+        "unavailable": unavailable,
+    }
+
+
+@app.get("/api/health")
+async def health_check():
+    """Backward-compatible readiness response used by the frontend."""
+    return success(data=await _readiness_payload())
+
+
+@app.get("/api/health/ready")
+async def health_ready():
+    return success(data=await _readiness_payload())
 
 
 # ---- 引擎测试（纯逻辑，无需数据库） ----
@@ -397,7 +444,7 @@ def release_workspace_listener(port: int) -> bool:
 
 
 def resolve_server_port(preferred_port: int = 8000) -> int:
-    for port in dict.fromkeys((preferred_port, 8005)):
+    for port in dict.fromkeys((preferred_port, 8001)):
         if is_port_available(port):
             return port
         release_workspace_listener(port)

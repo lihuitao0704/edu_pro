@@ -135,6 +135,8 @@ class LLMTool:
                 if not content.strip():
                     logger.warning(f"LLM 返回空内容 | model={model} | message={message}")
 
+                from app.service.runtime_health_service import mark_llm_success
+                mark_llm_success()
                 return content.strip()
 
             except Exception as e:
@@ -148,6 +150,8 @@ class LLMTool:
                 logger.warning(f"LLM 调用失败（第 {attempt + 1} 次）: {error_detail}")
 
         logger.error(f"LLM 调用最终失败，已重试 {len(self.retry_delays) + 1} 次: {last_error}")
+        from app.service.runtime_health_service import mark_llm_failure
+        mark_llm_failure(last_error)
         raise last_error
 
     async def chat_stream(
@@ -178,9 +182,13 @@ class LLMTool:
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
+            from app.service.runtime_health_service import mark_llm_success
+            mark_llm_success()
 
         except Exception as e:
             logger.error(f"LLM 流式调用失败: {e}")
+            from app.service.runtime_health_service import mark_llm_failure
+            mark_llm_failure(e)
             raise
 
     async def classify(self, prompt: str, temperature: float = 0.1, max_tokens: int = 64) -> str:
@@ -257,7 +265,7 @@ class LLMTool:
         logger.error(f"所有 LLM 调用均失败，返回兜底话术")
         return (
             "抱歉，系统当前繁忙，暂时无法为您提供完整服务。"
-            "建议您稍后重试，或拨打客服热线400-XXX-XXXX咨询人工客服。"
+            "建议您稍后重试，或通过平台人工客服入口提交咨询。"
             "我们正在努力恢复服务，感谢您的耐心等待。"
         )
 

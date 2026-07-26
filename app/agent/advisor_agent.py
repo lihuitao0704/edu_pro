@@ -236,56 +236,9 @@ class AdvisorAgent(BaseAgent):
         """
         customer_id = kwargs.get("customer_id")
         audience_role = str(kwargs.get("audience_role") or "")
-        if customer_id is not None:
-            try:
-                normalized_customer_id = int(customer_id)
-            except (TypeError, ValueError):
-                return {
-                    "reply": f"客户ID {customer_id} 格式无效，请提供有效的数字客户ID。",
-                    "recommendations": [],
-                    "customer_profile": None,
-                    "status": "invalid_customer",
-                    "session_id": self.session_id,
-                }
-
-            identity = (
-                await self.db.execute(
-                    select(
-                        SysUser.user_type,
-                        SysUser.employee_role,
-                        SysUser.status,
-                    ).where(SysUser.id == normalized_customer_id)
-                )
-            ).first()
-            if identity is None:
-                return {
-                    "reply": f"未找到客户ID {normalized_customer_id}，请核对后重试。",
-                    "recommendations": [],
-                    "customer_profile": None,
-                    "status": "invalid_customer",
-                    "session_id": self.session_id,
-                }
-            if str(identity.user_type or "").upper() != "CUSTOMER":
-                role = identity.employee_role or "员工"
-                return {
-                    "reply": (
-                        f"ID {normalized_customer_id} 对应{role}账号，不是客户，"
-                        "不能用于客户画像、产品推荐或业务办理。"
-                    ),
-                    "recommendations": [],
-                    "customer_profile": None,
-                    "status": "invalid_customer",
-                    "session_id": self.session_id,
-                }
-            if str(identity.status or "") != "正常":
-                return {
-                    "reply": f"客户ID {normalized_customer_id} 当前状态异常，暂不能生成产品推荐。",
-                    "recommendations": [],
-                    "customer_profile": None,
-                    "status": "customer_unavailable",
-                    "session_id": self.session_id,
-                }
-            customer_id = normalized_customer_id
+        customer_id, customer_error = await self._validate_customer_id(customer_id)
+        if customer_error:
+            return customer_error
 
         # ── 意图分类（轻量预筛，辅助LLM更快决策）──
         advisor_intent = None
@@ -375,6 +328,8 @@ class AdvisorAgent(BaseAgent):
                 ),
                 timeout=180,
             )
+            from app.service.runtime_health_service import mark_llm_success
+            mark_llm_success()
         except asyncio.TimeoutError:
             logger.warning("AdvisorAgent 执行超时(180s)，返回降级提示")
             try:
@@ -392,13 +347,15 @@ class AdvisorAgent(BaseAgent):
             }
         except Exception as e:
             logger.error(f"AdvisorAgent 执行失败: {e}", exc_info=True)
+            from app.service.runtime_health_service import mark_llm_failure
+            mark_llm_failure(e)
             try:
                 from app.api.admin import inc_metric
                 inc_metric("agent_errors")
             except Exception:
                 pass
             return {
-                "reply": f"投顾服务暂时不可用，请稍后重试。错误详情：{str(e)}",
+                "reply": "当前智能投顾服务繁忙，请稍后重试。您仍可查询持仓、产品和账户信息。",
                 "recommendations": [],
                 "customer_profile": None,
                 "holdings_analysis": None,
@@ -420,7 +377,25 @@ class AdvisorAgent(BaseAgent):
             allocation = None
         holdings_analysis = self._extract_tool_result(result, "analysis_holdings")
         reasoning = self._extract_reasoning(result)
-        if audience_role == "客户" and smart_rec:
+        investment_amount = self._extract_investment_amount(message)
+        investment_plan = None
+        if investment_amount and smart_rec:
+            from app.service.budget_allocation_service import BudgetAllocationService
+            from app.service.advisor_narrative_service import AdvisorNarrativeService
+
+            investment_plan = BudgetAllocationService.build(
+                investment_amount,
+                recommendations,
+                allocation,
+            )
+            smart_rec["investment_plan"] = investment_plan
+            reply = AdvisorNarrativeService.render_budget_plan(
+                smart_rec, investment_plan
+            )
+            reasoning = None
+            if audience_role == "客户":
+                customer_profile = self._customer_profile_summary(customer_profile)
+        elif audience_role == "客户" and smart_rec:
             from app.service.advisor_narrative_service import AdvisorNarrativeService
 
             reply = AdvisorNarrativeService.render_customer(smart_rec)
@@ -461,6 +436,11 @@ class AdvisorAgent(BaseAgent):
 
         customer_id = kwargs.get("customer_id")
         audience_role = str(kwargs.get("audience_role") or "")
+        customer_id, customer_error = await self._validate_customer_id(customer_id)
+        if customer_error:
+            yield {"type": "meta", "agent": "advisor", "session_id": self.session_id}
+            yield {"type": "done", **customer_error}
+            return
 
         # ── 预处理：意图分类 + 记忆召回 + 消息构造（同 execute）──
         cross_session_context = ""
@@ -578,7 +558,12 @@ class AdvisorAgent(BaseAgent):
             pass
         except Exception as e:
             logger.error(f"AdvisorAgent 流式执行失败: {e}", exc_info=True)
-            yield {"type": "error", "message": f"投顾服务暂时不可用：{str(e)}"}
+            from app.service.runtime_health_service import mark_llm_failure
+            mark_llm_failure(e)
+            yield {
+                "type": "error",
+                "message": "当前智能投顾服务繁忙，请稍后重试。您仍可查询持仓、产品和账户信息。",
+            }
             return
 
         # ── 从工具输出提取结构化数据（同 execute 逻辑）──
@@ -608,6 +593,19 @@ class AdvisorAgent(BaseAgent):
             customer_profile = profile_result if profile_result else None
 
         holdings_analysis = _safe_dict(tool_outputs.get("analysis_holdings"))
+        from app.service.runtime_health_service import mark_llm_success
+        mark_llm_success()
+        investment_amount = self._extract_investment_amount(message)
+        investment_plan = None
+        if investment_amount and smart_rec:
+            from app.service.budget_allocation_service import BudgetAllocationService
+
+            investment_plan = BudgetAllocationService.build(
+                investment_amount,
+                recommendations,
+                allocation,
+            )
+            smart_rec["investment_plan"] = investment_plan
 
         # ── 记忆写入 ──
         if self.memory and full_reply:
@@ -623,7 +621,13 @@ class AdvisorAgent(BaseAgent):
         # summary after invoking a recommendation tool.
         from app.service.advisor_narrative_service import AdvisorNarrativeService
         narrative_service = AdvisorNarrativeService()
-        if audience_role == "客户" and smart_rec:
+        if investment_plan and smart_rec:
+            final_reply = narrative_service.render_budget_plan(
+                smart_rec, investment_plan
+            )
+            if audience_role == "客户":
+                customer_profile = self._customer_profile_summary(customer_profile)
+        elif audience_role == "客户" and smart_rec:
             final_reply = narrative_service.render_customer(smart_rec)
             customer_profile = self._customer_profile_summary(customer_profile)
         else:
@@ -643,9 +647,76 @@ class AdvisorAgent(BaseAgent):
             "recommendations": recommendations,
             "customer_profile": customer_profile,
             "allocation": allocation,
+            "investment_plan": investment_plan,
+            "investment_plan": investment_plan,
             "holdings_analysis": holdings_analysis,
             "session_id": self.session_id,
         }
+
+    async def _validate_customer_id(
+        self, customer_id: object
+    ) -> tuple[Optional[int], Optional[dict]]:
+        if customer_id is None:
+            return None, None
+        try:
+            normalized_customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            return None, {
+                "reply": f"客户ID {customer_id} 格式无效，请提供有效的数字客户ID。",
+                "recommendations": [],
+                "customer_profile": None,
+                "status": "invalid_customer",
+                "session_id": self.session_id,
+            }
+
+        identity = (
+            await self.db.execute(
+                select(
+                    SysUser.user_type,
+                    SysUser.employee_role,
+                    SysUser.status,
+                ).where(SysUser.id == normalized_customer_id)
+            )
+        ).first()
+        if identity is None:
+            return None, {
+                "reply": f"未找到客户ID {normalized_customer_id}，请核对后重试。",
+                "recommendations": [],
+                "customer_profile": None,
+                "status": "invalid_customer",
+                "session_id": self.session_id,
+            }
+        if str(identity.user_type or "").upper() != "CUSTOMER":
+            role = identity.employee_role or "员工"
+            return None, {
+                "reply": (
+                    f"ID {normalized_customer_id} 对应{role}账号，不是客户，"
+                    "不能用于客户画像、产品推荐或业务办理。"
+                ),
+                "recommendations": [],
+                "customer_profile": None,
+                "status": "invalid_customer",
+                "session_id": self.session_id,
+            }
+        if str(identity.status or "") != "正常":
+            return None, {
+                "reply": f"客户ID {normalized_customer_id} 当前状态异常，暂不能生成产品推荐。",
+                "recommendations": [],
+                "customer_profile": None,
+                "status": "customer_unavailable",
+                "session_id": self.session_id,
+            }
+        return normalized_customer_id, None
+
+    @staticmethod
+    def _extract_investment_amount(message: str) -> Optional[float]:
+        match = re.search(r"(\d+(?:\.\d+)?)\s*(万|万元|元)", message or "")
+        if not match:
+            return None
+        value = float(match.group(1))
+        if match.group(2) in {"万", "万元"}:
+            value *= 10000
+        return value if value > 0 else None
 
     async def run(self, message: str, customer_id: Optional[int] = None) -> dict:
         """便捷方法"""

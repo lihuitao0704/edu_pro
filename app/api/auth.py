@@ -2,6 +2,7 @@
 认证 API — 登录 / 刷新 Token / 获取当前用户
 """
 
+import hmac
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -15,11 +16,11 @@ from app.config.database import get_db
 from app.config.settings import get_settings
 from app.middleware.auth import create_access_token, decode_access_token
 from app.security.passwords import hash_password, verify_password
+from app.security.session_identity import auth_fingerprint, role_from_record
 from app.utils.response import success, error
 
 router = APIRouter()
 _settings = get_settings()
-_EMPLOYEE_ROLES = {"理财顾问", "客户经理", "风控专员", "管理员"}
 
 
 # ==================== 请求/响应模型 ====================
@@ -87,13 +88,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if str(user.get("status") or "") != "正常":
         return error(code=403, message="账户已停用或状态异常，请联系管理员")
 
-    user_type = str(user.get("user_type") or "").upper()
-    employee_role = str(user.get("employee_role") or "")
-    if user_type == "CUSTOMER":
-        role = "客户"
-    elif user_type == "EMPLOYEE" and employee_role in _EMPLOYEE_ROLES:
-        role = employee_role
-    else:
+    role = role_from_record(user)
+    if not role:
         return error(code=403, message="账户身份配置异常，请联系管理员")
 
     # 签发 Token
@@ -104,6 +100,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             "username": user["username"],
             "role": role,
             "real_name": user.get("real_name", ""),
+            "av": auth_fingerprint(user),
         },
         expires_delta=expires,
     )
@@ -178,7 +175,7 @@ async def refresh_token(
 
     result = await db.execute(
         text(
-            "SELECT id, username, user_type, employee_role, status "
+            "SELECT id, username, password_hash, user_type, employee_role, status "
             "FROM sys_user WHERE id = :id"
         ),
         {"id": user_id},
@@ -187,14 +184,14 @@ async def refresh_token(
     if not user or str(user.get("status") or "") != "正常":
         return error(code=401, message="账户不存在或已停用")
 
-    user_type = str(user.get("user_type") or "").upper()
-    employee_role = str(user.get("employee_role") or "")
-    if user_type == "CUSTOMER":
-        role = "客户"
-    elif user_type == "EMPLOYEE" and employee_role in _EMPLOYEE_ROLES:
-        role = employee_role
-    else:
+    role = role_from_record(user)
+    if not role:
         return error(code=403, message="账户身份配置异常，请联系管理员")
+    token_version = str(payload.get("av") or "")
+    if not token_version or not hmac.compare_digest(
+        token_version, auth_fingerprint(user)
+    ):
+        return error(code=401, message="账户信息已变更，请重新登录")
 
     # 签发新 Token
     expires = timedelta(minutes=_settings.jwt.expire_minutes)
@@ -203,6 +200,7 @@ async def refresh_token(
             "sub": user_id,
             "username": user.get("username") or "",
             "role": role,
+            "av": auth_fingerprint(user),
         },
         expires_delta=expires,
     )

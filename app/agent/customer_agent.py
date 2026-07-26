@@ -266,11 +266,11 @@ class CustomerServiceAgent:
                     if is_sensitive and risk_context.get("risk_level"):
                         risk_reply = self._get_risk_aware_reply(risk_context)
                         if risk_reply:
-                            reply = risk_reply + "\n\n⚠️ 该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                            reply = risk_reply + "\n\n该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
                         else:
-                            reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                            reply = "抱歉，该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
                     else:
-                        reply = "抱歉，该问题需要人工客服进一步确认。请拨打客服热线400-XXX-XXXX。"
+                        reply = "抱歉，该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
 
                 # ── 强制风险提示（金融合规要求：涉及产品/收益时必须附加风险声明）──
                 if intent in ("product_inquiry", "faq"):

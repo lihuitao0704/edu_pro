@@ -82,6 +82,36 @@ class AdvisorNarrativeService:
         return cls.ensure_disclaimer("\n".join(lines))
 
     @classmethod
+    def render_budget_plan(cls, result: dict, investment_plan: dict) -> str:
+        """Render a deterministic amount plan after all minimums are validated."""
+        base = cls.render_customer(result)
+        if investment_plan.get("status") != "ready":
+            return base
+
+        total = float(investment_plan.get("investment_amount") or 0)
+        lines = [
+            base.removesuffix(cls.RISK_DISCLAIMER).rstrip(),
+            f"\n### {total:,.0f} 元配置方案",
+        ]
+        allocations = investment_plan.get("product_allocations") or []
+        if allocations:
+            for item in allocations:
+                lines.append(
+                    f"- **{item.get('product_name') or '产品'}**："
+                    f"{float(item.get('amount') or 0):,.2f} 元"
+                    f"（起投 {float(item.get('min_amount') or 0):,.2f} 元）"
+                )
+        else:
+            lines.append("- 当前没有满足起投门槛及适当性约束的可配置产品。")
+
+        cash = float(investment_plan.get("cash_reserve") or 0)
+        lines.append(f"- **现金及待配置资金**：{cash:,.2f} 元")
+        lines.append(
+            "\n上述金额由规则引擎校验，合计等于投资预算，且已检查产品起投门槛。"
+        )
+        return cls.ensure_disclaimer("\n".join(lines))
+
+    @classmethod
     def render_template(cls, result: dict) -> str:
         profile = result.get("customer_profile") or {}
         assessment = profile.get("assessment") if isinstance(profile, dict) else {}

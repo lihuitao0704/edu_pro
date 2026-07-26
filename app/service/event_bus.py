@@ -37,7 +37,10 @@ def build_transaction_completed_event(
     correlation_id: str = "",
 ):
     """Create the canonical business-operation event without risk-channel coupling."""
-    from app.service.agent_event_service import AgentDomainEvent
+    from app.service.agent_event_service import (
+        AgentDomainEvent,
+        EVENT_TRANSACTION_COMPLETED,
+    )
 
     customer_id = arguments.get("customer_id") or arguments.get("from_customer_id")
     if not customer_id:
@@ -48,7 +51,7 @@ def build_transaction_completed_event(
         "transfer_funds": "transfer_out",
     }.get(action, action)
     return AgentDomainEvent.create(
-        event_type="transaction_completed",
+        event_type=EVENT_TRANSACTION_COMPLETED,
         source_agent="operator",
         customer_id=int(customer_id),
         correlation_id=correlation_id or str(result.get("transaction_no") or ""),
@@ -157,14 +160,16 @@ async def publish_event(event_type: str, payload: dict, trace_id: str = "") -> b
             "timestamp": datetime.now().isoformat(),
             "trace_id": trace_id or uuid.uuid4().hex[:8],
         }
-        await r.publish(event_type, json.dumps(message, ensure_ascii=False))
+        return await r.publish(event_type, json.dumps(message, ensure_ascii=False))
 
     # 使用熔断器保护发布逻辑
     try:
         # 重试逻辑
         for attempt in range(max_retries + 1):
             try:
-                await _event_breaker.call(_do_publish)
+                subscriber_count = await _event_breaker.call(_do_publish)
+                if subscriber_count < 1:
+                    raise RuntimeError(f"频道 {event_type} 暂无在线订阅者")
                 return True
             except CircuitBreakerError:
                 # 熔断器打开，快速失败，持久化事件
@@ -205,88 +210,158 @@ async def queue_domain_event(event) -> None:
 
 
 async def handle_domain_event(event) -> None:
-    """Consume a canonical event exactly through its declared business meaning."""
-    if event.event_type == "risk_alert_created":
-        alert_level = event.payload.get("alert_level", "medium")
-        await _handle_risk_alert({"customer_id": event.customer_id, "alert_level": alert_level})
-        await _handle_c4_customer_context(
-            {
-                "arguments": {"customer_id": event.customer_id},
-                "result": {"alert_level": alert_level, "alert_id": event.payload.get("alert_id")},
-            }
-        )
-    elif event.event_type == "suspicious_reported":
-        # An operator report is evidence, not a second risk engine. Promote it
-        # into the canonical risk fact so every downstream Agent shares one path.
-        from app.service.agent_event_service import AgentDomainEvent
+    """Dispatch one event to independent logical consumers without durable claims.
 
-        await queue_domain_event(
-            AgentDomainEvent.create(
-                event_type="risk_alert_created",
-                source_agent="risk",
-                customer_id=event.customer_id,
-                correlation_id=event.correlation_id,
-                payload={
-                    "alert_id": event.payload.get("alert_id"),
-                    "alert_level": "medium",
-                    "summary": event.payload.get("reason", "可疑交易上报"),
-                    "trigger_rules": [
-                        {"rule_id": "SUSPICIOUS_REPORT", "rule_name": "可疑交易上报"}
-                    ],
+    This entry point is useful for tests and administrative replay. Normal
+    runtime delivery enters through Redis and claims each logical consumer.
+    """
+    await dispatch_domain_event(event, use_durable_claims=False)
+
+
+async def _handle_suspicious_report(event) -> None:
+    """Promote operator evidence into the canonical risk-alert lifecycle."""
+    from app.service.agent_event_service import AgentDomainEvent, EVENT_RISK_ALERT_CREATED
+
+    await queue_domain_event(
+        AgentDomainEvent.create(
+            event_type=EVENT_RISK_ALERT_CREATED,
+            source_agent="risk",
+            customer_id=event.customer_id,
+            correlation_id=event.correlation_id,
+            payload={
+                "alert_id": event.payload.get("alert_id"),
+                "alert_level": "medium",
+                "summary": event.payload.get("reason", "可疑交易上报"),
+                "trigger_rules": [
+                    {"rule_id": "SUSPICIOUS_REPORT", "rule_name": "可疑交易上报"}
+                ],
+            },
+        )
+    )
+
+
+async def _handle_risk_assessment_expiring(event) -> None:
+    """Send an assessment reminder to customer service without changing rating."""
+    await _handle_c4_customer_context(
+        {
+            "action": "risk_assessment_expiring",
+            "arguments": {"customer_id": event.customer_id},
+            "result": {
+                "alert_level": event.payload.get("alert_level", "medium"),
+                "valid_until": event.payload.get("valid_until"),
+            },
+        }
+    )
+
+
+async def _handle_analytics_insight(event) -> None:
+    from app.config.database import async_session_factory
+    from app.service.profile_service import ProfileService
+
+    async with async_session_factory() as db:
+        await ProfileService(db).apply_analytics_insight(event.payload, event.customer_id)
+        if event.payload.get("kind") == "trading_frequency":
+            from app.service.transaction_flow_service import TransactionFlowService
+
+            await TransactionFlowService().monitor(
+                db,
+                {
+                    "customer_id": event.customer_id,
+                    "transaction_id": f"ANALYTICS-FREQ-{event.event_id[:12]}",
+                    "amount": event.payload.get("weekly_total", 0),
+                    "transaction_type": "analytics_frequency",
+                    "weekly_count": event.payload.get("weekly_count"),
                 },
             )
+        await db.commit()
+
+
+async def _handle_customer_sentiment(event) -> None:
+    from app.config.database import async_session_factory
+    from app.service.profile_service import ProfileService
+
+    async with async_session_factory() as db:
+        await ProfileService(db).apply_customer_sentiment(event.payload, event.customer_id)
+        await db.commit()
+
+
+async def _handle_recommendation_feedback(event) -> None:
+    from app.config.database import async_session_factory
+    from app.service.profile_service import ProfileService
+
+    async with async_session_factory() as db:
+        await ProfileService(db).apply_recommendation_feedback(
+            {**event.payload, "_event_id": event.event_id}, event.customer_id
         )
-    elif event.event_type == "risk_assessment_expiring":
-        # An expiring assessment is a risk-owned reminder. It reaches customer
-        # service through the same C4 context, without altering client ratings.
-        await _handle_c4_customer_context(
-            {
-                "action": "risk_assessment_expiring",
-                "arguments": {"customer_id": event.customer_id},
-                "result": {
-                    "alert_level": event.payload.get("alert_level", "medium"),
-                    "valid_until": event.payload.get("valid_until"),
-                },
-            }
-        )
-    elif event.event_type == "transaction_completed":
-        await _handle_profile_update({"arguments": {"customer_id": event.customer_id}})
-    elif event.event_type == "analytics_insight":
-        from app.config.database import async_session_factory
-        from app.service.profile_service import ProfileService
+        await db.commit()
 
-        async with async_session_factory() as db:
-            await ProfileService(db).apply_analytics_insight(event.payload, event.customer_id)
-            if event.payload.get("kind") == "trading_frequency":
-                from app.service.transaction_flow_service import TransactionFlowService
 
-                await TransactionFlowService().monitor(
-                    db,
-                    {
-                        "customer_id": event.customer_id,
-                        "transaction_id": f"ANALYTICS-FREQ-{event.event_id[:12]}",
-                        "amount": event.payload.get("weekly_total", 0),
-                        "transaction_type": "analytics_frequency",
-                        "weekly_count": event.payload.get("weekly_count"),
-                    },
-                )
-            await db.commit()
-    elif event.event_type == "customer_sentiment":
-        from app.config.database import async_session_factory
-        from app.service.profile_service import ProfileService
+def _domain_consumers(event):
+    """Return logical consumer names and handlers for one business event."""
+    from app.service.agent_event_service import (
+        EVENT_RISK_ALERT_CREATED,
+        EVENT_RISK_ALERT_FALSE_POSITIVE,
+        EVENT_RISK_ALERT_PROCESSING,
+        EVENT_RISK_ALERT_RESOLVED,
+        EVENT_TRANSACTION_COMPLETED,
+        canonical_event_type,
+    )
 
-        async with async_session_factory() as db:
-            await ProfileService(db).apply_customer_sentiment(event.payload, event.customer_id)
-            await db.commit()
-    elif event.event_type == "recommendation_feedback":
-        from app.config.database import async_session_factory
-        from app.service.profile_service import ProfileService
+    event_type = canonical_event_type(event.event_type)
+    risk_lifecycle = {
+        EVENT_RISK_ALERT_CREATED,
+        EVENT_RISK_ALERT_PROCESSING,
+        EVENT_RISK_ALERT_RESOLVED,
+        EVENT_RISK_ALERT_FALSE_POSITIVE,
+    }
+    if event_type in risk_lifecycle:
+        return [
+            ("profile-risk-consumer", _consume_profile_risk_event),
+            ("advisor-risk-consumer", _consume_advisor_risk_event),
+            ("customer-service-risk-consumer", _consume_customer_service_risk_event),
+        ]
+    if event_type == "suspicious_reported":
+        return [("risk-monitor-consumer", _handle_suspicious_report)]
+    if event_type == "risk_assessment_expiring":
+        return [("customer-service-reminder-consumer", _handle_risk_assessment_expiring)]
+    if event_type == EVENT_TRANSACTION_COMPLETED:
+        return [("profile-cache-consumer", _consume_transaction_completed)]
+    if event_type == "analytics_insight":
+        return [("profile-analytics-consumer", _handle_analytics_insight)]
+    if event_type == "customer_sentiment":
+        return [("profile-sentiment-consumer", _handle_customer_sentiment)]
+    if event_type == "recommendation_feedback":
+        return [("profile-feedback-consumer", _handle_recommendation_feedback)]
+    return []
 
-        async with async_session_factory() as db:
-            await ProfileService(db).apply_recommendation_feedback(
-                {**event.payload, "_event_id": event.event_id}, event.customer_id
-            )
-            await db.commit()
+
+async def dispatch_domain_event(
+    event,
+    use_durable_claims: bool = True,
+    allowed_consumers: set[str] | None = None,
+) -> None:
+    """Fan one domain event out to independently idempotent logical consumers."""
+    for consumer, handler in _domain_consumers(event):
+        if allowed_consumers is not None and consumer not in allowed_consumers:
+            continue
+        claimed = False
+        if use_durable_claims:
+            claimed = await claim_domain_event_consumption(event.event_id, consumer)
+            if not claimed:
+                continue
+        try:
+            await handler(event)
+        except Exception as exc:
+            if claimed:
+                await release_domain_event_consumption(event.event_id, consumer)
+                from app.service.agent_event_service import mark_outbox_for_retry
+
+                await mark_outbox_for_retry(event.event_id, f"{consumer}: {exc}")
+            raise
+
+
+async def _consume_transaction_completed(event) -> None:
+    await _handle_profile_update({"arguments": {"customer_id": event.customer_id}})
 
 
 async def claim_domain_event_consumption(event_id: str, consumer: str = "six_agent_router") -> bool:
@@ -303,6 +378,22 @@ async def claim_domain_event_consumption(event_id: str, consumer: str = "six_age
         except IntegrityError:
             await db.rollback()
             return False
+
+
+async def release_domain_event_consumption(event_id: str, consumer: str) -> None:
+    """Release a failed consumer claim so an outbox rebroadcast can retry it."""
+    from sqlalchemy import delete
+    from app.config.database import async_session_factory
+    from app.model.entities import AgentEventConsumption
+
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(AgentEventConsumption).where(
+                AgentEventConsumption.event_id == event_id,
+                AgentEventConsumption.consumer == consumer,
+            )
+        )
+        await db.commit()
 
 
 async def publish_operation_event(action: str, arguments: dict, data: dict,
@@ -339,66 +430,128 @@ _subscriber_logger = logging.getLogger("event_bus.subscriber")
 
 
 async def start_event_subscriber() -> None:
-    """
-    启动事件订阅消费者（作为后台 task 在 lifespan 中运行）
+    """Start independent Redis subscribers for each Agent responsibility.
 
-    订阅 channel（拆分 C1/C2/C4 联动）:
-      - event:risk_alert:c1 → 投顾降权：更新客户画像 risk_flag(MySQL) + Redis风险标记(TTL) + 清除缓存
-      - event:risk_alert:c2 → 风控监测：记录风控事件日志
-      - event:risk_alert:c4 → 客服联动：更新客服侧风险上下文(Redis)
-      - event:risk_alert     → legacy 通用频道（向后兼容）
-      - event:profile_update → 清除画像缓存
-      - event:work_order_change → 记录日志
+    Every domain consumer owns a separate Pub/Sub connection to the shared
+    domain channel. Redis therefore performs the fan-out, while the durable
+    consumption ledger keeps retries idempotent per logical consumer.
     """
     import asyncio
 
-    reconnect_delay = 1  # 初始重连延迟（秒）
-    max_reconnect_delay = 60
-
-    SUBSCRIBED_CHANNELS = [
-        EVENT_AGENT_DOMAIN,
+    consumer_groups = {
+        "profile": {
+            "profile-risk-consumer",
+            "profile-cache-consumer",
+            "profile-analytics-consumer",
+            "profile-sentiment-consumer",
+            "profile-feedback-consumer",
+        },
+        "advisor": {"advisor-risk-consumer"},
+        "customer-service": {
+            "customer-service-risk-consumer",
+            "customer-service-reminder-consumer",
+        },
+        "risk-monitor": {"risk-monitor-consumer"},
+    }
+    legacy_channels = [
         EVENT_C1_ADVISOR,
         EVENT_C2_MONITOR,
         EVENT_C4_CUSTOMER,
-        EVENT_RISK_ALERT,       # legacy 通用频道
+        EVENT_RISK_ALERT,
         EVENT_PROFILE_UPDATE,
         EVENT_WORK_ORDER_CHANGE,
-        EVENT_GRAPH_SYNC,       # 图谱增量同步
+        EVENT_GRAPH_SYNC,
     ]
+    await asyncio.gather(
+        *(
+            _listen_domain_channel(group_name, consumers)
+            for group_name, consumers in consumer_groups.items()
+        ),
+        _listen_legacy_channels(legacy_channels),
+    )
 
+
+async def _listen_domain_channel(group_name: str, consumers: set[str]) -> None:
+    """Run one reconnecting Redis subscription for a logical Agent group."""
+    import asyncio
+
+    reconnect_delay = 1
     while True:
         try:
             from app.config.database import get_redis
-            r = await get_redis()
-            pubsub = r.pubsub()
-            await pubsub.subscribe(*SUBSCRIBED_CHANNELS)
-            _subscriber_logger.info(
-                "事件订阅消费者已启动，监听 %d 个频道: %s",
-                len(SUBSCRIBED_CHANNELS),
-                ", ".join(SUBSCRIBED_CHANNELS),
-            )
-            reconnect_delay = 1  # 连接成功后重置延迟
 
+            redis = await get_redis()
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(EVENT_AGENT_DOMAIN)
+            _subscriber_logger.info(
+                "领域事件订阅已启动: group=%s consumers=%s",
+                group_name,
+                ",".join(sorted(consumers)),
+            )
+            reconnect_delay = 1
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
-                        channel = message.get("channel", "")
-                        if isinstance(channel, bytes):
-                            channel = channel.decode("utf-8")
-                        await _handle_event(data, channel)
-                    except Exception as e:
-                        _subscriber_logger.warning("事件处理异常: %s", e)
+                        from app.service.agent_event_service import AgentDomainEvent
 
+                        event = AgentDomainEvent.from_dict(data.get("payload", {}))
+                        await dispatch_domain_event(
+                            event,
+                            use_durable_claims=True,
+                            allowed_consumers=consumers,
+                        )
+                    except Exception as exc:
+                        _subscriber_logger.warning(
+                            "领域事件处理失败: group=%s error=%s",
+                            group_name,
+                            exc,
+                        )
         except asyncio.CancelledError:
-            _subscriber_logger.info("事件订阅消费者收到取消信号，正常退出")
-            break
-        except Exception as e:
+            _subscriber_logger.info("领域事件订阅已停止: group=%s", group_name)
+            return
+        except Exception as exc:
             _subscriber_logger.warning(
-                "事件订阅连接异常（%s 后重连）: %s", reconnect_delay, e
+                "领域订阅连接异常: group=%s, %ss 后重连, error=%s",
+                group_name,
+                reconnect_delay,
+                exc,
             )
             await asyncio.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, 60)
+
+
+async def _listen_legacy_channels(channels: list[str]) -> None:
+    """Keep old channel producers working during the migration window."""
+    import asyncio
+
+    reconnect_delay = 1
+    while True:
+        try:
+            from app.config.database import get_redis
+
+            redis = await get_redis()
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(*channels)
+            _subscriber_logger.info("兼容事件订阅已启动: %s", ",".join(channels))
+            reconnect_delay = 1
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                data = json.loads(message["data"])
+                channel = message.get("channel", "")
+                if isinstance(channel, bytes):
+                    channel = channel.decode("utf-8")
+                await _handle_event(data, channel)
+        except asyncio.CancelledError:
+            _subscriber_logger.info("兼容事件订阅已停止")
+            return
+        except Exception as exc:
+            _subscriber_logger.warning(
+                "兼容事件订阅异常（%ss 后重连）: %s", reconnect_delay, exc
+            )
+            await asyncio.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, 60)
 
 
 async def _handle_event(event: dict, channel: str = "") -> None:
@@ -409,8 +562,7 @@ async def _handle_event(event: dict, channel: str = "") -> None:
     if channel == EVENT_AGENT_DOMAIN:
         from app.service.agent_event_service import AgentDomainEvent
         domain_event = AgentDomainEvent.from_dict(payload)
-        if await claim_domain_event_consumption(domain_event.event_id):
-            await handle_domain_event(domain_event)
+        await dispatch_domain_event(domain_event, use_durable_claims=True)
         return
 
     # 根据频道路由（优先使用频道名，因为同一个 event_type 可能出现在多个频道）
@@ -490,6 +642,9 @@ async def _handle_c4_customer_context(payload: dict) -> None:
                 "has_alert": True,
                 "last_action": payload.get("action", ""),
                 "alert_level": result.get("alert_level", "medium"),
+                "alert_id": result.get("alert_id"),
+                "alert_status": result.get("alert_status"),
+                "active_alert_count": result.get("active_alert_count", 1),
                 "valid_until": result.get("valid_until"),
                 "amount": args.get("amount", 0),
                 "updated_at": datetime.now().isoformat(),
@@ -502,6 +657,136 @@ async def _handle_c4_customer_context(payload: dict) -> None:
             )
         except Exception as e:
             raise RuntimeError("customer-service risk context update failed") from e
+
+
+async def _load_customer_risk_state(customer_id: int) -> dict:
+    """Rebuild dynamic risk state from unresolved alerts.
+
+    The formal C1-C5 suitability rating is deliberately not changed here.
+    """
+    from sqlalchemy import select
+    from app.config.database import async_session_factory
+    from app.model.entities import FinRiskAlert
+
+    active_statuses = ("pending", "processing", "未处理", "处理中")
+    async with async_session_factory() as db:
+        alerts = (
+            await db.execute(
+                select(FinRiskAlert)
+                .where(
+                    FinRiskAlert.customer_id == customer_id,
+                    FinRiskAlert.status.in_(active_statuses),
+                )
+                .order_by(FinRiskAlert.create_time.desc())
+            )
+        ).scalars().all()
+
+    level_rank = {"low": 1, "medium": 2, "high": 3}
+    highest = max(
+        (str(alert.alert_level or "low").lower() for alert in alerts),
+        key=lambda level: level_rank.get(level, 1),
+        default=None,
+    )
+    return {
+        "risk_flag": (
+            "high" if highest == "high" else "warning" if highest else "normal"
+        ),
+        "alert_level": highest,
+        "active_alert_count": len(alerts),
+        "latest_alert_id": getattr(alerts[0], "id", None) if alerts else None,
+    }
+
+
+async def _risk_state_for_event(event) -> dict:
+    # Events are broadcast only after the originating transaction commits, so
+    # the database is the authoritative aggregate even when several alerts for
+    # the same customer overlap.
+    return await _load_customer_risk_state(event.customer_id)
+
+
+async def _set_profile_risk_flag(customer_id: int, risk_flag: str) -> None:
+    """Persist the dynamic flag and invalidate the composed profile cache."""
+    from sqlalchemy import text
+    from app.config.database import async_session_factory, get_redis
+
+    async with async_session_factory() as db:
+        await db.execute(
+            text(
+                "UPDATE fin_customer_profile "
+                "SET risk_flag = :flag WHERE customer_id = :cid"
+            ),
+            {"flag": risk_flag, "cid": customer_id},
+        )
+        await db.commit()
+    redis = await get_redis()
+    await redis.delete(f"profile:{customer_id}")
+    _subscriber_logger.info(
+        "画像风险消费者: 客户%s dynamic risk_flag=%s", customer_id, risk_flag
+    )
+
+
+async def _set_advisor_risk_flag(customer_id: int, risk_flag: str) -> None:
+    """Refresh the Advisor Agent's real-time risk projection."""
+    from app.config.database import get_redis
+
+    redis = await get_redis()
+    await redis.set(f"risk_flag:{customer_id}", risk_flag, ex=86400)
+    _subscriber_logger.info(
+        "投顾风险消费者: 客户%s recommendation risk_flag=%s",
+        customer_id,
+        risk_flag,
+    )
+
+
+async def _consume_profile_risk_event(event) -> None:
+    state = await _risk_state_for_event(event)
+    await _set_profile_risk_flag(event.customer_id, state["risk_flag"])
+
+
+async def _consume_advisor_risk_event(event) -> None:
+    state = await _risk_state_for_event(event)
+    await _set_advisor_risk_flag(event.customer_id, state["risk_flag"])
+
+
+async def _consume_customer_service_risk_event(event) -> None:
+    """Maintain customer-service context and the pending-alert Redis index."""
+    from app.config.database import get_redis
+    from app.service.agent_event_service import (
+        EVENT_RISK_ALERT_CREATED,
+        canonical_event_type,
+    )
+
+    redis = await get_redis()
+    event_type = canonical_event_type(event.event_type)
+    alert_id = event.payload.get("alert_id")
+    if event_type == EVENT_RISK_ALERT_CREATED and alert_id is not None:
+        await redis.sadd("risk:alert:pending", str(alert_id))
+
+    state = await _risk_state_for_event(event)
+    if state["active_alert_count"] == 0:
+        await redis.delete(f"cs_risk_ctx:{event.customer_id}")
+        if alert_id is not None:
+            await redis.srem("risk:alert:pending", str(alert_id))
+        _subscriber_logger.info(
+            "客服风险消费者: 客户%s 已无活动预警，上下文已恢复",
+            event.customer_id,
+        )
+        return
+
+    await _handle_c4_customer_context(
+        {
+            "action": event_type,
+            "arguments": {"customer_id": event.customer_id},
+            "result": {
+                "alert_level": state["alert_level"],
+                "alert_id": state["latest_alert_id"] or alert_id,
+                "active_alert_count": state["active_alert_count"],
+                "alert_status": event.payload.get("status"),
+            },
+        }
+    )
+    if event_type != EVENT_RISK_ALERT_CREATED and alert_id is not None:
+        await redis.srem("risk:alert:pending", str(alert_id))
 
 
 async def _handle_risk_alert(payload: dict) -> None:
@@ -517,37 +802,8 @@ async def _handle_risk_alert(payload: dict) -> None:
         return
 
     risk_flag = "high" if alert_level == "high" else "warning"
-
-    # 1. 更新 MySQL 画像 risk_flag
-    try:
-        from sqlalchemy import text
-        from app.config.database import async_session_factory
-        async with async_session_factory() as db:
-            await db.execute(
-                text("UPDATE fin_customer_profile SET risk_flag = :flag WHERE customer_id = :cid"),
-                {"flag": risk_flag, "cid": customer_id},
-            )
-            await db.commit()
-        _subscriber_logger.info(
-            "风控联动(MySQL): 客户%s 画像 risk_flag 更新为 %s", customer_id, risk_flag
-        )
-    except Exception as e:
-        raise RuntimeError("profile risk flag update failed") from e
-
-    # 2. 设置 Redis 风险标记 + 清除画像缓存
-    try:
-        from app.config.database import get_redis
-        r = await get_redis()
-        # Redis 风险标记（含 TTL，供 AdvisorService._check_risk_flag() 实时查询）
-        await r.set(f"risk_flag:{customer_id}", risk_flag, ex=86400)  # 24h TTL
-        # 清除画像缓存（下次读取自动回源拿最新 risk_flag）
-        await r.delete(f"profile:{customer_id}")
-        _subscriber_logger.info(
-            "风控联动(Redis): 客户%s risk_flag=%s (TTL=24h) + 缓存已清除",
-            customer_id, risk_flag,
-        )
-    except Exception as e:
-        raise RuntimeError("risk cache update failed") from e
+    await _set_profile_risk_flag(int(customer_id), risk_flag)
+    await _set_advisor_risk_flag(int(customer_id), risk_flag)
 
 
 async def _handle_profile_update(payload: dict) -> None:

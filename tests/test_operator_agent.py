@@ -618,13 +618,16 @@ class TestExecuteTool:
     async def test_redeem_no_holdings(self):
         """赎回时未持有产品应阻断"""
         mock_db_no_holdings = make_mock_db(rows=None)  # holdings returns None
-
-        call_count = 0
-        async def mock_check_holdings(cid, pid, shares, db):
-            return "客户未持有该产品，无法赎回"
+        mock_factory = MagicMock()
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = mock_db_no_holdings
+        mock_context.__aexit__.return_value = None
+        mock_factory.return_value = mock_context
 
         with patch("app.agent.operator_agent.resolve_customer_id", return_value=1), \
              patch("app.agent.operator_agent.resolve_product_id", return_value=1), \
+             patch("app.agent.operator_agent.async_session_factory", mock_factory), \
+             patch("app.agent.operator_agent._check_product_status", return_value=None), \
              patch("app.agent.operator_agent._check_customer_status", return_value=None), \
              patch("app.agent.operator_agent._check_holdings", return_value="客户未持有该产品，无法赎回"):
             result = await execute_tool("redeem_product", {
