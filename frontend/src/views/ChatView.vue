@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-fullscreen">
+  <div class="workspace-page chat-fullscreen">
     <ChatWindow
       :key="chatIdentityKey"
       :user-id="auth.user?.user_id || 0"

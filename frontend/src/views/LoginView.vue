@@ -3,7 +3,7 @@
     <section class="auth-hero">
       <div class="story-orbit orbit-one" />
       <div class="story-orbit orbit-two" />
-      <div class="login-logo">澄</div>
+      <div class="login-logo" aria-label="Fintelligence">F</div>
       <span class="eyebrow light">FINANCIAL INTELLIGENCE, MADE CLEAR</span>
       <h1>让每一次财富决策<br />都有据可循。</h1>
       <p>多 Agent 协同分析客户、产品与风险，把复杂金融服务变成清晰可执行的下一步。</p>

@@ -1,5 +1,5 @@
 <template>
-  <div class="bi-dashboard">
+  <div class="workspace-page bi-dashboard">
     <!-- 页头 -->
     <header class="bi-header">
       <div>

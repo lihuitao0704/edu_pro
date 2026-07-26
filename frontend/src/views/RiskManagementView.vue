@@ -1,5 +1,5 @@
 <template>
-  <div class="page-stack">
+  <div class="workspace-page page-stack">
     <!-- ===== 页面头部 + 工具栏 ===== -->
     <section class="page-intro">
       <div><h2>异常交易与工单联动</h2><p>预警、证据规则、客户风险标记和调查工单保持同步。</p></div>

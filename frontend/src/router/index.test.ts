@@ -71,4 +71,12 @@ describe('createAppRouter', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/chat')
   })
+
+  it('provides a readable title for every workspace route', () => {
+    const router = createAppRouter(createMemoryHistory())
+
+    for (const path of ['/chat', '/dashboard', '/profile', '/advisor', '/operations', '/risk', '/analytics', '/knowledge']) {
+      expect(String(router.resolve(path).meta.title || '').trim()).not.toBe('')
+    }
+  })
 })

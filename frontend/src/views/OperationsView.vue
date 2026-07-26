@@ -1,5 +1,5 @@
 <template>
-  <div class="page-stack">
+  <div class="workspace-page page-stack">
     <section class="page-intro">
       <div><h2>业务办理与审批</h2><p>仅处理会修改业务数据的指令；查询、推荐与分析请使用 AI 财富助手。</p></div>
       <div class="ops-intro-actions">
