@@ -32,11 +32,16 @@ class ChatHistoryContractTests(unittest.IsolatedAsyncioTestCase):
 class CustomerContextContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_customer_investment_chat_uses_authenticated_customer_id(self):
         from app.agent.router_agent import RouterAgent
+        from app.model.route_decision import RouteDomain, RouteTask
+        from app.service.intent_service import IntentService
 
         router = RouterAgent(AsyncMock())
-        router.intent_service.classify_router = AsyncMock(
-            return_value=("investment_recommendation", 0.9, {})
+        router.intent_service.decide_route = AsyncMock(
+            return_value=IntentService._build_route_decision(
+                "评估我的持仓", RouteTask.ANALYZE, RouteDomain.HOLDING
+            )
         )
+        router._risk_precheck = AsyncMock(return_value=None)
         router._dispatch_advisor = AsyncMock(return_value={"reply": "ok", "data": {}})
 
         await router.route("评估我的持仓", user_id=7, user_role="客户")
@@ -45,11 +50,16 @@ class CustomerContextContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_employee_investment_chat_does_not_use_employee_id_as_customer_id(self):
         from app.agent.router_agent import RouterAgent
+        from app.model.route_decision import RouteDomain, RouteTask
+        from app.service.intent_service import IntentService
 
         router = RouterAgent(AsyncMock())
-        router.intent_service.classify_router = AsyncMock(
-            return_value=("investment_recommendation", 0.9, {})
+        router.intent_service.decide_route = AsyncMock(
+            return_value=IntentService._build_route_decision(
+                "评估客户持仓", RouteTask.ANALYZE, RouteDomain.HOLDING
+            )
         )
+        router._risk_precheck = AsyncMock(return_value=None)
         router._dispatch_advisor = AsyncMock(return_value={"reply": "ok", "data": {}})
 
         await router.route("评估客户持仓", user_id=99, user_role="理财顾问")

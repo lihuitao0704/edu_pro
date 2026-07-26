@@ -54,7 +54,11 @@ async def advisor_chat(
         agent = AdvisorAgent(
             db, req.session_id, actor_id=authenticated_actor_id(user)
         )
-        result = await agent.execute(req.message, customer_id=req.customer_id)
+        result = await agent.execute(
+            req.message,
+            customer_id=req.customer_id,
+            audience_role=str(user.get("role") or ""),
+        )
         raw_reply = result.get("reply", "")
         narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)
 
@@ -85,7 +89,11 @@ async def advisor_chat_stream(
     agent = AdvisorAgent(
         db, req.session_id, actor_id=authenticated_actor_id(user)
     )
-    result = await agent.execute(req.message, customer_id=req.customer_id)
+    result = await agent.execute(
+        req.message,
+        customer_id=req.customer_id,
+        audience_role=str(user.get("role") or ""),
+    )
     raw_reply = result.get("reply", "")
     narrative = AdvisorNarrativeService.ensure_disclaimer(raw_reply) if raw_reply else AdvisorNarrativeService.render_template(result)
     payload = {
@@ -112,7 +120,11 @@ async def recommend_products(
     """纯产品推荐接口（直接调用 Agent，不走会话）"""
     enforce_customer_scope(user, req.customer_id)
     agent = AdvisorAgent(db)
-    result = await agent.execute("推荐产品", customer_id=req.customer_id)
+    result = await agent.execute(
+        "推荐产品",
+        customer_id=req.customer_id,
+        audience_role=str(user.get("role") or ""),
+    )
     return success(data=result)
 
 

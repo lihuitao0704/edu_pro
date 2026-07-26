@@ -89,6 +89,8 @@ class CustomerServiceAgent:
         user_id: int,
         message: str,
         actor_id: int | None = None,
+        route_task: str | None = None,
+        route_domain: str | None = None,
     ) -> CustomerChatResponse:
         """
         处理用户消息的主流程
@@ -122,8 +124,29 @@ class CustomerServiceAgent:
         historical_preferences = await self.memory_recall.recall_historical_preferences(self.db, user_id)
         historical_conversations = await self.memory_recall.recall_recent_conversations(self.db, user_id)
 
-        # 2. 意图识别
-        intent, intent_confidence = await self.intent_service.classify(message, history)
+        # 2. 客服子意图识别。顶层RouteDecision明确时直接复用，避免重复调用LLM。
+        routed_customer_intents = {
+            ("CHAT", None): "chitchat",
+            ("TRANSFER_HUMAN", None): "transfer_human",
+            ("FAQ", "POLICY"): "policy_interpretation",
+            ("FAQ", "TRANSACTION"): "faq",
+            ("FAQ", None): "product_inquiry",
+        }
+        intent = routed_customer_intents.get((route_task, route_domain))
+        if intent is None:
+            intent = routed_customer_intents.get((route_task, None))
+        if intent is not None:
+            intent_confidence = 0.95
+            logger.info(
+                "复用顶层客服路由 | task=%s | domain=%s | sub_intent=%s",
+                route_task,
+                route_domain,
+                intent,
+            )
+        else:
+            intent, intent_confidence = await self.intent_service.classify(
+                message, history
+            )
 
         # 2b. C4 风控联动：检测敏感操作 + 查询风险上下文
         risk_context = {}

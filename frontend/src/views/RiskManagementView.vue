@@ -98,7 +98,7 @@
                   <!-- SLA超时标记 -->
                   <span v-if="slaTimeout(alert)" class="sla-badge" :title="slaTimeout(alert) || undefined">⏰超时</span>
                 </td>
-                <td>{{ alert.status }}</td>
+                <td>{{ statusLabel(alert.status) }}</td>
                 <td>{{ alert.created_at?.slice(0, 16).replace('T', ' ') }}</td>
                 <td>
                   <span v-if="alert.confidence != null" class="confidence-dot" :class="confidenceClass(alert.confidence)" :title="`置信度 ${(alert.confidence*100).toFixed(0)}%`" />
@@ -239,6 +239,16 @@ const pendingCount = computed(() => fullAlerts.value.filter((item) => !['resolve
 const highCount = computed(() => fullAlerts.value.filter((item) => item.alert_level === 'high' && !['resolved', 'false_positive'].includes(item.status)).length)
 const activeOrders = computed(() => workorders.value.filter((item) => !['已完成', '已关闭'].includes(item.status)).length)
 const levelLabel = (level: string) => ({ low: '低', medium: '中', high: '高' }[level] || level)
+const statusLabel = (status: string) => ({
+  pending: '待处理',
+  processing: '处理中',
+  resolved: '已处理',
+  false_positive: '误报',
+  未处理: '待处理',
+  处理中: '处理中',
+  已处理: '已处理',
+  误报: '误报',
+}[status] || status)
 const ruleNameMap: Record<string, string> = {
   cs_signal: '客服渠道信号', abnormal_intent: '异常意图', account_compromise: '账户盗用',
   social_engineering: '社会工程攻击', cumulative_high: '高风险累计告警', cumulative_risk: '累计风险升级',

@@ -21,6 +21,63 @@ _scheduler: AsyncIOScheduler = None
 _confidence = ConfidenceCalculator()
 
 
+async def _upsert_cumulative_risk_alert(
+    db,
+    *,
+    customer_id: int,
+    cumulative_count: int,
+    now: datetime,
+) -> bool:
+    """Create at most one cumulative-risk alert per customer and calendar day."""
+    reminder_key = f"cumulative_risk:{customer_id}:{now.date().isoformat()}"
+    detail = f"近30天累计触发{cumulative_count}次中风险预警，自动升级为高风险"
+    payload = {
+        "cumulative_count": cumulative_count,
+        "upgrade_reason": "30天≥3次medium",
+        "period": now.date().isoformat(),
+    }
+
+    # 兼容修复前已存在但没有 reminder_key 的当日记录：复用其中一条，
+    # 不删除历史重复数据，也不再继续新增。
+    existing = (
+        await db.execute(
+            select(FinRiskAlert)
+            .where(
+                FinRiskAlert.customer_id == customer_id,
+                FinRiskAlert.alert_type == "cumulative_risk",
+                text("DATE(create_time) = :alert_date"),
+            )
+            .params(alert_date=now.date())
+            .order_by(FinRiskAlert.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.reminder_key = existing.reminder_key or reminder_key
+        existing.alert_level = "high"
+        existing.trigger_detail = detail
+        existing.transaction_ids = payload
+        existing.update_time = now
+        return False
+
+    # reminder_key 有唯一约束；INSERT IGNORE 可保证多实例并发调度时幂等。
+    inserted = await db.execute(text("""
+        INSERT IGNORE INTO fin_risk_alert
+        (customer_id, alert_type, alert_level, trigger_detail, transaction_ids,
+         reminder_key, status, create_time, update_time)
+        VALUES
+        (:customer_id, 'cumulative_risk', 'high', :detail, :payload,
+         :reminder_key, 'pending', :now, :now)
+    """), {
+        "customer_id": customer_id,
+        "detail": detail,
+        "payload": __import__("json").dumps(payload, ensure_ascii=False),
+        "reminder_key": reminder_key,
+        "now": now,
+    })
+    return int(inserted.rowcount or 0) > 0
+
+
 async def _run_calibration():
     """异步执行校准逻辑"""
     async with async_session_factory() as db:
@@ -94,18 +151,13 @@ async def _run_calibration():
         )
         cumulative_upgraded = 0
         for row in result.fetchall():
-            # 为这些客户自动创建一条 high 预警
-            entity = FinRiskAlert(
-                customer_id=row.customer_id,
-                alert_type="cumulative_risk",
-                alert_level="high",
-                trigger_detail=f"近30天累计触发{row.cnt}次中风险预警，自动升级为高风险",
-                transaction_ids={"cumulative_count": row.cnt, "upgrade_reason": "30天≥3次medium"},
-                status="pending",
-                create_time=now,
-            )
-            db.add(entity)
-            cumulative_upgraded += 1
+            if await _upsert_cumulative_risk_alert(
+                db,
+                customer_id=int(row.customer_id),
+                cumulative_count=int(row.cnt),
+                now=now,
+            ):
+                cumulative_upgraded += 1
 
         await db.flush()
 

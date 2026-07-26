@@ -15,7 +15,9 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.model.route_decision import RouteDecision, RoutePlan, RouteTask
 from app.service.intent_service import get_intent_service
+from app.service.route_validator import get_route_validator
 from app.model.schemas import UnifiedChatResponse
 from app.utils.logger import get_logger
 
@@ -29,6 +31,7 @@ INTENT_TO_AGENT = {
     "risk_control": "risk_monitor",
     "data_analysis": "nl2sql",
     "business_operation": "operator",
+    "clarification": "router",
 }
 
 
@@ -46,6 +49,8 @@ class RouterAgent:
         user_id: int = 0,
         user_role: str = "客户",
         context: Optional[dict] = None,
+        route_decision: RouteDecision | None = None,
+        route_plan: RoutePlan | None = None,
     ) -> UnifiedChatResponse:
         """
         统一路由入口
@@ -89,18 +94,77 @@ class RouterAgent:
                 data=result.get("data"),
             )
 
-        # ── Step 0.5: 确认回复直接路由到业务操作 ──
+        # ── Step 1: 生成一次顶层计划；单任务沿用原执行链，多任务安全汇总 ──
         import re
-        if re.match(r'^(确认|确定|好的|行|可以|同意|取消|放弃)\s*$', message.strip()):
-            intent, confidence, params = "business_operation", 1.0, {}
-        else:
-            intent, confidence, params = await self.intent_service.classify_router(message)
+        if route_plan is None:
+            if route_decision is not None:
+                route_plan = RoutePlan(
+                    original_message=message,
+                    tasks=[route_decision],
+                    execution_mode="single",
+                    decision_source=route_decision.decision_source,
+                )
+            else:
+                route_plan = await self.intent_service.plan_route(
+                    message,
+                    user_role=user_role,
+                    context=context,
+                )
+        if route_plan.is_multi_intent:
+            return await self._execute_route_plan(
+                route_plan,
+                session_id=session_id,
+                user_id=user_id,
+                user_role=user_role,
+                context=context,
+            )
+
+        decision = route_plan.tasks[0]
+        decision = get_route_validator().validate(
+            decision,
+            user_role=user_role,
+            context=context,
+        )
+
+        if decision.blocked:
+            return UnifiedChatResponse(
+                intent="access_denied",
+                agent="router",
+                confidence=decision.confidence,
+                session_id=session_id,
+                reply=decision.block_reason or "当前身份无权使用该能力。",
+                data={"route_decision": decision.model_dump(mode="json")},
+            )
+
+        if decision.needs_clarification:
+            return UnifiedChatResponse(
+                intent="clarification",
+                agent="router",
+                confidence=decision.confidence,
+                session_id=session_id,
+                reply=decision.clarification_question or "请补充说明你的具体目标。",
+                data={
+                    "route_decision": decision.model_dump(mode="json"),
+                    "clarification": {
+                        "question": decision.clarification_question,
+                        "choices": decision.clarification_choices,
+                    },
+                },
+            )
+
+        intent = decision.intent
+        confidence = decision.confidence
+        params = decision.legacy_params()
         # ── 从消息中直接提取客户ID ──
-        _id = re.search(r'客户(?:ID|编号)\s*(\d+)', message)
+        _id = re.search(
+            r'客户(?:ID|编号)\s*(?:是|为|=|[:：])?\s*(\d+)',
+            message,
+            re.I,
+        )
         if _id:
             params["customer_id"] = int(_id.group(1))
 
-        agent_name = INTENT_TO_AGENT.get(intent, "customer_service")
+        agent_name = decision.target_agent
 
         logger.info(
             f"Router分发 | intent={intent} | agent={agent_name} | "
@@ -125,11 +189,11 @@ class RouterAgent:
         try:
             if agent_name == "customer_service":
                 result = await self._dispatch_customer_service(
-                    message, session_id, user_id
+                    message, session_id, user_id, decision
                 )
             elif agent_name == "advisor":
                 result = await self._dispatch_advisor(
-                    message, session_id, user_id, customer_id
+                    message, session_id, user_id, customer_id, user_role
                 )
             elif agent_name == "risk_monitor":
                 result = await self._dispatch_risk_control(
@@ -153,7 +217,10 @@ class RouterAgent:
                 confidence=confidence,
                 session_id=session_id,
                 reply=f"抱歉，{agent_name} 服务暂时不可用，请稍后重试。",
-                data={"error": str(e)},
+                data={
+                    "error": str(e),
+                    "route_decision": decision.model_dump(mode="json"),
+                },
             )
 
         # ── Step 4: 聚合为统一响应 ──
@@ -164,13 +231,116 @@ class RouterAgent:
             reply = ""
             agent_data = result
 
+        response_data = dict(agent_data or {}) if isinstance(agent_data, dict) else {}
+        response_data["route_decision"] = decision.model_dump(mode="json")
         return UnifiedChatResponse(
             intent=intent,
             agent=agent_name,
             confidence=confidence,
             session_id=session_id,
             reply=reply,
-            data=agent_data,
+            data=response_data,
+        )
+
+    async def _execute_route_plan(
+        self,
+        plan: RoutePlan,
+        *,
+        session_id: str,
+        user_id: int,
+        user_role: str,
+        context: dict | None,
+    ) -> UnifiedChatResponse:
+        """Execute validated read-only subtasks sequentially and aggregate safely."""
+        task_results: list[dict] = []
+        sections: list[str] = []
+        merged_data: dict = {}
+
+        for index, raw_decision in enumerate(plan.tasks, start=1):
+            decision = get_route_validator().validate(
+                raw_decision,
+                user_role=user_role,
+                context=context,
+            )
+            title = f"{decision.task.value} · {decision.domain.value}"
+
+            if decision.task == RouteTask.EXECUTE:
+                reply = (
+                    "该子任务会修改业务数据。为避免复合指令误操作，请将这项操作"
+                    "单独发送，系统会展示参数并要求二次确认。"
+                )
+                task_results.append(
+                    {
+                        "index": index,
+                        "status": "requires_separate_confirmation",
+                        "reply": reply,
+                        "route_decision": decision.model_dump(mode="json"),
+                    }
+                )
+                sections.append(f"### {index}. {title}\n{reply}")
+                continue
+
+            response = await self.route(
+                decision.request_text,
+                session_id=session_id,
+                user_id=user_id,
+                user_role=user_role,
+                context=context,
+                route_decision=decision,
+            )
+            status = (
+                "blocked"
+                if response.intent == "access_denied"
+                else "needs_clarification"
+                if response.intent == "clarification"
+                else "completed"
+            )
+            task_results.append(
+                {
+                    "index": index,
+                    "status": status,
+                    "intent": response.intent,
+                    "agent": response.agent,
+                    "reply": response.reply,
+                    "data": response.data,
+                    "route_decision": decision.model_dump(mode="json"),
+                }
+            )
+            sections.append(f"### {index}. {title}\n{response.reply}")
+
+            if isinstance(response.data, dict):
+                for key in (
+                    "recommendations",
+                    "allocation",
+                    "customer_profile",
+                    "query_result",
+                    "sql",
+                    "safety",
+                    "truncated",
+                ):
+                    if key in response.data and key not in merged_data:
+                        merged_data[key] = response.data[key]
+
+        merged_data.update(
+            {
+                "route_plan": plan.model_dump(mode="json"),
+                "task_results": task_results,
+                "partial_success": any(
+                    item["status"] != "completed" for item in task_results
+                ),
+            }
+        )
+        confidence = min(
+            (task.confidence for task in plan.tasks),
+            default=0.0,
+        )
+        return UnifiedChatResponse(
+            intent="multi_intent",
+            agent="router_supervisor",
+            confidence=confidence,
+            session_id=session_id,
+            reply="\n\n".join(sections),
+            data=merged_data,
         )
 
     # ═══════════════════════════════════════════════════════════════
@@ -178,13 +348,22 @@ class RouterAgent:
     # ═══════════════════════════════════════════════════════════════
 
     async def _dispatch_customer_service(
-        self, message: str, session_id: str, user_id: int
+        self,
+        message: str,
+        session_id: str,
+        user_id: int,
+        route_decision: RouteDecision | None = None,
     ) -> dict:
         """分发到客服 Agent"""
         from app.agent.customer_agent import get_customer_service_agent
         agent = get_customer_service_agent(self.db)
         response = await agent.handle(
-            session_id, user_id, message, actor_id=user_id
+            session_id,
+            user_id,
+            message,
+            actor_id=user_id,
+            route_task=route_decision.task.value if route_decision else None,
+            route_domain=route_decision.domain.value if route_decision else None,
         )
         return {
             "reply": response.reply,
@@ -198,6 +377,7 @@ class RouterAgent:
     async def _dispatch_advisor(
         self, message: str, session_id: str, user_id: int,
         customer_id: Optional[int] = None,
+        user_role: str = "",
     ) -> dict:
         """分发到投顾 Agent"""
         from app.agent.advisor_agent import AdvisorAgent
@@ -206,7 +386,11 @@ class RouterAgent:
         enhanced_message = message
         if customer_id:
             enhanced_message = message  # AdvisorAgent 内部会注入 customer_id
-        result = await agent.execute(enhanced_message, customer_id=customer_id)
+        result = await agent.execute(
+            enhanced_message,
+            customer_id=customer_id,
+            audience_role=user_role,
+        )
         return {
             "reply": result.get("reply", ""),
             "data": {

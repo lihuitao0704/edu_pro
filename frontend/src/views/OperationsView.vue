@@ -1,19 +1,22 @@
 <template>
   <div class="page-stack">
     <section class="page-intro">
-      <div><h2>用自然语言完成业务操作</h2><p>Agent 负责参数提取、角色校验、二次确认和真实业务 API 调用。</p></div>
-      <span class="security-chip">JWT 角色已绑定</span>
+      <div><h2>业务办理与审批</h2><p>仅处理会修改业务数据的指令；查询、推荐与分析请使用 AI 财富助手。</p></div>
+      <div class="ops-intro-actions">
+        <router-link class="quiet-button" to="/chat">前往 AI 财富助手</router-link>
+        <span class="security-chip">JWT 角色已绑定</span>
+      </div>
     </section>
     <section class="ops-chat-window">
       <header class="ops-chat-header">
-        <span><i /> BUSINESS OPERATOR AGENT</span>
-        <b>受监管模式</b>
+        <span><i /> OPERATION APPROVAL CENTER</span>
+        <b>受监管 · 可审计</b>
       </header>
       <div ref="bodyRef" class="ops-chat-body">
         <div v-if="!history.length" class="ops-empty-state">
           <span class="ops-orb">OP</span>
-          <h3>输入业务指令开始操作</h3>
-          <p>高金额操作会暂停并等待明确确认。</p>
+          <h3>发起一项业务办理</h3>
+          <p>系统将校验权限和参数；高金额操作会暂停并等待明确确认。</p>
           <div class="ops-quick-prompts">
             <button v-for="hint in hints" :key="hint" type="button" @click="sendHint(hint)">{{ hint }}</button>
           </div>
@@ -23,10 +26,15 @@
             <div class="ops-msg-avatar">{{ entry.role === 'user' ? 'YOU' : 'OP' }}</div>
             <div class="ops-msg-body">
               <div class="ops-msg-meta">
-                <strong>{{ entry.role === 'user' ? '您的指令' : 'Operator Agent' }}</strong>
+                <strong>{{ entry.role === 'user' ? '您的指令' : agentLabel(entry.agent) }}</strong>
+                <span v-if="entry.status" class="ops-status" :class="entry.status">{{ statusLabel(entry.status) }}</span>
               </div>
               <p>{{ entry.text }}</p>
-              <pre v-if="entry.meta">{{ JSON.stringify(entry.meta, null, 2) }}</pre>
+              <div v-if="entry.role === 'assistant' && (entry.intent || entry.action)" class="ops-result-meta">
+                <span v-if="entry.intent">识别意图：{{ entry.intent }}</span>
+                <span v-if="entry.action">业务动作：{{ entry.action }}</span>
+              </div>
+              <pre v-if="entry.params && Object.keys(entry.params).length">待办参数：{{ JSON.stringify(entry.params, null, 2) }}</pre>
             </div>
           </article>
         </div>
@@ -34,10 +42,10 @@
       <ErrorAlert v-if="error" :message="error" class="ops-error" />
       <form class="ops-composer" @submit.prevent="send">
         <div class="composer-row">
-          <textarea v-model="message" rows="1" placeholder="输入业务指令…" @keydown.enter.exact.prevent="send" />
-          <button class="finance-primary" :disabled="!message.trim() || loading">{{ loading ? '执行中' : '发送指令' }}</button>
+          <textarea v-model="message" rows="1" placeholder="例如：给客户ID 1申购10万元产品 PROD-0001" @keydown.enter.exact.prevent="send" />
+          <button class="finance-primary" :disabled="!message.trim() || loading">{{ loading ? '处理中' : '提交办理' }}</button>
         </div>
-        <span class="composer-hint">高金额操作需二次确认 · JWT 角色已绑定</span>
+        <span class="composer-hint">申购、赎回、转账等高风险操作必须在同一会话中二次确认</span>
       </form>
     </section>
   </div>
@@ -50,16 +58,44 @@ import { post } from '../api/http'
 import ErrorAlert from '../components/ErrorAlert.vue'
 import { useAuthStore } from '../stores/auth'
 
-// ---- 模块级状态：跨路由导航保持会话记忆 ----
-const sessionId = `operator-${Date.now().toString(36)}`
-const history = ref<Array<{ role: 'user' | 'assistant'; text: string; meta?: unknown }>>([])
+interface OperationEntry {
+  role: 'user' | 'assistant'
+  text: string
+  agent?: string
+  intent?: string
+  action?: string
+  status?: string
+  params?: Record<string, unknown>
+}
+
+const sessionId = ref('')
+const history = ref<OperationEntry[]>([])
 
 const auth = useAuthStore()
 const message = ref('')
 const loading = ref(false)
 const error = ref('')
 const bodyRef = ref<HTMLElement>()
-const hints = ['查询R2风险等级的产品', '查询演示客户01的持仓', '为演示客户02创建咨询工单', '确认']
+const hints = [
+  '给客户ID 1申购10万元产品 PROD-0001',
+  '帮客户ID 1赎回产品 PROD-0001 1000份',
+  '为客户ID 1创建咨询工单',
+  '确认',
+]
+const OPERATION_PATTERN = /(申购|赎回|转账|开户|创建.{0,8}工单|关闭.{0,8}工单|处理.{0,8}工单|更新.{0,8}(手机|邮箱|联系方式)|修改.{0,8}(手机|邮箱|联系方式)|风评重做|重新风险评估|批量更新|批量评估|上报.{0,6}(可疑|异常)|确认|确定|同意|取消|放弃)/
+const AGENT_LABELS: Record<string, string> = {
+  operator: '业务办理 Agent',
+  router: '需求澄清助手',
+  safety_guard: '安全与合规拦截',
+}
+const STATUS_LABELS: Record<string, string> = {
+  confirm_required: '等待确认',
+  note_required: '等待备注',
+  ok: '处理完成',
+  cancelled: '已取消',
+  permission_denied: '权限不足',
+  error: '处理失败',
+}
 
 // 自动滚动到底部
 watch(history, () => {
@@ -73,9 +109,25 @@ function sendHint(hint: string) {
   send()
 }
 
+function agentLabel(agent?: string) {
+  return AGENT_LABELS[agent || ''] || agent || '业务协调器'
+}
+
+function statusLabel(status: string) {
+  return STATUS_LABELS[status] || status
+}
+
 async function send() {
   const text = message.value.trim()
   if (!text || loading.value) return
+  if (!OPERATION_PATTERN.test(text)) {
+    error.value = '该页面仅办理会修改数据的业务。查询、推荐和分析请前往 AI 财富助手。'
+    return
+  }
+  if (/^(确认|确定|同意|取消|放弃)$/.test(text) && !sessionId.value) {
+    error.value = '当前没有待确认的业务，请先提交一项办理指令。'
+    return
+  }
   history.value.push({ role: 'user', text })
   message.value = ''
   loading.value = true
@@ -83,15 +135,22 @@ async function send() {
   try {
     const result = await post<Record<string, any>>('/chat', {
       message: text,
-      session_id: sessionId,
+      session_id: sessionId.value,
       user_id: auth.user?.user_id,
       user_role: auth.user?.role || '理财顾问',
     })
-    const reply = result.data?.reply || result.reply || '操作完成'
-    const meta = result.data?.data || result.data
-    // 后端可能返回新的 session_id
-    if (result.data?.session_id) Object.assign(window, { _opsSession: result.data.session_id })
-    history.value.push({ role: 'assistant', text: reply, meta: meta?.action ? { action: meta.action, params: meta.params, status: meta.status } : undefined })
+    const reply = result.reply || '操作完成'
+    const data = result.data && typeof result.data === 'object' ? result.data : {}
+    if (result.session_id) sessionId.value = result.session_id
+    history.value.push({
+      role: 'assistant',
+      text: reply,
+      agent: result.agent,
+      intent: result.intent,
+      action: data.action,
+      status: data.status,
+      params: data.params,
+    })
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '业务操作失败'
   } finally {
@@ -107,6 +166,8 @@ async function send() {
   flex-direction: column;
 }
 .page-intro { flex: 0 0 auto; }
+.ops-intro-actions { display: flex; align-items: center; gap: 10px; }
+.ops-intro-actions .quiet-button { text-decoration: none; }
 .ops-chat-window {
   flex: 1;
   min-height: 0;
@@ -255,10 +316,33 @@ async function send() {
 }
 .ops-msg-meta {
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 .ops-msg-meta strong {
   color: #dce9f9;
   font-size: 11px;
+}
+.ops-status {
+  padding: 2px 7px;
+  border-radius: 99px;
+  color: #a7f3d0;
+  background: rgba(16, 185, 129, .12);
+  font-size: 10px;
+}
+.ops-status.confirm_required,
+.ops-status.note_required { color: #fde68a; background: rgba(245, 158, 11, .12); }
+.ops-status.error,
+.ops-status.permission_denied { color: #fecaca; background: rgba(239, 68, 68, .12); }
+.ops-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 7px 0 0;
+  color: #7f91a8;
+  font-size: 10px;
 }
 .ops-msg-body > p {
   margin: 0;

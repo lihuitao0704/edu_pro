@@ -25,6 +25,11 @@ export interface ChatResponse {
     risk_level?: string
     trace_id?: string
     session_id?: string
+    route_decision?: Record<string, unknown>
+    clarification?: {
+      question?: string
+      choices?: string[]
+    }
   }
 }
 
@@ -46,6 +51,11 @@ interface UnifiedChatPayload {
       expected_return?: number
     }>
     risk_level?: string
+    route_decision?: Record<string, unknown>
+    clarification?: {
+      question?: string
+      choices?: string[]
+    }
   }
 }
 
@@ -87,8 +97,16 @@ function normalizeUnifiedChatResponse(response: UnifiedChatPayload): ChatRespons
     answer: response.reply,
     agent: response.agent,
     confidence: response.confidence,
-    suggestions: recommendation ? ['查看方案详情', '比较同类产品', '预约专属顾问'] : [],
-    metadata: { risk_level: response.data?.risk_level, recommendation, session_id: response.session_id },
+    suggestions: response.data?.clarification?.choices?.length
+      ? response.data.clarification.choices
+      : recommendation ? ['查看方案详情', '比较同类产品', '预约专属顾问'] : [],
+    metadata: {
+      risk_level: response.data?.risk_level,
+      recommendation,
+      session_id: response.session_id,
+      route_decision: response.data?.route_decision,
+      clarification: response.data?.clarification,
+    },
   }
 }
 

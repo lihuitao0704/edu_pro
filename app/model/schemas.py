@@ -143,14 +143,20 @@ class AdvisorChatRequest(BaseModel):
 
 class ProductRecommend(BaseModel):
     """推荐产品"""
+    product_id: Optional[int] = None
     product_code: str
     product_name: str
     risk_level: str
     product_type: Optional[str] = None
     expected_return: Optional[float] = None
+    min_amount: Optional[float] = None
+    term_days: Optional[int] = None
     match_score: Optional[float] = None
     match_level: Optional[str] = None
     reason: str
+    data_source: str = "fin_product"
+    product_snapshot_time: Optional[str] = None
+    rule_version: str = "suitability-v1"
 
 
 class AdvisorChatResponse(BaseModel):

@@ -9,8 +9,12 @@ class ResponseEnhancer:
     _QUESTIONS = ["稳健型理财有哪些？", "R3风险产品有哪些？", "基金和债券如何选择？"]
 
     def enhance(self, result: AgentResult) -> AgentResult:
+        has_recommendations = bool(
+            isinstance(result.data, dict) and result.data.get("recommendations")
+        )
         needs_guidance = (
             result.intent == "investment_recommendation"
+            and not has_recommendations
             and (result.confidence < 0.65 or result.source_count == 0 or result.fallback_used)
         )
         if needs_guidance:

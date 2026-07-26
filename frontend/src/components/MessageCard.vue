@@ -7,11 +7,6 @@
       </div>
       <p v-if="message.role === 'user'">{{ message.content }}</p>
       <div v-else class="assistant-markdown" v-html="assistantHtml" />
-      <RecommendationCard
-        v-if="message.response?.metadata.recommendation"
-        :recommendation="message.response.metadata.recommendation"
-      />
-
       <!-- 数据查询结果表格 -->
       <div v-if="queryResult.length" class="data-table-preview">
         <div class="dt-preview-header">
@@ -23,7 +18,7 @@
             <thead><tr><th v-for="col in previewColumns" :key="col">{{ colLabel(col) }}</th></tr></thead>
             <tbody>
               <tr v-for="(row, i) in previewRows" :key="i">
-                <td v-for="col in previewColumns" :key="col">{{ formatCell(row[col]) }}</td>
+                <td v-for="col in previewColumns" :key="col">{{ formatTableCell(row[col], col) }}</td>
               </tr>
             </tbody>
           </table>
@@ -46,8 +41,13 @@
         <button type="button" @click="emit('open-assessment')">前往风评问卷 →</button>
       </div>
       <div v-if="message.response?.suggestions.length" class="action-suggestions">
-        <span>推荐操作</span>
-        <button v-for="suggestion in message.response.suggestions" :key="suggestion" type="button">
+        <span>{{ message.response.agent === 'router' ? '请选择你的目标' : '推荐操作' }}</span>
+        <button
+          v-for="suggestion in message.response.suggestions"
+          :key="suggestion"
+          type="button"
+          @click="emit('select-suggestion', suggestion)"
+        >
           {{ suggestion }}
         </button>
       </div>
@@ -59,19 +59,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import RecommendationCard from './RecommendationCard.vue'
 import DataTableModal from './DataTableModal.vue'
 import type { ChatMessage } from '../stores/conversation'
 import { renderAssistantMarkdown } from '../utils/markdown'
+import { formatTableCell } from '../utils/table-format'
 
 const props = defineProps<{ message: ChatMessage }>()
-const emit = defineEmits<{ 'open-assessment': [] }>()
+const emit = defineEmits<{
+  'open-assessment': []
+  'select-suggestion': [suggestion: string]
+}>()
 
 const agentNames: Record<string, string> = {
   investment: '投资建议引擎',
   risk: '风险评估引擎',
   operations: '账户服务引擎',
   service: '产品服务引擎',
+  router: '需求澄清助手',
+  router_supervisor: '多任务协调器',
 }
 const agentName = computed(() => agentNames[props.message.response?.agent || ''] || '金融智能引擎')
 const confidence = computed(() => Math.round((props.message.response?.confidence || 0) * 100))
@@ -102,20 +107,6 @@ const COLUMN_ALIAS: Record<string, string> = {
 
 function colLabel(key: string): string {
   return COLUMN_ALIAS[key] || key.replace(/_/g, ' ')
-}
-
-function formatCell(val: any): string {
-  if (val === null || val === undefined) return '—'
-  // 字符串数字统一转 number 格式化
-  const num = typeof val === 'number' ? val : Number(val)
-  if (!isNaN(num)) {
-    // 金额类加 ¥ 前缀（>=100 的数值视为金额类，避免年龄/ID也被加 ¥）
-    if (Math.abs(num) >= 100 || String(val).includes('.')) {
-      return `¥${num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    }
-    return num.toLocaleString()
-  }
-  return String(val)
 }
 
 const previewColumns = computed(() => {

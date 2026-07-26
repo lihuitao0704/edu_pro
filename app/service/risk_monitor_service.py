@@ -283,7 +283,7 @@ def _to_dict(a: FinRiskAlert) -> dict:
     return {
         "alert_id": str(a.id),
         "customer_id": a.customer_id,
-        "alert_type": a.alert_type,
+        "alert_type": getattr(a, "alert_type", ""),
         "alert_level": a.alert_level,
         "trigger_rules": tx_ids.get("trigger_rules", []),
         "summary": a.trigger_detail,

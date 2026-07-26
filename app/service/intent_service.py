@@ -7,11 +7,19 @@ Intent Service — 意图识别服务
 
 from typing import Optional, Tuple
 from pathlib import Path
+import re
 
+from app.model.route_decision import (
+    RouteDecision,
+    RouteDomain,
+    RoutePlan,
+    RouteTask,
+)
 from app.tool.llm_tool import get_llm_tool
 from app.utils.logger import get_logger
 
 logger = get_logger("service.intent")
+ROUTER_LLM_TIMEOUT_SECONDS = 4.0
 
 # ── 客服意图（原有） ──
 INTENT_PRIORITY = {
@@ -44,19 +52,8 @@ ROUTER_INTENTS = {
     "data_analysis",
     "business_operation",
     "chitchat",
+    "clarification",
 }
-
-# 关键词快速通道：命中关键词直接判定意图，无需调用LLm
-ROUTER_KEYWORD_MAP = [
-    # Order is meaningful: safety signals must win over an operation, and
-    # investment-review terms must not be swallowed by a generic operation.
-    (["可疑交易", "可疑转账", "异常转账", "风险检测", "风控标记", "风险监测", "异常交易", "风险预警"], "risk_control"),
-    (["申购", "赎回", "转账给", "转出", "开户", "更新手机", "更新邮箱", "风评重做",
-      "创建工单", "上报可疑", "修改联系方式", "批量更新", "批量评估", "确认购买"], "business_operation"),
-    (["推荐", "筛选", "找产品", "配置建议", "持仓分析", "持仓", "集中度", "行业分布",
-      "资产配置", "仓位建议", "对比", "比较", "投资组合"], "investment_recommendation"),
-    (["统计", "排名", "趋势", "多少客户", "占比", "分析数据", "查询数据", "本月", "上月", "本季度"], "data_analysis"),
-]
 
 # Router 意图 → 分发目标 Agent
 ROUTER_INTENT_TO_AGENT = {
@@ -66,6 +63,7 @@ ROUTER_INTENT_TO_AGENT = {
     "risk_control": "risk_monitor",
     "data_analysis": "nl2sql",
     "business_operation": "operator",
+    "clarification": "router",
 }
 
 ADVISOR_INTENT_TO_AGENT_ACTION = {
@@ -292,20 +290,422 @@ class IntentService:
     # ═══════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _keyword_quick_route(message: str) -> Optional[tuple]:
-        """关键词快速通道：命中明显关键词时跳过LLM分类，节省延迟。
+    def _extract_route_entities(message: str) -> dict:
+        """Extract only high-confidence entities; downstream agents may enrich them."""
+        import re
 
-        Returns:
-            (intent, confidence, params) 或 None（未命中）
-        """
-        for keywords, intent in ROUTER_KEYWORD_MAP:
-            for kw in keywords:
-                if kw in message:
-                    logger.info(f"Router关键词快速命中: {kw} → {intent}")
-                    return (intent, 0.95, {"customer_name": None, "customer_id": None,
-                                           "product_name": None, "amount": None,
-                                           "transaction_type": None})
+        entities: dict = {}
+        customer_id = re.search(
+            r"客户(?:ID|编号)\s*(?:是|为|=|[:：])?\s*(\d+)",
+            message,
+            re.I,
+        )
+        if customer_id:
+            entities["customer_id"] = int(customer_id.group(1))
+
+        customer_name = re.search(
+            r"客户(?:姓名|名称)?(?:为|是|叫)?\s*"
+            r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9]{0,7})"
+            r"(?=的|持仓|账户|工单|交易|[,，。；;\s]|$)",
+            message,
+        )
+        if customer_name and customer_name.group(1) not in {
+            "所有",
+            "多少",
+            "哪些",
+            "查询",
+        }:
+            entities["customer_name"] = customer_name.group(1)
+
+        amount = re.search(r"(\d+(?:\.\d+)?)\s*(万|万元|元)", message)
+        if amount:
+            value = float(amount.group(1))
+            if amount.group(2) in {"万", "万元"}:
+                value *= 10000
+            entities["amount"] = int(value) if value.is_integer() else value
+
+        for transaction_type in ("申购", "赎回", "转账", "开户"):
+            if transaction_type in message:
+                entities["transaction_type"] = transaction_type
+                break
+        return entities
+
+    @staticmethod
+    def _domain_for_message(message: str) -> RouteDomain:
+        if re.search(r"(?<![A-Za-z0-9])[Rr][1-5](?![A-Za-z0-9])", message) and any(
+            word in message for word in ("产品", "基金", "理财")
+        ):
+            return RouteDomain.PRODUCT
+        if any(word in message for word in ("可疑", "风险", "风控", "预警", "异常")):
+            return RouteDomain.RISK
+        if "工单" in message:
+            return RouteDomain.WORK_ORDER
+        if any(word in message for word in ("持仓", "仓位", "组合", "行业分布", "集中度")):
+            return RouteDomain.HOLDING
+        if any(word in message for word in ("政策", "监管", "法规", "合规", "资管新规")):
+            return RouteDomain.POLICY
+        if any(
+            word in message
+            for word in ("申购", "赎回", "转账", "转到", "汇款", "交易", "手续费", "份额")
+        ):
+            return RouteDomain.TRANSACTION
+        if any(word in message for word in ("产品", "基金", "理财", "收益率", "年化")):
+            return RouteDomain.PRODUCT
+        if any(word in message for word in ("客户", "用户", "画像", "AUM", "资产")):
+            return RouteDomain.CUSTOMER
+        return RouteDomain.GENERAL
+
+    @staticmethod
+    def _legacy_route(task: RouteTask, domain: RouteDomain) -> tuple[str, str]:
+        if task == RouteTask.CHAT:
+            return "chitchat", "customer_service"
+        if task in {RouteTask.FAQ, RouteTask.TRANSFER_HUMAN}:
+            return "product_faq", "customer_service"
+        if task == RouteTask.RISK_CHECK or (
+            task == RouteTask.QUERY and domain == RouteDomain.RISK
+        ):
+            return "risk_control", "risk_monitor"
+        if task == RouteTask.QUERY:
+            return "data_analysis", "nl2sql"
+        if task in {RouteTask.ANALYZE, RouteTask.RECOMMEND}:
+            return "investment_recommendation", "advisor"
+        if task == RouteTask.EXECUTE:
+            return "business_operation", "operator"
+        return "clarification", "router"
+
+    @classmethod
+    def _build_route_decision(
+        cls,
+        message: str,
+        task: RouteTask,
+        domain: RouteDomain | None = None,
+        *,
+        confidence: float = 0.95,
+        source: str = "rule",
+        alternatives: list[str] | None = None,
+        entities: dict | None = None,
+    ) -> RouteDecision:
+        domain = domain or cls._domain_for_message(message)
+        intent, target_agent = cls._legacy_route(task, domain)
+        return RouteDecision(
+            request_text=message.strip(),
+            intent=intent,
+            task=task,
+            domain=domain,
+            target_agent=target_agent,
+            confidence=confidence,
+            decision_source=source,
+            alternatives=alternatives or [],
+            entities={**cls._extract_route_entities(message), **(entities or {})},
+            requires_confirmation=task == RouteTask.EXECUTE,
+        )
+
+    @classmethod
+    def _rule_route_decision(
+        cls,
+        message: str,
+        *,
+        context: dict | None = None,
+    ) -> RouteDecision | None:
+        """High-precision semantic rules. Ambiguous input is left to the LLM."""
+        import re
+
+        text = re.sub(r"\s+", "", message.strip())
+        if not text:
+            return cls._build_route_decision(
+                message,
+                RouteTask.UNKNOWN,
+                RouteDomain.UNKNOWN,
+                confidence=0.0,
+            )
+
+        pending = (context or {}).get("pending_route_decision")
+        clarification_tasks = {
+            "查询明细或状态": RouteTask.QUERY,
+            "分析并给出建议": RouteTask.ANALYZE,
+            "执行具体业务操作": RouteTask.EXECUTE,
+        }
+        if isinstance(pending, dict) and text in clarification_tasks:
+            try:
+                pending_domain = RouteDomain(
+                    str(pending.get("domain") or "UNKNOWN").upper()
+                )
+            except ValueError:
+                pending_domain = RouteDomain.UNKNOWN
+            pending_entities = pending.get("entities")
+            return cls._build_route_decision(
+                message,
+                clarification_tasks[text],
+                pending_domain,
+                confidence=1.0,
+                source="clarification_choice",
+                entities=pending_entities if isinstance(pending_entities, dict) else {},
+            )
+
+        if re.fullmatch(r"(你好|您好|嗨|哈喽|在吗|早上好|下午好|晚上好)[！!。.]?", text):
+            return cls._build_route_decision(
+                message, RouteTask.CHAT, RouteDomain.GENERAL
+            )
+        if any(word in text for word in ("写一首诗", "写首诗", "讲个笑话", "天气怎么样")):
+            return cls._build_route_decision(
+                message, RouteTask.CHAT, RouteDomain.GENERAL
+            )
+        if any(word in text for word in ("转人工", "人工客服", "找人工", "真人客服")):
+            return cls._build_route_decision(
+                message, RouteTask.TRANSFER_HUMAN, RouteDomain.GENERAL
+            )
+
+        if re.fullmatch(r"(确认|确定|好的|行|可以|同意|取消|放弃)[！!。.]?", text):
+            last_agent = (context or {}).get("last_agent")
+            last_intent = (context or {}).get("last_intent")
+            if last_agent == "operator" or last_intent == "business_operation":
+                return cls._build_route_decision(
+                    message,
+                    RouteTask.EXECUTE,
+                    RouteDomain.TRANSACTION,
+                    confidence=1.0,
+                    source="context_rule",
+                )
+            return cls._build_route_decision(
+                message,
+                RouteTask.UNKNOWN,
+                RouteDomain.GENERAL,
+                confidence=0.45,
+                source="context_rule",
+                alternatives=["继续上一项业务操作", "普通对话确认"],
+            )
+
+        current_entities = cls._extract_route_entities(message)
+        previous_entities = (context or {}).get("entities", {})
+        inherited_customer_id = (
+            current_entities.get("customer_id")
+            or (
+                previous_entities.get("customer_id")
+                if isinstance(previous_entities, dict)
+                else None
+            )
+        )
+        is_advisor_followup = (
+            (context or {}).get("last_agent") == "advisor"
+            or (context or {}).get("last_intent") == "investment_recommendation"
+        )
+        if (
+            inherited_customer_id
+            and current_entities.get("amount") is not None
+            and (
+                is_advisor_followup
+                or "投资" in text
+                or any(word in text for word in ("这个客户", "该客户", "他要", "她要"))
+            )
+            and not any(word in text for word in ("申购", "赎回", "转账", "购买"))
+        ):
+            return cls._build_route_decision(
+                message,
+                RouteTask.RECOMMEND,
+                RouteDomain.PRODUCT,
+                confidence=0.98,
+                source="context_rule",
+                entities={
+                    **(
+                        previous_entities
+                        if isinstance(previous_entities, dict)
+                        else {}
+                    ),
+                    **current_entities,
+                    "customer_id": int(inherited_customer_id),
+                },
+            )
+
+        # R1-R5 here is a product attribute, not a risk-monitoring request.
+        if (
+            re.search(r"(?<![A-Za-z0-9])[Rr][1-5](?![A-Za-z0-9])", text)
+            and any(word in text for word in ("产品", "基金", "理财"))
+            and any(word in text for word in ("查询", "查", "筛选", "列出", "哪些", "所有"))
+        ):
+            level = re.search(
+                r"(?<![A-Za-z0-9])([Rr][1-5])(?![A-Za-z0-9])",
+                text,
+            )
+            return cls._build_route_decision(
+                message,
+                RouteTask.QUERY,
+                RouteDomain.PRODUCT,
+                entities={"risk_level": level.group(1).upper()} if level else {},
+            )
+
+        # A report changes system state; a check only inspects risk.
+        if re.search(r"(上报|提交|登记).{0,6}(可疑|异常)", text):
+            return cls._build_route_decision(
+                message, RouteTask.EXECUTE, RouteDomain.RISK
+            )
+        if re.search(
+            r"(核查|检测|识别|排查|监测|查看|查询|查一下|查下|有没有).{0,10}(可疑|异常|风险|预警)"
+            r"|(可疑|异常|风险|预警).{0,10}(核查|检测|识别|排查|监测|记录)",
+            text,
+        ):
+            return cls._build_route_decision(
+                message, RouteTask.RISK_CHECK, RouteDomain.RISK
+            )
+
+        # Explanatory qualifiers override a bare financial operation noun.
+        informational = (
+            "手续费",
+            "费率",
+            "规则",
+            "多久",
+            "怎么收",
+            "如何计算",
+            "是什么",
+            "有什么要求",
+            "有什么区别",
+            "是否支持",
+            "确认时间",
+        )
+        financial_terms = (
+            "产品",
+            "基金",
+            "理财",
+            "申购",
+            "赎回",
+            "转账",
+            "收益",
+            "年化",
+            "监管",
+            "政策",
+            "服务",
+        )
+        if any(word in text for word in informational) and any(
+            word in text for word in financial_terms
+        ):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # Read-only structured queries must not be swallowed by advisor/operator.
+        if "工单" in text and any(
+            word in text for word in ("查询", "查", "进度", "状态", "列表", "哪些")
+        ):
+            return cls._build_route_decision(
+                message, RouteTask.QUERY, RouteDomain.WORK_ORDER
+            )
+        query_markers = (
+            "查询",
+            "查一下",
+            "查下",
+            "列出",
+            "列表",
+            "明细",
+            "记录",
+            "所有",
+            "多少",
+            "统计",
+            "排名",
+            "趋势",
+            "占比",
+            "平均",
+            "超过",
+            "低于",
+        )
+        query_domains = (
+            "客户",
+            "用户",
+            "产品",
+            "持仓",
+            "交易",
+            "资产",
+            "收益",
+            "工单",
+            "画像",
+            "流水",
+        )
+        if any(word in text for word in query_markers) and any(
+            word in text for word in query_domains
+        ):
+            return cls._build_route_decision(message, RouteTask.QUERY)
+
+        if any(
+            word in text
+            for word in (
+                "推荐",
+                "筛选",
+                "找产品",
+                "配置建议",
+                "资产配置",
+                "怎么配置",
+                "如何配置",
+            )
+        ):
+            return cls._build_route_decision(message, RouteTask.RECOMMEND)
+        if any(
+            word in text
+            for word in ("持仓分析", "分析持仓", "行业分布", "集中度", "仓位建议", "投资组合")
+        ) or (
+            "持仓" in text and any(word in text for word in ("分析", "建议", "诊断", "评估"))
+        ):
+            return cls._build_route_decision(message, RouteTask.ANALYZE)
+        if any(word in text for word in ("对比", "比较")) and any(
+            word in text for word in ("产品", "客户", "基金", "持仓", "组合")
+        ):
+            return cls._build_route_decision(message, RouteTask.ANALYZE)
+
+        explicit_operations = (
+            "创建工单",
+            "关闭工单",
+            "处理工单",
+            "更新手机",
+            "更新邮箱",
+            "修改联系方式",
+            "风评重做",
+            "重新风险评估",
+            "确认购买",
+            "批量更新",
+            "批量评估",
+        )
+        operation_terms = ("申购", "赎回", "转账给", "转到", "转出", "开户", "购买")
+        action_markers = (
+            "我要",
+            "我想",
+            "帮我",
+            "请帮",
+            "给客户",
+            "替客户",
+            "立即",
+            "马上",
+            "办理",
+            "执行",
+        )
+        has_specific_parameter = bool(
+            re.search(r"\d+\s*(?:万|万元|元|份)", text)
+            or re.search(r"客户(?:ID|编号)?\s*\d+", text, re.I)
+        )
+        if any(word in text for word in explicit_operations) or (
+            any(word in text for word in operation_terms)
+            and (
+                any(word in text for word in action_markers)
+                or has_specific_parameter
+                or text.startswith(("申购", "赎回", "转账", "开户"))
+            )
+        ):
+            return cls._build_route_decision(message, RouteTask.EXECUTE)
+
+        if any(
+            word in text
+            for word in ("监管政策", "最新政策", "资管新规", "了解一下", "有什么年化", "有什么理财")
+        ):
+            return cls._build_route_decision(message, RouteTask.FAQ)
         return None
+
+    @classmethod
+    def _keyword_quick_route(cls, message: str) -> Optional[tuple]:
+        """Backward-compatible tuple view of the deterministic rule decision."""
+        decision = cls._rule_route_decision(message)
+        if decision is None or decision.task == RouteTask.UNKNOWN:
+            return None
+        logger.info(
+            "Router确定性规则命中: task=%s domain=%s intent=%s",
+            decision.task.value,
+            decision.domain.value,
+            decision.intent,
+        )
+        return decision.intent, decision.confidence, decision.legacy_params()
 
     @staticmethod
     def _extract_router_params(text: str) -> dict:
@@ -358,13 +758,11 @@ class IntentService:
     @staticmethod
     def _regex_extract_intent(text: str) -> str:
         """从文本中用正则提取意图（兜底方案）"""
-        import re
         text_lower = text.lower()
-        # 直接搜索意图关键词
         for intent in ROUTER_INTENTS:
             if intent in text_lower:
                 return intent
-        return "product_faq"
+        return "clarification"
 
     @staticmethod
     def _extract_router_intent(text: str) -> str:
@@ -397,80 +795,279 @@ class IntentService:
             if intent in text_clean.lower():
                 return intent
 
-        return "product_faq"  # 最终兜底
+        return "clarification"
 
-    async def classify_router(self, message: str) -> Tuple[str, float, dict]:
-        """Router Agent 统一意图分类（6类）
+    @classmethod
+    def _parse_supervisor_decision(
+        cls,
+        text: str,
+        message: str,
+    ) -> RouteDecision:
+        import json
+        import re
 
-        流程：关键词快速通道 → LLM分类 → 意图提取 + 参数提取
-
-        Returns:
-            (intent, confidence, params_dict)
-        """
-        # 1. 关键词快速通道
-        quick = self._keyword_quick_route(message)
-        if quick:
-            return quick
-
-        # 2. 加载Router分类 Prompt
-        prompt = self._load_prompt("router_intent.txt", self._default_router_prompt)
-
-        # 3. 调用LLM
+        cleaned = cls._strip_reasoning(text)
         try:
-            prompt_text = prompt.format(user_message=message)
-            result = await self.llm.classify(prompt_text, temperature=0.1, max_tokens=256)
-            result = result.strip()
+            data = json.loads(cleaned)
+        except (json.JSONDecodeError, TypeError):
+            match = re.search(r"\{[\s\S]*\}", cleaned)
+            if not match:
+                raise ValueError("LLM route response contains no JSON object")
+            data = json.loads(match.group())
 
-            # 调试日志：打印 LLM 原始输出（替换换行符避免日志格式混乱）
-            result_display = result.replace('\n', '\\n')[:200]
-            logger.info(f"Router LLM 原始输出 | len={len(result)} | text={result_display}...")
+        try:
+            task = RouteTask(str(data.get("task", "UNKNOWN")).upper())
+        except ValueError:
+            task = RouteTask.UNKNOWN
+        try:
+            domain = RouteDomain(str(data.get("domain", "UNKNOWN")).upper())
+        except ValueError:
+            domain = cls._domain_for_message(message)
 
-            # 4. 提取意图（容错：单步异常不中断）
-            try:
-                intent = self._extract_router_intent(result)
-            except Exception as e:
-                logger.warning(f"Router 意图提取异常: {type(e).__name__}: {e}，尝试正则兜底")
-                intent = self._regex_extract_intent(result)
+        raw_confidence = data.get("confidence", 0.0)
+        try:
+            confidence = max(0.0, min(float(raw_confidence), 0.89))
+        except (TypeError, ValueError):
+            confidence = 0.0
 
-            # 5. 提取参数（容错）
-            try:
-                params = self._extract_router_params(result)
-            except Exception as e:
-                logger.warning(f"Router 参数提取异常: {type(e).__name__}: {e}，使用默认参数")
-                params = {"customer_name": None, "customer_id": None,
-                          "product_name": None, "amount": None,
-                          "transaction_type": None}
+        supplied_entities = data.get("entities")
+        if not isinstance(supplied_entities, dict):
+            supplied_entities = data.get("params")
+        if not isinstance(supplied_entities, dict):
+            supplied_entities = {}
+        entities = {
+            **cls._extract_route_entities(message),
+            **{key: value for key, value in supplied_entities.items() if value is not None},
+        }
+        alternatives = data.get("alternatives")
+        if not isinstance(alternatives, list):
+            alternatives = []
 
-            # 6. 置信度
-            confidence = 0.90 if intent != "chitchat" else 0.75
+        decision = cls._build_route_decision(
+            message,
+            task,
+            domain,
+            confidence=confidence,
+            source="llm_supervisor",
+            alternatives=[str(item) for item in alternatives[:2]],
+            entities=entities,
+        )
+        if task == RouteTask.UNKNOWN or confidence < 0.70:
+            decision.needs_clarification = True
+            decision.clarification_question = str(
+                data.get("clarification_question")
+                or "你希望查询信息、获取分析建议，还是执行一项具体业务？"
+            )
+        return decision
 
-            logger.info(f"Router分类完成 | message={message[:40]}... | intent={intent} | confidence={confidence}")
-            return intent, confidence, params
+    async def decide_route(
+        self,
+        message: str,
+        *,
+        user_role: str = "客户",
+        context: dict | None = None,
+    ) -> RouteDecision:
+        """Return one reusable top-level route decision for the whole request."""
+        rule_decision = self._rule_route_decision(message, context=context)
+        if rule_decision is not None:
+            logger.info(
+                "Router规则决策 | task=%s | domain=%s | intent=%s",
+                rule_decision.task.value,
+                rule_decision.domain.value,
+                rule_decision.intent,
+            )
+            return rule_decision
 
-        except Exception as e:
-            logger.error(f"Router分类失败: {type(e).__name__}: {str(e)[:100]}，兜底为 product_faq")
-            return "product_faq", 0.5, {"customer_name": None, "customer_id": None,
-                                         "product_name": None, "amount": None,
-                                         "transaction_type": None}
+        prompt = self._load_prompt("router_intent.txt", self._default_router_prompt)
+        context = context or {}
+        context_summary = {
+            "last_intent": context.get("last_intent"),
+            "last_agent": context.get("last_agent"),
+            "entities": context.get("entities", {}),
+        }
+        try:
+            import asyncio
+
+            prompt_text = prompt.format(
+                user_message=message,
+                user_role=user_role,
+                context_summary=str(context_summary),
+            )
+            result = await asyncio.wait_for(
+                self.llm.classify(
+                    prompt_text, temperature=0.1, max_tokens=320
+                ),
+                timeout=ROUTER_LLM_TIMEOUT_SECONDS,
+            )
+            decision = self._parse_supervisor_decision(result.strip(), message)
+            logger.info(
+                "Router LLM决策 | task=%s | domain=%s | confidence=%.2f",
+                decision.task.value,
+                decision.domain.value,
+                decision.confidence,
+            )
+            return decision
+        except Exception as exc:
+            logger.error(
+                "Router LLM分类失败: %s: %s，转为澄清",
+                type(exc).__name__,
+                str(exc)[:120],
+            )
+            decision = self._build_route_decision(
+                message,
+                RouteTask.UNKNOWN,
+                self._domain_for_message(message),
+                confidence=0.0,
+                source="fallback",
+            )
+            decision.needs_clarification = True
+            decision.clarification_question = (
+                "我暂时无法准确判断你的目标。请说明你是想查询信息、"
+                "获取分析建议，还是执行具体业务操作。"
+            )
+            return decision
+
+    @staticmethod
+    def _split_compound_message(message: str) -> list[str]:
+        """Split explicit compound requests while keeping ordinary prose intact."""
+        import re
+
+        normalized = message.strip()
+        for connector in ("顺便", "同时", "然后", "另外", "并且", "接着"):
+            normalized = normalized.replace(connector, "，")
+        normalized = re.sub(
+            r"再(?=(?:帮我|请|查询|查|推荐|分析|核查|检测|上报|创建|申购|赎回|转账))",
+            "，",
+            normalized,
+        )
+        normalized = re.sub(r"[,，]{2,}", "，", normalized)
+        clauses = [
+            clause.strip(" \t\r\n,，。；;")
+            for clause in re.split(r"[,，；;。]+", normalized)
+        ]
+        return [clause for clause in clauses if clause][:4]
+
+    async def plan_route(
+        self,
+        message: str,
+        *,
+        user_role: str = "客户",
+        context: dict | None = None,
+    ) -> RoutePlan:
+        """Build a bounded multi-intent plan, falling back to a single decision."""
+        clauses = self._split_compound_message(message)
+        if len(clauses) <= 1:
+            decision = await self.decide_route(
+                message, user_role=user_role, context=context
+            )
+            return RoutePlan(
+                original_message=message,
+                tasks=[decision],
+                execution_mode="single",
+                decision_source=decision.decision_source,
+            )
+
+        decisions = [
+            await self.decide_route(
+                clause,
+                user_role=user_role,
+                context=context,
+            )
+            for clause in clauses
+        ]
+        non_chat = [
+            decision
+            for decision in decisions
+            if decision.task != RouteTask.CHAT
+        ]
+        global_entities = self._extract_route_entities(message)
+
+        # A fragment such as "我有50万" is context for the one actionable task,
+        # not a second intent that needs clarification.
+        actionable = [
+            decision
+            for decision in non_chat
+            if not (
+                decision.task == RouteTask.UNKNOWN
+                and bool(decision.entities)
+            )
+        ]
+        ready = [
+            decision
+            for decision in actionable
+            if decision.task != RouteTask.UNKNOWN
+        ]
+        if len(ready) == 1 and len(actionable) <= 1:
+            decision = ready[0]
+            decision.entities = {**global_entities, **decision.entities}
+            return RoutePlan(
+                original_message=message,
+                tasks=[decision],
+                execution_mode="single",
+                decision_source="compound_context",
+            )
+
+        if len(actionable) < 2:
+            decision = await self.decide_route(
+                message, user_role=user_role, context=context
+            )
+            return RoutePlan(
+                original_message=message,
+                tasks=[decision],
+                execution_mode="single",
+                decision_source=decision.decision_source,
+            )
+
+        has_write = any(
+            decision.task == RouteTask.EXECUTE for decision in actionable
+        )
+        return RoutePlan(
+            original_message=message,
+            tasks=actionable,
+            execution_mode=(
+                "mixed_requires_confirmation" if has_write else "safe_sequential"
+            ),
+            decision_source="compound_split",
+        )
+
+    async def classify_router(
+        self,
+        message: str,
+        *,
+        user_role: str = "客户",
+        context: dict | None = None,
+    ) -> Tuple[str, float, dict]:
+        """Backward-compatible tuple API backed by :meth:`decide_route`."""
+        decision = await self.decide_route(
+            message, user_role=user_role, context=context
+        )
+        return decision.intent, decision.confidence, decision.legacy_params()
 
     @staticmethod
     def _default_router_prompt() -> str:
         """Router 分类默认 Prompt（文件缺失时的兜底）"""
-        return """你是金融智能服务平台的路由分类器。请将用户消息分类到以下6种意图之一，并提取关键参数。
+        return """你是金融财富助手的路由监督器。请同时识别任务类型和业务领域。
 
-6种意图：
-- product_faq：产品咨询、FAQ、规则说明、问候
-- investment_recommendation：推荐产品、资产配置、持仓分析、客户对比
-- risk_control：异常交易、风险识别、合规检查、可疑上报
-- data_analysis：数据统计、收益分析、用户分析
-- business_operation：申购、赎回、转账、开户、信息更新
-- chitchat：纯闲聊（与金融业务完全无关）
+任务类型：CHAT, FAQ, QUERY, ANALYZE, RECOMMEND, EXECUTE, RISK_CHECK,
+TRANSFER_HUMAN, UNKNOWN。
+业务领域：GENERAL, PRODUCT, HOLDING, TRANSACTION, CUSTOMER, WORK_ORDER,
+RISK, POLICY, UNKNOWN。
 
-输出格式（仅输出 JSON，无其他内容）：
-{{"intent": "意图标识符", "confidence": 0.90, "params": {{"customer_name": null, "customer_id": null, "product_name": null, "amount": null, "transaction_type": null}}}}
+区分语义动作：
+- “赎回手续费怎么收”是 FAQ；“帮我赎回10万元”是 EXECUTE。
+- “核查可疑交易”是 RISK_CHECK；“上报可疑交易”是 EXECUTE。
+- “查询持仓明细”是 QUERY；“分析持仓并给建议”是 ANALYZE。
+- 无法可靠区分时输出 UNKNOWN，不得默认成 FAQ。
 
+只输出JSON：
+{{"task":"QUERY","domain":"HOLDING","confidence":0.85,
+"alternatives":[],"entities":{{"customer_name":null,"customer_id":null,
+"product_name":null,"amount":null,"transaction_type":null}},
+"clarification_question":null}}
+
+用户身份：{user_role}
+会话上下文：{context_summary}
 用户输入："{user_message}"
-
 JSON："""
 
     @staticmethod
