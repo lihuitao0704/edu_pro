@@ -37,6 +37,13 @@ def _risk_number(value: Any, prefix: str) -> int:
     return number
 
 
+def _product_category(product_type: Any) -> str:
+    """Normalize catalogue labels such as ``股票`` and ``股票型`` to one category."""
+    if not isinstance(product_type, str):
+        return ""
+    return product_type.strip().removesuffix("型")
+
+
 def build_asset_allocation(risk_code: str) -> dict[str, float]:
     """Return a copy of the canonical allocation template for one risk code."""
     code = normalize_risk_level(risk_code).risk_level_code
@@ -60,8 +67,34 @@ def build_product_preference(
         and product.get("id") is not None
         and product.get("product_code")
     ]
-    candidates.sort(key=lambda product: (_risk_number(product["risk_level"], "R"), product["product_code"]))
-    selected = candidates[:3]
+    preferred_types = _PREFERRED_PRODUCT_TYPES[normalized.risk_level_code]
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[Any] = set()
+    for product_type in preferred_types:
+        matching_type = [
+            product for product in candidates
+            if _product_category(product.get("product_type")) == product_type
+        ]
+        if matching_type:
+            product = min(
+                matching_type,
+                key=lambda item: (
+                    maximum_risk - _risk_number(item["risk_level"], "R"),
+                    item["product_code"],
+                ),
+            )
+            selected.append(product)
+            selected_ids.add(product["id"])
+        if len(selected) == 3:
+            break
+    remaining = [product for product in candidates if product["id"] not in selected_ids]
+    remaining.sort(
+        key=lambda item: (
+            maximum_risk - _risk_number(item["risk_level"], "R"),
+            item["product_code"],
+        )
+    )
+    selected.extend(remaining[: 3 - len(selected)])
     if not selected:
         raise ValueError("没有可用在售产品")
 
@@ -86,11 +119,11 @@ def build_product_preference(
 
 def is_empty_json(value: object) -> bool:
     """Treat null, blank and empty JSON objects as eligible for backfill."""
-    if value is None or value == "" or value == {}:
+    if value is None or value == "" or value == {} or value == []:
         return True
     if isinstance(value, str):
         try:
-            return json.loads(value) == {}
+            return json.loads(value) in ({}, [])
         except json.JSONDecodeError:
             return False
     return False
