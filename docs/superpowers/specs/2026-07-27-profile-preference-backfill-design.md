@@ -38,7 +38,10 @@ decimal proportions and summing exactly to `1.00`.
 - `preferred_product_types`: ordered product categories consistent with the
   allocation template.
 - `candidate_products`: up to three real, in-sale products. Each entry records
-  `product_code`, `product_name`, `product_type`, and `risk_level`.
+  `product_id`, `product_code`, `product_name`, `product_type`, and
+  `risk_level`. `product_id` and `product_code` must identify the same row in
+  `fin_product`; they form the explicit reference from the profile JSON back
+  to the product catalogue.
 - `generated_at`: UTC ISO-8601 timestamp for traceability.
 
 Candidates are chosen deterministically by lowest risk first and then product
@@ -55,8 +58,9 @@ is unchanged.
    missing field.
 4. Update only the missing JSON columns in a transaction.
 5. Verify every updated field is non-empty, each allocation sums to `1.00`,
-   every candidate product exists and is in sale, and no candidate product's
-   `R` level exceeds its customer's `C` level.
+   every candidate product has a matching `(id, product_code)` row in
+   `fin_product` and is in sale, and no candidate product's `R` level exceeds
+   its customer's `C` level.
 
 ## Error Handling
 
