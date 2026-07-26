@@ -121,3 +121,25 @@ def test_customer_entity_extraction_rejects_common_nouns():
         ]
         == "张三"
     )
+
+
+def test_employee_recommendation_extracts_named_customer_and_drops_stale_id():
+    decision = IntentService._rule_route_decision(
+        "给郭丽推荐一下产品",
+        context={
+            "last_agent": "advisor",
+            "last_intent": "investment_recommendation",
+            "entities": {"customer_id": 101},
+        },
+    )
+
+    assert decision.intent == "investment_recommendation"
+    assert decision.entities["customer_name"] == "郭丽"
+    assert "customer_id" not in decision.entities
+
+
+def test_explicit_customer_id_is_not_misread_as_customer_name():
+    entities = IntentService._extract_route_entities("给客户ID 1推荐产品")
+
+    assert entities["customer_id"] == 1
+    assert "customer_name" not in entities
