@@ -32,13 +32,13 @@ _SENSITIVE_PATTERNS = [
 ]
 
 _RISK_AWARE_BLOCK_REPLY_HIGH = (
-    "⚠️ **风控拦截**：系统检测到您的账户当前处于**高风险关注状态**，"
-    "该操作已被暂停。请联系您的理财顾问或拨打客服热线处理。"
+    "为了保护您的资金安全，这笔交易暂时无法通过智能助手继续提交。"
+    "请先在业务页面查看风险提示并申请人工复核；审核完成后再办理交易。"
 )
 
 _RISK_AWARE_REPLY_MEDIUM = (
-    "\n\n---\nℹ️ **温馨提示（C4联动）**：您的账户近期有交易活动触发风控关注。"
-    "如涉及大额交易，系统可能会要求二次确认。如有疑问请联系客服。"
+    "\n\n---\nℹ️ **账户提示**：您的账户近期有待关注事项。"
+    "如办理大额交易，可能需要补充确认或人工复核。"
 )
 
 
@@ -238,6 +238,17 @@ class ChatOrchestrator:
     @staticmethod
     def _is_sensitive_query(message: str) -> bool:
         """检测用户消息是否涉及敏感金融操作"""
+        # A question or an initial intention is not an executable transaction.
+        # Hard risk interception is reserved for a concrete final submission.
+        has_amount = bool(
+            re.search(r"\d+(?:\.\d+)?\s*(?:万|万元|元|份)", message)
+        )
+        has_submit_marker = any(
+            marker in message
+            for marker in ("确认提交", "确认交易", "立即执行", "马上执行", "现在就提交")
+        )
+        if not (has_amount and has_submit_marker):
+            return False
         for pattern in _SENSITIVE_PATTERNS:
             if re.search(pattern, message):
                 return True

@@ -36,6 +36,7 @@ class CustomerContextContractTests(unittest.IsolatedAsyncioTestCase):
         from app.service.intent_service import IntentService
 
         router = RouterAgent(AsyncMock())
+        router.intent_service = IntentService()
         router.intent_service.decide_route = AsyncMock(
             return_value=IntentService._build_route_decision(
                 "评估我的持仓", RouteTask.ANALYZE, RouteDomain.HOLDING
@@ -54,6 +55,7 @@ class CustomerContextContractTests(unittest.IsolatedAsyncioTestCase):
         from app.service.intent_service import IntentService
 
         router = RouterAgent(AsyncMock())
+        router.intent_service = IntentService()
         router.intent_service.decide_route = AsyncMock(
             return_value=IntentService._build_route_decision(
                 "评估客户持仓", RouteTask.ANALYZE, RouteDomain.HOLDING

@@ -16,6 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.config.database import get_db
 from app.model.entities import ConversationArchive, FinChatFeedback, FinChatSession
+from app.model.route_decision import RouteDecision
 from app.model.schemas import UnifiedChatRequest, UnifiedChatResponse
 from app.agent.router_agent import RouterAgent
 from app.utils.response import success, error
@@ -196,10 +197,10 @@ async def unified_chat(
         return success(data=result.model_dump())
     except Exception as e:
         logger.error(f"统一入口异常: {e}", exc_info=True)
-        return error(500, f"服务异常: {str(e)}")
+        return error(500, "服务暂时不可用，请稍后重试。")
 
 
-@router.api_route("/chat/stream", methods=["GET", "POST"])
+@router.post("/chat/stream")
 async def unified_chat_stream(
     req: UnifiedChatRequest,
     db: AsyncSession = Depends(get_db),
@@ -250,8 +251,8 @@ async def unified_chat_stream(
         # SSE 异常也尝试以流式返回错误
         async def error_stream():
             import json
-            yield {"event": "meta", "data": json.dumps({"error": str(e)})}
-            yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
+            yield {"event": "meta", "data": json.dumps({"error": "service_unavailable"})}
+            yield {"event": "delta", "data": json.dumps({"content": "服务暂时不可用，请稍后重试。"})}
             yield {"event": "done", "data": json.dumps({"session_id": session_id})}
         return EventSourceResponse(error_stream())
 
@@ -319,6 +320,12 @@ async def unified_chat_stream_v2(
             route_decision = (
                 route_plan.tasks[0] if not route_plan.is_multi_intent else None
             )
+            if (
+                route_decision is not None
+                and route_decision.intent == "investment_recommendation"
+                and actor_role == "客户"
+            ):
+                route_decision.entities["customer_id"] = actor_id
             intent = (
                 "multi_intent"
                 if route_plan.is_multi_intent
@@ -338,6 +345,9 @@ async def unified_chat_stream_v2(
     # ── 投顾意图 → 真流式 ──
     if intent == "investment_recommendation":
         safe_input = routing_message
+        subject_customer_id = get_stream_subject_customer_id(
+            user, req.user_id, route_decision
+        )
 
         async def advisor_event_stream():
             from app.agent.advisor_agent import AdvisorAgent
@@ -346,7 +356,7 @@ async def unified_chat_stream_v2(
             try:
                 async for evt in agent.stream_execute(
                     safe_input,
-                    customer_id=get_subject_customer_id(user, req.user_id),
+                    customer_id=subject_customer_id,
                     audience_role=get_request_role_from_user(user),
                 ):
                     # 过滤掉 py 对象，确保 JSON 可序列化
@@ -366,12 +376,41 @@ async def unified_chat_stream_v2(
                 logger.error(f"投顾流式异常: {e}", exc_info=True)
                 yield {
                     "event": "error",
-                    "data": json.dumps({"message": str(e)}, ensure_ascii=False),
+                    "data": json.dumps(
+                        {"message": "当前智能投顾服务繁忙，请稍后重试。"},
+                        ensure_ascii=False,
+                    ),
                 }
 
             # 流结束后按真实账户归档完整轮次，并写入会话所有权记录。
             try:
                 final_reply = str(final_payload.get("reply") or "")
+                remembered_entities = dict(
+                    route_decision.entities if route_decision is not None else {}
+                )
+                if subject_customer_id is not None:
+                    remembered_entities["customer_id"] = subject_customer_id
+                recommendations = final_payload.get("recommendations")
+                if isinstance(recommendations, list) and recommendations:
+                    first = recommendations[0]
+                    if isinstance(first, dict):
+                        product_name = (
+                            first.get("product_name")
+                            or first.get("name")
+                        )
+                        product_id = first.get("product_id") or first.get("id")
+                        if product_name:
+                            remembered_entities["product_name"] = product_name
+                        if product_id:
+                            remembered_entities["product_id"] = product_id
+                await MemoryManager(db=db).save_context(
+                    session_id,
+                    actor_id,
+                    remembered_entities,
+                    last_intent="investment_recommendation",
+                    last_agent="advisor",
+                    pending_route_decision=None,
+                )
                 await MemoryService(db).archive_turn(
                     session_id, actor_id, "advisor", safe_input, final_reply
                 )
@@ -415,8 +454,8 @@ async def unified_chat_stream_v2(
     except Exception as e:
         logger.error(f"统一入口SSE v2异常: {e}", exc_info=True)
         async def error_stream():
-            yield {"event": "meta", "data": json.dumps({"error": str(e)})}
-            yield {"event": "delta", "data": json.dumps({"content": f"服务异常: {str(e)}"})}
+            yield {"event": "meta", "data": json.dumps({"error": "service_unavailable"})}
+            yield {"event": "delta", "data": json.dumps({"content": "服务暂时不可用，请稍后重试。"})}
             yield {"event": "done", "data": json.dumps({"session_id": session_id})}
         return EventSourceResponse(error_stream())
 
@@ -489,3 +528,23 @@ def get_subject_customer_id(user: dict, claimed_user_id: int) -> int | None:
         return actor_id
     target_id = int(claimed_user_id or 0)
     return target_id or None
+
+
+def get_stream_subject_customer_id(
+    user: dict,
+    claimed_user_id: int,
+    route_decision: RouteDecision | None,
+) -> int | None:
+    """Prefer an explicit ID from this turn over a stale selected target."""
+    explicit_customer_id = (
+        route_decision.entities.get("customer_id")
+        if route_decision is not None
+        and isinstance(route_decision.entities, dict)
+        else None
+    )
+    return get_subject_customer_id(
+        user,
+        explicit_customer_id
+        if explicit_customer_id is not None
+        else claimed_user_id,
+    )

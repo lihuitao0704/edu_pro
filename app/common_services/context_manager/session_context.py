@@ -92,10 +92,10 @@ class SessionContextStore:
         redis = await self._get_redis()
         if redis:
             try:
-                await redis.setex(
+                await redis.set(
                     self._redis_key(session_id, actor_id),
-                    int(_SESSION_TTL.total_seconds()),
                     json.dumps(payload, ensure_ascii=False, default=str),
+                    ex=int(_SESSION_TTL.total_seconds()),
                 )
             except Exception as exc:
                 logger.warning("Redis 写入 session context 失败: %s", exc)

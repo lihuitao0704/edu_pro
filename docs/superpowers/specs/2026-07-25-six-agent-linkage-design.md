@@ -29,7 +29,7 @@
 ```python
 {
     "event_id": "uuid",
-    "event_type": "risk_alert_created",
+    "event_type": "risk.alert.created",
     "version": 1,
     "source_agent": "risk",
     "customer_id": 27,
@@ -45,8 +45,11 @@
 
 | 事件 | 生产者 | 消费者 | 有效结果 |
 |---|---|---|---|
-| `transaction_completed` | 业务操作 | 风控、客户画像 | 风控规则评估；画像重新研判/缓存失效 |
-| `risk_alert_created` | 风控 | 客户画像、投顾、客服 | 风险标记、推荐约束、客服待触达任务 |
+| `transaction.completed` | 业务操作 | 客户画像 | 成功交易提交后清除画像缓存 |
+| `risk.alert.created` | 风控 | 客户画像、投顾、客服 | 动态风险标记、推荐约束、客服注意上下文 |
+| `risk.alert.processing` | 风控 | 客户画像、投顾、客服 | 保留未结束预警的最高风险约束，更新处理状态 |
+| `risk.alert.resolved` | 风控 | 客户画像、投顾、客服 | 按剩余活动预警重算；无剩余预警时恢复正常 |
+| `risk.alert.false_positive` | 风控 | 客户画像、投顾、客服 | 按剩余活动预警重算并移除误报影响 |
 | `recommendation_feedback` | 投顾 | 客户画像、投顾 | 更新偏好信号，后续推荐排除已拒绝类别 |
 | `analytics_insight` | 数据分析 | 客户画像、投顾、风控 | 只消费经白名单提取的盈亏/频率洞察 |
 | `customer_sentiment` | 客服 | 客户画像 | 写入短期情绪标签和证据，不改变正式风险等级 |
@@ -63,7 +66,11 @@
 - medium：创建待复核风险记录，业务操作返回“待风控复核”，不写交易流水。
 - high：拒绝执行，创建预警；客服仅获得待触达任务，不调用外部推送。
 
-已执行的成功交易仍发 `transaction_completed`，供风控进行后验监控、画像重算和图谱同步。风险事件由 `RiskMonitorService` 统一发出 `risk_alert_created`；投顾不再自己订阅 Redis 修改风险标记。
+风险判断必须在资金变化前同步完成，避免“先成交、后发现应该拦截”。成功交易提交后发出 `transaction.completed`，用于清除画像缓存；图谱同步继续采用现有补偿链路。
+
+风险事件由 `RiskMonitorService` 在业务事务内写入 Outbox。事务提交后，Relay 将标准事件发布到 Redis `event:agent_domain`。画像、投顾、客服、风控各自维护独立 Pub/Sub 连接和 `event_id + consumer` 幂等记录，Redis 实际完成广播，不再由 Relay 直接调用本地处理器。
+
+预警处理状态同样写入 Outbox。消费 `risk.alert.processing/resolved/false_positive` 时，以 MySQL 中该客户所有未结束预警为事实源重新汇总：仍有预警时保留最高动态风险；最后一条预警结束后才把 `risk_flag` 恢复为 `normal`、恢复投顾推荐范围并删除客服风险上下文。正式 C1-C5 风险等级始终不由该链路修改。
 
 ### 4.2 投顾推荐 → 拒绝反馈 → 客户画像 → 下一次推荐
 
@@ -95,11 +102,11 @@
 新增迁移必须可重复执行：
 
 - `product_recommendation` 的反馈字段与索引；
-- `agent_event_outbox`：事务内持久化事件，后台投递 Redis；
-- `agent_event_consumption`：消费者幂等记录；
+- `agent_event_outbox`：事务内持久化事件，后台 Relay 只负责投递 Redis；
+- `agent_event_consumption`：画像、投顾、客服、风控按消费者分别记录幂等领取；
 - `fin_customer_profile` 不新增正式风险等级字段，只在现有 JSON 字段存放 `feedback_signals`、`analytics_signals`、`sentiment_signals`。
 
-不再发布 C1/C2/C4 的多频道消息。保留 `event:risk_alert` 作为一版兼容读通道，但只映射为统一 `risk_alert_created`，并在迁移完成后移除旧订阅逻辑。
+新生产者不再发布 C1/C2/C4 多频道消息。旧频道只保留兼容订阅窗口；统一事件同时接受下划线旧事件名并映射为点分业务名，待历史 Outbox 清空后可移除兼容层。
 
 ## 6. 质量与验收
 

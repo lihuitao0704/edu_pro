@@ -305,17 +305,30 @@ class IntentService:
 
         customer_name = re.search(
             r"客户(?:姓名|名称)?(?:为|是|叫)?\s*"
-            r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9]{0,7})"
+            r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9]{0,7}?)"
             r"(?=的|持仓|账户|工单|交易|[,，。；;\s]|$)",
             message,
         )
-        if customer_name and customer_name.group(1) not in {
-            "所有",
-            "多少",
-            "哪些",
-            "查询",
-        }:
-            entities["customer_name"] = customer_name.group(1)
+        if customer_name:
+            candidate_name = customer_name.group(1)
+            non_names = {
+                "所有",
+                "多少",
+                "哪些",
+                "查询",
+                "数据",
+                "信息",
+                "名单",
+                "列表",
+                "的基金",
+                "的产品",
+                "的资料",
+            }
+            if (
+                candidate_name not in non_names
+                and not candidate_name.startswith("的")
+            ):
+                entities["customer_name"] = candidate_name
 
         amount = re.search(r"(\d+(?:\.\d+)?)\s*(万|万元|元)", message)
         if amount:
@@ -323,6 +336,18 @@ class IntentService:
             if amount.group(2) in {"万", "万元"}:
                 value *= 10000
             entities["amount"] = int(value) if value.is_integer() else value
+
+        term = re.search(r"(\d+)\s*(年|个月|月|天)", message)
+        if term:
+            value = int(term.group(1))
+            unit = term.group(2)
+            entities["term_days"] = (
+                value * 365
+                if unit == "年"
+                else value * 30
+                if unit in {"个月", "月"}
+                else value
+            )
 
         for transaction_type in ("申购", "赎回", "转账", "开户"):
             if transaction_type in message:
@@ -455,6 +480,41 @@ class IntentService:
                 message, RouteTask.TRANSFER_HUMAN, RouteDomain.GENERAL
             )
 
+        # Natural-language database mutations are never delegated to NL2SQL.
+        # Block them before generic query markers such as "客户数据" can match.
+        unsafe_data_mutation = (
+            re.search(
+                r"(?:删除|清空|插入|写入|新增).{0,12}"
+                r"(?:数据|数据库|数据表|表|客户|用户|记录|字段)",
+                text,
+            )
+            or re.search(
+                r"(?:修改|更新).{0,12}(?:数据库|数据表|表结构|全部客户|所有客户|字段)",
+                text,
+            )
+            or any(
+                keyword in text.lower()
+                for keyword in ("delete", "insert", "update", "drop", "truncate")
+            )
+        )
+        if unsafe_data_mutation:
+            decision = cls._build_route_decision(
+                message,
+                RouteTask.EXECUTE,
+                RouteDomain.CUSTOMER,
+                confidence=1.0,
+                source="safety_rule",
+            )
+            decision.intent = "unsafe_data_mutation"
+            decision.target_agent = "router"
+            decision.requires_confirmation = False
+            decision.blocked = True
+            decision.block_reason = (
+                "为保护业务数据，AI 助手不支持通过自然语言删除、插入或修改"
+                "数据库记录。如需办理合规业务操作，请使用业务操作页面。"
+            )
+            return decision
+
         if re.fullmatch(r"(确认|确定|好的|行|可以|同意|取消|放弃)[！!。.]?", text):
             last_agent = (context or {}).get("last_agent")
             last_intent = (context or {}).get("last_intent")
@@ -489,6 +549,114 @@ class IntentService:
             (context or {}).get("last_agent") == "advisor"
             or (context or {}).get("last_intent") == "investment_recommendation"
         )
+
+        def customer_route(
+            intent: str,
+            task: RouteTask,
+            domain: RouteDomain,
+            *,
+            confidence: float = 0.99,
+        ) -> RouteDecision:
+            decision = cls._build_route_decision(
+                message,
+                task,
+                domain,
+                confidence=confidence,
+                source="customer_self_service_rule",
+                entities=current_entities,
+            )
+            decision.intent = intent
+            decision.target_agent = "customer_account"
+            decision.requires_confirmation = False
+            return decision
+
+        # First-person account queries are owner-scoped capabilities, not
+        # unrestricted employee data analysis or internal risk monitoring.
+        if re.search(
+            r"(?:我的|本人|我账户|我账号).{0,8}(?:持仓|仓位|余额|可用资金|"
+            r"交易记录|交易流水|流水|风险等级|风评|账户信息|资产)"
+            r"|(?:查|查询|查看|看看).{0,5}我的(?:持仓|余额|交易|流水|风险)",
+            text,
+        ) and not any(
+            word in text for word in ("分析", "诊断", "评估", "建议", "行业分布", "集中度")
+        ):
+            domain = (
+                RouteDomain.HOLDING
+                if any(word in text for word in ("持仓", "仓位"))
+                else RouteDomain.TRANSACTION
+                if any(word in text for word in ("交易", "流水"))
+                else RouteDomain.RISK
+                if any(word in text for word in ("风险", "风评"))
+                else RouteDomain.CUSTOMER
+            )
+            return customer_route(
+                "customer_account_query", RouteTask.QUERY, domain
+            )
+
+        if (
+            re.search(
+                r"(?:为什么|为何|怎么回事|原因).{0,12}(?:预警|风险|限制|只能买|"
+                r"只能购买|R[1-5])",
+                text,
+                re.I,
+            )
+            or re.search(
+                r"(?:预警|风险限制).{0,8}(?:为什么|原因|怎么处理|如何处理|解除)",
+                text,
+            )
+            or text in {"我的账户有风险吗", "我有预警吗", "为什么有预警"}
+        ):
+            return customer_route(
+                "customer_risk_explanation", RouteTask.QUERY, RouteDomain.RISK
+            )
+
+        if any(
+            phrase in text
+            for phrase in (
+                "为什么只推荐这一款",
+                "为什么只推荐一个",
+                "为什么只有一个推荐",
+                "为什么只有这一款",
+            )
+        ):
+            return customer_route(
+                "customer_recommendation_explanation",
+                RouteTask.QUERY,
+                RouteDomain.PRODUCT,
+            )
+
+        # Short follow-ups inherit the prior recommendation instead of being
+        # reclassified as unrelated clarification.
+        if is_advisor_followup and (
+            current_entities.get("amount") is not None
+            or current_entities.get("term_days") is not None
+            or re.search(r"^(?:那|那么|再看|换成)?.{0,4}(?:债券|货币|基金|股票|混合)", text)
+            or any(
+                phrase in text
+                for phrase in (
+                    "为什么推荐",
+                    "这款产品风险如何",
+                    "这个产品风险如何",
+                    "适合我吗",
+                )
+            )
+        ):
+            return cls._build_route_decision(
+                message,
+                RouteTask.RECOMMEND,
+                RouteDomain.PRODUCT,
+                confidence=0.98,
+                source="advisor_followup_rule",
+                entities={
+                    **(
+                        previous_entities
+                        if isinstance(previous_entities, dict)
+                        else {}
+                    ),
+                    **current_entities,
+                },
+            )
+
         if (
             inherited_customer_id
             and current_entities.get("amount") is not None
@@ -514,6 +682,27 @@ class IntentService:
                     **current_entities,
                     "customer_id": int(inherited_customer_id),
                 },
+            )
+
+        # Natural investment language often contains modifiers between
+        # "如何/怎么" and "配置"; use bounded patterns rather than exact phrases.
+        if (
+            re.search(r"(?:如何|怎么).{0,10}(?:配置|投资|理财)", text)
+            or re.search(r"(?:稳健|保守|平衡|进取|低风险).{0,6}(?:方案|配置|产品|基金|理财)", text)
+            or any(
+                phrase in text
+                for phrase in (
+                    "给我一个稳健方案",
+                    "我想买基金",
+                    "我想买产品",
+                    "哪个产品适合我",
+                    "有什么低风险产品",
+                    "有什么稳健产品",
+                )
+            )
+        ):
+            return cls._build_route_decision(
+                message, RouteTask.RECOMMEND, RouteDomain.PRODUCT
             )
 
         # R1-R5 here is a product attribute, not a risk-monitoring request.
@@ -659,7 +848,7 @@ class IntentService:
             "批量更新",
             "批量评估",
         )
-        operation_terms = ("申购", "赎回", "转账给", "转到", "转出", "开户", "购买")
+        operation_terms = ("申购", "赎回", "转账", "转账给", "转到", "转出", "开户", "购买")
         action_markers = (
             "我要",
             "我想",
@@ -967,14 +1156,20 @@ class IntentService:
                 decision_source=decision.decision_source,
             )
 
-        decisions = [
-            await self.decide_route(
-                clause,
-                user_role=user_role,
-                context=context,
+        import asyncio
+
+        decisions = list(
+            await asyncio.gather(
+                *(
+                    self.decide_route(
+                        clause,
+                        user_role=user_role,
+                        context=context,
+                    )
+                    for clause in clauses
+                )
             )
-            for clause in clauses
-        ]
+        )
         non_chat = [
             decision
             for decision in decisions

@@ -20,6 +20,10 @@ from app.model.schemas import ApiResponse
 from app.service.transaction_flow_service import TransactionFlowService
 from app.service.agent_event_service import EventDispatcher
 from app.service.event_bus import build_transaction_completed_event
+from app.service.suitability_policy import (
+    evaluate_suitability,
+    validate_disclosure_ack,
+)
 from app.security.authorization import authenticated_actor_id, require_roles
 from app.tool.neo4j_sync import sync_holding
 
@@ -43,6 +47,54 @@ def calc_nav_time() -> str:
     else:
         from datetime import timedelta
         return (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+async def _check_disclosure_position_cap(
+    db: AsyncSession,
+    *,
+    customer_id: int,
+    product_id: int,
+    amount: Decimal,
+    max_position_ratio: float,
+) -> tuple[bool, str]:
+    """Ensure an exception purchase remains within its documented position cap."""
+    profile_row = await db.execute(
+        text(
+            "SELECT total_assets FROM fin_customer_profile "
+            "WHERE customer_id = :cid"
+        ),
+        {"cid": customer_id},
+    )
+    total_assets = profile_row.scalar()
+    if total_assets is None or Decimal(str(total_assets)) <= 0:
+        fallback = await db.execute(
+            text(
+                "SELECT COALESCE(SUM(current_value), 0) FROM fin_holdings "
+                "WHERE customer_id = :cid AND status = '持有中'"
+            ),
+            {"cid": customer_id},
+        )
+        total_assets = fallback.scalar()
+    total_assets_decimal = Decimal(str(total_assets or 0))
+    if total_assets_decimal <= 0:
+        return False, "无法核验客户总资产，暂不能执行需风险揭示的越级申购"
+
+    holding_row = await db.execute(
+        text(
+            "SELECT COALESCE(SUM(current_value), 0) FROM fin_holdings "
+            "WHERE customer_id = :cid AND product_id = :pid AND status = '持有中'"
+        ),
+        {"cid": customer_id, "pid": product_id},
+    )
+    existing_value = Decimal(str(holding_row.scalar() or 0))
+    ratio = (existing_value + amount) / total_assets_decimal
+    allowed_ratio = Decimal(str(max_position_ratio))
+    if ratio > allowed_ratio:
+        return (
+            False,
+            f"越级产品持仓占比将达到 {ratio:.2%}，超过规则上限 {allowed_ratio:.0%}",
+        )
+    return True, ""
 
 
 @router.post("/purchase")
@@ -100,18 +152,50 @@ async def purchase_product(
         return ApiResponse(code=400, message="客户尚未完成风险评估，无法申购",
                            trace_id=uuid.uuid4().hex[:8])
 
-    # 风险等级匹配: 中文 → R1-R5
-    customer_level = profile["risk_level"]
-    level_map = {"保守型":"R1","稳健型":"R2","平衡型":"R3","进取型":"R4","激进型":"R5","C1":"R1","C2":"R2","C3":"R3","C4":"R4","C5":"R5"}
-    customer_level = level_map.get(customer_level, customer_level.replace("C","R"))
-    product_level = product["risk_level"]
-    level_order = {"R1": 1, "R2": 2, "R3": 3, "R4": 4, "R5": 5}
-    if level_order.get(customer_level, 0) < level_order.get(product_level, 0):
+    suitability = evaluate_suitability(profile["risk_level"], product["risk_level"])
+    if not suitability.allowed:
         return ApiResponse(
             code=400,
-            message=f"适当性不匹配：客户风险等级 {profile['risk_level']}，产品风险等级 {product_level}",
+            message=(
+                f"适当性不匹配：客户风险等级 {suitability.customer_level}，"
+                f"产品风险等级 {suitability.product_level}，允许购买 "
+                f"{', '.join(suitability.allowed_product_levels)}"
+            ),
             trace_id=uuid.uuid4().hex[:8],
         )
+    disclosure_ack = body.get("risk_disclosure_ack")
+    if suitability.disclosure_required:
+        disclosure_actor_matches = (
+            isinstance(disclosure_ack, dict)
+            and int(disclosure_ack.get("acknowledged_by") or 0) == int(operator_id)
+        )
+        if (
+            not validate_disclosure_ack(disclosure_ack, suitability)
+            or not disclosure_actor_matches
+        ):
+            return ApiResponse(
+                code=428,
+                message=(
+                    f"本次申购须先完成风险揭示确认{suitability.disclosure_document}："
+                    f"{suitability.disclosure_text}"
+                ),
+                data={"risk_disclosure": suitability.to_dict()},
+                trace_id=uuid.uuid4().hex[:8],
+            )
+        cap_ok, cap_message = await _check_disclosure_position_cap(
+            db,
+            customer_id=customer_id,
+            product_id=product_id,
+            amount=amount,
+            max_position_ratio=float(suitability.max_position_ratio or 0),
+        )
+        if not cap_ok:
+            return ApiResponse(
+                code=400,
+                message=cap_message,
+                data={"risk_disclosure": suitability.to_dict()},
+                trace_id=uuid.uuid4().hex[:8],
+            )
 
     # 3. 起投金额校验
     min_amount = Decimal(str(product["min_amount"] or 1000))
@@ -197,6 +281,16 @@ async def purchase_product(
         # 将幂等键存入 remark 字段（实际生产环境应有独立的 idempotency_key 列）
         txn_no = f"{txn_no}[idempotency:{idempotency_key}]"
 
+    audit_remark = f"申购 {product['product_name']}"
+    operator_note = str(body.get("operator_note") or "").strip()
+    if operator_note:
+        audit_remark += f"；操作员备注：{operator_note[:200]}"
+    if suitability.disclosure_required:
+        audit_remark += (
+            f"；风险揭示已确认[{suitability.rule_version}/{suitability.rule_code}]"
+            f"@{disclosure_ack['acknowledged_at']}"
+        )
+
     await db.execute(
         text("""
             INSERT INTO fin_transaction
@@ -213,7 +307,7 @@ async def purchase_product(
             "shares": float(shares),
             "nav": float(nav),
             "oid": operator_id,
-            "remark": f"申购 {product['product_name']}",
+            "remark": audit_remark,
         },
     )
 
@@ -371,6 +465,16 @@ async def purchase_product(
             "nav_source": nav_source,
             "nav_date": calc_nav_time(),
             "risk_monitor": risk_monitor,
+            "risk_disclosure": (
+                {
+                    "confirmed": True,
+                    "rule_version": suitability.rule_version,
+                    "rule_code": suitability.rule_code,
+                    "acknowledged_at": disclosure_ack["acknowledged_at"],
+                }
+                if suitability.disclosure_required
+                else None
+            ),
         },
         trace_id=uuid.uuid4().hex[:8],
     )

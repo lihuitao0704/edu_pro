@@ -62,7 +62,7 @@ class SafetyService:
     ]
 
     # 兜底话术
-    FALLBACK_MESSAGE = "抱歉，我暂时无法回答这个问题。建议您拨打客服热线400-XXX-XXXX咨询人工客服，我们的理财顾问将竭诚为您服务。"
+    FALLBACK_MESSAGE = "抱歉，我暂时无法可靠回答这个问题。您可以换一种说法，或通过平台人工客服入口提交咨询。"
     # 输入违规话术
     INPUT_BLOCKED_MESSAGE = "您的输入包含不当内容，请使用文明用语。如有业务问题，请重新描述。"
 

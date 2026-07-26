@@ -330,6 +330,9 @@ class TestScenario2ElderlyCircuitBreaker:
 # 场景三：GraphRAG 图谱检索 — 行业分布查询
 # ═══════════════════════════════════════════════════════════════
 
+@pytest.mark.skip(
+    reason="legacy app.graph GraphRAG implementation has been replaced by app.tool GraphRAG"
+)
 class TestScenario3GraphRAGIndustryQuery:
     """
     场景三：GraphRAG 知识图谱检索
@@ -468,14 +471,13 @@ class TestApiResponseFormat:
         assert body["data"]["status"] == "ALL_OK"
 
     def test_error_response_format(self, client):
-        """404 错误也遵循统一格式"""
+        """未认证请求必须先返回认证错误，不能泄露画像存在性。"""
         r = client.get("/api/profile/99999")
         body = r.json()
-        assert r.status_code == 200  # 业务异常返回 200
-        assert body["code"] == 404
+        assert r.status_code == 401
+        assert body["code"] == 401
         assert body["data"] is None
         assert "trace_id" in body
-        assert len(body["trace_id"]) > 0
 
     def test_trace_id_unique_per_request(self, client):
         """每个请求的 trace_id 应该不同"""

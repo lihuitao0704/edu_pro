@@ -9,7 +9,7 @@ from app.service.route_validator import RouteValidator
 @pytest.mark.parametrize(
     ("message", "task", "domain", "intent"),
     [
-        ("有什么年化5%以上的稳健型理财", RouteTask.FAQ, RouteDomain.PRODUCT, "product_faq"),
+        ("有什么年化5%以上的稳健型理财", RouteTask.RECOMMEND, RouteDomain.PRODUCT, "investment_recommendation"),
         ("最新监管政策对私募基金有什么要求", RouteTask.FAQ, RouteDomain.POLICY, "product_faq"),
         ("赎回手续费怎么收", RouteTask.FAQ, RouteDomain.TRANSACTION, "product_faq"),
         ("你好", RouteTask.CHAT, RouteDomain.GENERAL, "chitchat"),
@@ -17,7 +17,7 @@ from app.service.route_validator import RouteValidator
         ("帮我写一首诗", RouteTask.CHAT, RouteDomain.GENERAL, "chitchat"),
         ("帮我推荐适合我的基金", RouteTask.RECOMMEND, RouteDomain.PRODUCT, "investment_recommendation"),
         ("分析一下我的持仓行业分布", RouteTask.ANALYZE, RouteDomain.HOLDING, "investment_recommendation"),
-        ("50万资金应该怎么配置", RouteTask.RECOMMEND, RouteDomain.GENERAL, "investment_recommendation"),
+        ("50万资金应该怎么配置", RouteTask.RECOMMEND, RouteDomain.PRODUCT, "investment_recommendation"),
         ("对比一下这两个产品", RouteTask.ANALYZE, RouteDomain.PRODUCT, "investment_recommendation"),
         ("帮我查一下最近的可疑交易", RouteTask.RISK_CHECK, RouteDomain.RISK, "risk_control"),
         ("检测一下有没有异常转账", RouteTask.RISK_CHECK, RouteDomain.RISK, "risk_control"),
@@ -107,8 +107,138 @@ def test_write_operation_requires_confirmation():
 
     validated = RouteValidator().validate(decision, user_role="客户")
 
-    assert validated.requires_confirmation is True
-    assert validated.target_agent == "operator"
+    assert validated.requires_confirmation is False
+    assert validated.intent == "customer_transaction_guidance"
+    assert validated.target_agent == "customer_account"
+
+
+@pytest.mark.parametrize(
+    ("message", "intent", "agent", "domain"),
+    [
+        ("我的风险等级是什么", "customer_account_query", "customer_account", RouteDomain.RISK),
+        ("查我的持仓", "customer_account_query", "customer_account", RouteDomain.HOLDING),
+        ("我的账户余额是多少", "customer_account_query", "customer_account", RouteDomain.CUSTOMER),
+        ("查询我的交易记录", "customer_account_query", "customer_account", RouteDomain.TRANSACTION),
+        ("我为什么只能买R2产品", "customer_risk_explanation", "customer_account", RouteDomain.RISK),
+        ("为什么有预警", "customer_risk_explanation", "customer_account", RouteDomain.RISK),
+        ("为什么只推荐这一款", "customer_recommendation_explanation", "customer_account", RouteDomain.PRODUCT),
+    ],
+)
+def test_customer_self_service_routes_are_deterministic(
+    message, intent, agent, domain
+):
+    decision = IntentService._rule_route_decision(message)
+
+    assert decision is not None
+    assert decision.intent == intent
+    assert decision.target_agent == agent
+    assert decision.domain == domain
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "我有50万，如何稳健配置？",
+        "给我一个稳健方案",
+        "我想买基金",
+        "有什么低风险产品",
+        "哪个产品适合我",
+    ],
+)
+def test_natural_customer_recommendation_language_uses_advisor(message):
+    decision = IntentService._rule_route_decision(message)
+
+    assert decision is not None
+    assert decision.intent == "investment_recommendation"
+    assert decision.target_agent == "advisor"
+
+
+def test_customer_purchase_intent_becomes_guidance_but_employee_keeps_operator():
+    decision = IntentService._rule_route_decision("我想购买产品")
+
+    customer = RouteValidator().validate(decision, user_role="客户")
+    employee = RouteValidator().validate(decision, user_role="理财顾问")
+
+    assert customer.intent == "customer_transaction_guidance"
+    assert customer.target_agent == "customer_account"
+    assert customer.blocked is False
+    assert employee.intent == "business_operation"
+    assert employee.target_agent == "operator"
+    assert employee.requires_confirmation is True
+
+
+def test_large_transfer_intent_is_deterministic_and_customer_safe():
+    decision = IntentService._rule_route_decision("我想大额转账")
+
+    assert decision is not None
+    assert decision.task == RouteTask.EXECUTE
+    assert decision.domain == RouteDomain.TRANSACTION
+    customer = RouteValidator().validate(decision, user_role="客户")
+    assert customer.intent == "customer_transaction_guidance"
+    assert customer.target_agent == "customer_account"
+    assert customer.blocked is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "删除所有客户数据",
+        "插入一条客户记录",
+        "UPDATE sys_user SET status='冻结'",
+        "清空客户数据表",
+    ],
+)
+def test_database_mutation_language_is_blocked_before_nl2sql(message):
+    decision = IntentService._rule_route_decision(message)
+
+    assert decision is not None
+    assert decision.blocked is True
+    assert decision.intent == "unsafe_data_mutation"
+    assert decision.target_agent == "router"
+    assert "不支持通过自然语言" in decision.block_reason
+
+
+def test_advisor_term_and_product_type_followups_reuse_context():
+    context = {
+        "last_agent": "advisor",
+        "last_intent": "investment_recommendation",
+        "entities": {"customer_id": 120, "amount": 500000},
+    }
+
+    term = IntentService._rule_route_decision("期限3年", context=context)
+    product_type = IntentService._rule_route_decision("那债券呢", context=context)
+
+    assert term.intent == "investment_recommendation"
+    assert term.entities["customer_id"] == 120
+    assert term.entities["term_days"] == 1095
+    assert product_type.intent == "investment_recommendation"
+    assert product_type.entities["customer_id"] == 120
+
+
+@pytest.mark.asyncio
+async def test_router_customer_account_dispatch_uses_authenticated_user_id():
+    from app.agent.router_agent import RouterAgent
+
+    router = RouterAgent(AsyncMock())
+    router._risk_precheck = AsyncMock(return_value=None)
+    router._dispatch_customer_account = AsyncMock(
+        return_value={
+            "reply": "这是您本人的持仓。",
+            "data": {"customer_id": 7, "scope": "self"},
+        }
+    )
+
+    response = await router.route(
+        "查询我的持仓",
+        user_id=7,
+        user_role="客户",
+    )
+
+    assert response.agent == "customer_account"
+    assert response.data["customer_id"] == 7
+    assert response.data["route_decision"]["entities"]["customer_id"] == 7
+    args = router._dispatch_customer_account.await_args.args
+    assert args[1] == 7
 
 
 @pytest.mark.asyncio
@@ -255,6 +385,41 @@ async def test_router_executes_authorized_read_only_compound_plan():
     assert response.data["query_result"][0]["customer_id"] == 1
     router._dispatch_advisor.assert_awaited_once()
     router._dispatch_data_analysis.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generic_conservative_recommendation_uses_fast_structured_query():
+    from types import SimpleNamespace
+    from app.agent.router_agent import RouterAgent
+
+    rows = [
+        {
+            "product_code": "P1",
+            "product_name": "稳健债券A",
+            "product_type": "债券型",
+            "risk_level": "R2",
+            "expected_return": 4.2,
+            "min_amount": 10000,
+            "term_days": 180,
+        }
+    ]
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(
+        mappings=lambda: SimpleNamespace(all=lambda: rows)
+    )
+    router = RouterAgent(db)
+
+    result = await router._dispatch_advisor(
+        "推荐适合稳健型客户的基金",
+        "fast-generic",
+        user_id=120,
+        customer_id=None,
+        user_role="管理员",
+    )
+
+    assert result["data"]["recommendation_scope"] == "generic_r1_r2_screening"
+    assert result["data"]["recommendations"][0]["product_name"] == "稳健债券A"
+    assert "提供真实客户ID" in result["reply"]
 
 
 @pytest.mark.asyncio

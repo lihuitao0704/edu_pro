@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 
 def build_risk_alert_event(alert: dict):
     """Translate a persisted risk fact into the canonical six-Agent event."""
-    from app.service.agent_event_service import AgentDomainEvent
+    from app.service.agent_event_service import (
+        AgentDomainEvent,
+        EVENT_RISK_ALERT_CREATED,
+    )
 
     return AgentDomainEvent.create(
-        event_type="risk_alert_created",
+        event_type=EVENT_RISK_ALERT_CREATED,
         source_agent="risk",
         customer_id=int(alert["customer_id"]),
         correlation_id=str(alert.get("transaction_id") or alert.get("alert_id") or ""),
@@ -32,6 +35,35 @@ def build_risk_alert_event(alert: dict):
             "trigger_rules": alert.get("trigger_rules", []),
             "summary": alert.get("summary", ""),
             "confidence": alert.get("confidence"),
+        },
+    )
+
+
+def build_risk_alert_lifecycle_event(alert, action: str, handler_id: int, note: str):
+    """Create the post-commit event that drives risk-state restoration."""
+    from app.service.agent_event_service import (
+        AgentDomainEvent,
+        EVENT_RISK_ALERT_FALSE_POSITIVE,
+        EVENT_RISK_ALERT_PROCESSING,
+        EVENT_RISK_ALERT_RESOLVED,
+    )
+
+    event_types = {
+        "processing": EVENT_RISK_ALERT_PROCESSING,
+        "resolved": EVENT_RISK_ALERT_RESOLVED,
+        "false_positive": EVENT_RISK_ALERT_FALSE_POSITIVE,
+    }
+    return AgentDomainEvent.create(
+        event_type=event_types[action],
+        source_agent="risk",
+        customer_id=int(alert.customer_id),
+        correlation_id=f"risk-alert:{alert.id}",
+        payload={
+            "alert_id": alert.id,
+            "alert_level": alert.alert_level,
+            "status": action,
+            "handler_id": handler_id,
+            "handle_result": note,
         },
     )
 
@@ -254,14 +286,14 @@ class RiskMonitorService:
             work_order.handler_id = handler_id
             work_order.update_time = datetime.now()
 
-        if action in {"resolved", "false_positive"}:
-            try:
-                from app.config.database import get_redis
+        # Write lifecycle facts in the same transaction as the alert/work-order
+        # status change. The outbox relay broadcasts only after commit.
+        from app.service.agent_event_service import EventDispatcher
 
-                redis = await get_redis()
-                await redis.srem("risk:alert:pending", str(alert_id))
-            except Exception as exc:
-                logger.warning("清理预警待办失败: %s", exc)
+        await EventDispatcher.enqueue(
+            db,
+            build_risk_alert_lifecycle_event(alert, action, handler_id, note),
+        )
         await db.flush()
         return _to_dict(alert)
 
