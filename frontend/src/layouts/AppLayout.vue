@@ -21,13 +21,9 @@
         <button class="quiet-button" type="button" @click="logout">退出当前会话</button>
       </div>
     </aside>
+    <button class="mobile-nav-trigger" type="button" aria-label="打开导航" @click="mobileOpen = true"><span /></button>
 
     <main class="main-area">
-      <header class="workspace-topbar">
-        <button class="icon-button sidebar-toggle" type="button" aria-label="打开导航" @click="mobileOpen = true"><span /></button>
-        <div class="topbar-context"><span>FINTELLIGENCE / WORKSPACE</span><strong>{{ pageTitle }}</strong></div>
-        <div class="topbar-actions"><span class="connection-pill"><i />服务已连接</span><button class="avatar-button" type="button" :aria-label="`${auth.user?.real_name || auth.user?.username || '当前用户'}的账户`">{{ userInitial }}</button></div>
-      </header>
       <section class="content-area"><router-view /></section>
     </main>
 
@@ -65,8 +61,6 @@ const introVisible = ref(false)
 let introTimer: ReturnType<typeof setTimeout> | undefined
 
 const navigation = computed(() => navigationForRole(auth.user?.role || ''))
-const pageTitle = computed(() => navigation.value.find((item) => item.path === route.path)?.label || '智能投顾工作台')
-const userInitial = computed(() => (auth.user?.real_name || auth.user?.username || 'U').slice(0, 1).toUpperCase())
 
 const icons: Record<string, string> = {
   spark: 'm12 3-1.8 5.2L5 10l5.2 1.8L12 17l1.8-5.2L19 10l-5.2-1.8L12 3Z',

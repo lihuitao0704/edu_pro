@@ -32,7 +32,7 @@ from app.memory.long_term import LongTermMemory
 from app.utils.exceptions import ProfileNotFound, CircuitBreakerTriggered
 import logging
 
-PROFILE_CACHE_SCHEMA_VERSION = 2
+PROFILE_CACHE_SCHEMA_VERSION = 3
 
 
 class ProfileService:
