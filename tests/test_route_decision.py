@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -10,8 +12,11 @@ from app.service.route_validator import RouteValidator
     ("message", "task", "domain", "intent"),
     [
         ("有什么年化5%以上的稳健型理财", RouteTask.RECOMMEND, RouteDomain.PRODUCT, "investment_recommendation"),
+        ("有哪些适合长期持有的产品？", RouteTask.RECOMMEND, RouteDomain.PRODUCT, "investment_recommendation"),
+        ("帮我评估当前投资风险", RouteTask.ANALYZE, RouteDomain.RISK, "investment_recommendation"),
         ("最新监管政策对私募基金有什么要求", RouteTask.FAQ, RouteDomain.POLICY, "product_faq"),
         ("赎回手续费怎么收", RouteTask.FAQ, RouteDomain.TRANSACTION, "product_faq"),
+        ("我想了解账户赎回流程", RouteTask.FAQ, RouteDomain.TRANSACTION, "product_faq"),
         ("你好", RouteTask.CHAT, RouteDomain.GENERAL, "chitchat"),
         ("我想了解一下你们的服务", RouteTask.FAQ, RouteDomain.GENERAL, "product_faq"),
         ("帮我写一首诗", RouteTask.CHAT, RouteDomain.GENERAL, "chitchat"),
@@ -324,6 +329,21 @@ def test_supervisor_json_is_parsed_into_two_dimensional_decision():
     assert decision.intent == "data_analysis"
     assert decision.target_agent == "nl2sql"
     assert decision.entities["customer_id"] == 7
+
+
+def test_router_allows_llm_response_slightly_over_previous_four_second_limit():
+    service = IntentService()
+
+    async def delayed_classify(*_args, **_kwargs):
+        await asyncio.sleep(4.1)
+        return '{"task":"FAQ","domain":"GENERAL","confidence":0.85}'
+
+    service.llm.classify = delayed_classify
+    decision = asyncio.run(service.decide_route("请介绍一下你们的服务"))
+
+    assert decision.task == RouteTask.FAQ
+    assert decision.domain == RouteDomain.GENERAL
+    assert decision.decision_source == "llm_supervisor"
 
 
 @pytest.mark.asyncio

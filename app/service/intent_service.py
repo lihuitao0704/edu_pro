@@ -19,7 +19,10 @@ from app.tool.llm_tool import get_llm_tool
 from app.utils.logger import get_logger
 
 logger = get_logger("service.intent")
-ROUTER_LLM_TIMEOUT_SECONDS = 4.0
+# The router model commonly responds just after four seconds on a cold call.
+# Keep a bounded timeout, but leave enough headroom to avoid classifying normal
+# customer questions as UNKNOWN during ordinary latency variance.
+ROUTER_LLM_TIMEOUT_SECONDS = 6.0
 
 # ── 客服意图（原有） ──
 INTENT_PRIORITY = {
@@ -724,6 +727,11 @@ class IntentService:
                     "有什么稳健产品",
                 )
             )
+            or (
+                "长期持有" in text
+                and any(word in text for word in ("产品", "基金", "理财"))
+                and any(word in text for word in ("哪些", "什么", "有什么", "适合"))
+            )
         ):
             return cls._build_route_decision(
                 message, RouteTask.RECOMMEND, RouteDomain.PRODUCT
@@ -765,6 +773,7 @@ class IntentService:
             "手续费",
             "费率",
             "规则",
+            "流程",
             "多久",
             "怎么收",
             "如何计算",
@@ -791,6 +800,17 @@ class IntentService:
             word in text for word in financial_terms
         ):
             return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # Evaluating investment risk is an advisory analysis request. It is
+        # different from checking suspicious or abnormal transactions below.
+        if (
+            "风险" in text
+            and any(word in text for word in ("评估", "分析", "诊断", "判断"))
+            and not any(word in text for word in ("可疑", "异常", "预警", "交易"))
+        ):
+            return cls._build_route_decision(
+                message, RouteTask.ANALYZE, RouteDomain.RISK
+            )
 
         # Read-only structured queries must not be swallowed by advisor/operator.
         if "工单" in text and any(
@@ -875,7 +895,6 @@ class IntentService:
         operation_terms = ("申购", "赎回", "转账", "转账给", "转到", "转出", "开户", "购买")
         action_markers = (
             "我要",
-            "我想",
             "帮我",
             "请帮",
             "给客户",
@@ -885,6 +904,13 @@ class IntentService:
             "办理",
             "执行",
         )
+        direct_operation_request = bool(
+            re.search(
+                r"(?:我要|我想|帮我|请帮|立即|马上|办理|执行).{0,2}"
+                r"(?:申购|赎回|转账|开户|购买)",
+                text,
+            )
+        )
         has_specific_parameter = bool(
             re.search(r"\d+\s*(?:万|万元|元|份)", text)
             or re.search(r"客户(?:ID|编号)?\s*\d+", text, re.I)
@@ -893,6 +919,7 @@ class IntentService:
             any(word in text for word in operation_terms)
             and (
                 any(word in text for word in action_markers)
+                or direct_operation_request
                 or has_specific_parameter
                 or text.startswith(("申购", "赎回", "转账", "开户"))
             )

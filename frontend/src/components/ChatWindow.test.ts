@@ -77,6 +77,20 @@ describe('ChatWindow', () => {
       .toBe('请问我的风险等级是什么？')
   })
 
+  it('keeps all default prompts as router regression cases', () => {
+    const wrapper = mount(ChatWindow, {
+      props: { userId: 7 },
+      global: { plugins: [pinia], stubs: { MessageCard: true } },
+    })
+
+    expect(wrapper.findAll('.quick-prompts button').map(button => button.text())).toEqual([
+      '我有 50 万，如何稳健配置？',
+      '帮我评估当前投资风险',
+      '有哪些适合长期持有的产品？',
+      '我想了解账户赎回流程',
+    ])
+  })
+
   it('renders clarification choices and sends the selected choice in the same session', async () => {
     streamChat.mockImplementation(async (_path, _body, onEvent) => {
       onEvent({ event: 'delta', data: { content: '请说明你的目标。' } })

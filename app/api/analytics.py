@@ -79,12 +79,12 @@ _DASHBOARD_SQL = {
     # ① AUM分布：各风险等级的总资产占比
     "aum_distribution": text("""
         SELECT
-            COALESCE(risk_level, '未知') AS name,
+            COALESCE(risk_level_code, '未知') AS name,
             COUNT(*)                     AS customer_count,
             ROUND(COALESCE(SUM(total_assets), 0), 2) AS total_aum,
             ROUND(COALESCE(AVG(total_assets), 0), 2) AS avg_aum
         FROM fin_customer_profile
-        GROUP BY risk_level
+        GROUP BY risk_level_code
         ORDER BY total_aum DESC
     """),
     # ② 各风险等级产品平均收益率
