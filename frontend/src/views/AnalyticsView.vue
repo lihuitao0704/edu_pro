@@ -47,8 +47,8 @@
             <div class="card-heading"><span class="eyebrow">GENERATED SQL</span><h3>安全查询语句</h3></div>
             <textarea v-model="nl2sqlEditableSql" class="sql-editor" rows="8" spellcheck="false" />
             <div class="sql-actions">
-              <button class="text-button" @click="copySql">📋 复制 SQL</button>
-              <button class="text-button" :disabled="nl2sqlEditableSql === nl2sqlResult.sql" @click="nl2sqlReExecute">🔄 修改后重新执行</button>
+              <button class="text-button" @click="copySql">复制 SQL</button>
+              <button class="text-button" :disabled="nl2sqlEditableSql === nl2sqlResult.sql" @click="nl2sqlReExecute">修改后重新执行</button>
             </div>
             <div v-if="nl2sqlResult.timing" class="sql-timing">生成 {{ nl2sqlResult.timing.generate_ms }}ms · 执行 {{ nl2sqlResult.timing.execute_ms }}ms · 解读 {{ nl2sqlResult.timing.explain_ms }}ms</div>
           </div>
@@ -76,10 +76,10 @@
 
       <!-- 汇总卡片条 -->
       <section v-if="summary" class="summary-strip">
-        <div class="summary-card"><span class="summary-icon">👥</span><div><strong>{{ summary.total_customers }}</strong><span>客户总数</span></div></div>
-        <div class="summary-card"><span class="summary-icon">💰</span><div><strong>{{ formatCurrency(summary.total_aum) }}</strong><span>客户总资产 (AUM)</span></div></div>
-        <div class="summary-card"><span class="summary-icon">📦</span><div><strong>{{ summary.in_sale_products }}</strong><span>在售产品</span></div></div>
-        <div class="summary-card"><span class="summary-icon">⚠️</span><div><strong>{{ summary.total_alerts }}</strong><span>风险预警</span></div></div>
+        <div class="summary-card"><span class="summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 20a4 4 0 0 0-8 0M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM20 18a3 3 0 0 0-3-3M18 6a2.5 2.5 0 0 1 0 5" /></svg></span><div><strong>{{ summary.total_customers }}</strong><span>客户总数</span></div></div>
+        <div class="summary-card"><span class="summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2 7h8M8 15h4" /></svg></span><div><strong>{{ formatCurrency(summary.total_aum) }}</strong><span>客户总资产 (AUM)</span></div></div>
+        <div class="summary-card"><span class="summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16v12H4zM4 7l4-4h8l4 4M9 12h6" /></svg></span><div><strong>{{ summary.in_sale_products }}</strong><span>在售产品</span></div></div>
+        <div class="summary-card"><span class="summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3 3.8 18a2 2 0 0 0 1.8 3h12.8a2 2 0 0 0 1.8-3L12 3ZM12 9v4M12 17h.01" /></svg></span><div><strong>{{ summary.total_alerts }}</strong><span>风险预警</span></div></div>
       </section>
 
       <!-- 图表网格: 3×2 -->

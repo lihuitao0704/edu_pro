@@ -13,4 +13,20 @@ describe('AppIntro', () => {
 
     expect(wrapper.emitted('complete')).toHaveLength(1)
   })
+
+  it('keeps keyboard focus on its only action while visible', async () => {
+    const wrapper = mount(AppIntro, { attachTo: document.body, props: { visible: true } })
+    const dialog = wrapper.get('[data-testid="app-intro"]')
+    const skip = wrapper.get('button')
+
+    expect(dialog.attributes('role')).toBe('dialog')
+    expect(dialog.attributes('aria-modal')).toBe('true')
+    await wrapper.vm.$nextTick()
+    expect(document.activeElement).toBe(skip.element)
+
+    await skip.trigger('keydown.tab')
+
+    expect(document.activeElement).toBe(skip.element)
+    wrapper.unmount()
+  })
 })

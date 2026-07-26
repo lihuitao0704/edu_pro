@@ -17,7 +17,7 @@
           <option value="false_positive">误报</option>
         </select>
         <button class="secondary-button" @click="loadAll">刷新数据</button>
-        <button class="secondary-button" @click="exportCSV">📥 导出CSV</button>
+        <button class="secondary-button" @click="exportCSV">导出 CSV</button>
       </div>
     </section>
 
@@ -30,7 +30,7 @@
 
     <!-- ===== 风控日报 ===== -->
     <section v-if="dailyReport" class="daily-report surface-card">
-      <div class="card-heading"><h3>📋 风控日报 · {{ dailyReport.date }}</h3></div>
+      <div class="card-heading"><h3>风控日报 · {{ dailyReport.date }}</h3></div>
       <div class="report-grid">
         <div class="report-stat"><span>今日新增</span><strong>{{ dailyReport.summary.total_alerts }}</strong></div>
         <div class="report-stat high"><span>高风险</span><strong>{{ dailyReport.summary.high_new }}</strong></div>
@@ -41,7 +41,7 @@
       </div>
       <div class="report-detail-row">
         <div class="report-mini">
-          <span>🔴 高风险客户 TOP3</span>
+          <span><i class="report-dot high" />高风险客户 TOP3</span>
           <ol>
             <li v-for="c in dailyReport.top_high_risk_customers?.slice(0,3)" :key="c.customer_id">
               客户 #{{ c.customer_id }} · {{ c.count }} 条预警
@@ -50,7 +50,7 @@
           </ol>
         </div>
         <div class="report-mini">
-          <span>📊 触发最多规则 TOP3</span>
+          <span><i class="report-dot" />触发最多规则 TOP3</span>
           <ol>
             <li v-for="r in dailyReport.top_rules?.slice(0,3)" :key="r.rule_id">
               {{ ruleLabel(r.rule_id) }} · {{ r.count }} 次

@@ -1,23 +1,32 @@
 <template>
   <Transition name="intro-fade">
-    <section v-if="visible" class="app-intro" data-testid="app-intro" aria-label="平台正在启动" role="status">
+    <section v-if="visible" class="app-intro" data-testid="app-intro" aria-label="平台正在启动" aria-modal="true" role="dialog">
       <div class="intro-grid" aria-hidden="true" />
       <div class="intro-orb intro-orb-one" aria-hidden="true" />
       <div class="intro-orb intro-orb-two" aria-hidden="true" />
       <div class="intro-content">
         <span class="intro-mark" aria-hidden="true">F</span>
         <span class="intro-name">FINTELLIGENCE</span>
-        <p>智能投顾系统正在就绪</p>
+        <p id="intro-status">智能投顾系统正在就绪</p>
         <span class="intro-progress" aria-hidden="true"><i /></span>
-        <button type="button" @click="$emit('complete')">跳过开场</button>
+        <button ref="skipButton" type="button" @keydown.tab.prevent="focusSkip" @click="$emit('complete')">跳过开场</button>
       </div>
     </section>
   </Transition>
 </template>
 
 <script setup lang="ts">
-defineProps<{ visible: boolean }>()
+import { nextTick, onMounted, ref, watch } from 'vue'
+
+const props = defineProps<{ visible: boolean }>()
 defineEmits<{ complete: [] }>()
+
+const skipButton = ref<HTMLButtonElement>()
+function focusSkip() { skipButton.value?.focus() }
+function scheduleFocus() { if (props.visible) void nextTick(focusSkip) }
+
+onMounted(scheduleFocus)
+watch(() => props.visible, scheduleFocus)
 </script>
 
 <style scoped>
