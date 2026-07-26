@@ -277,6 +277,79 @@ class UnifiedChatEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(1, subject)
 
+    def test_stream_employee_login_id_is_not_used_as_customer_target(self):
+        from app.api.unified_chat import get_stream_subject_customer_id
+
+        subject = get_stream_subject_customer_id(
+            {"user_id": 101, "role": "理财顾问"},
+            101,
+            None,
+        )
+
+        self.assertIsNone(subject)
+
+    async def test_stream_named_customer_overrides_stale_employee_id(self):
+        from app.api.unified_chat import resolve_stream_advisor_subject
+        from app.model.route_decision import (
+            RouteDecision,
+            RouteDomain,
+            RouteTask,
+        )
+
+        decision = RouteDecision(
+            request_text="给郭丽推荐一下产品",
+            task=RouteTask.RECOMMEND,
+            domain=RouteDomain.PRODUCT,
+            intent="investment_recommendation",
+            target_agent="advisor",
+            confidence=0.95,
+            entities={"customer_name": "郭丽", "customer_id": 101},
+        )
+
+        with patch(
+            "app.tool.graph_query_tool.resolve_customer_id",
+            new=AsyncMock(return_value=1),
+        ):
+            subject, reply = await resolve_stream_advisor_subject(
+                {"user_id": 101, "role": "理财顾问"},
+                101,
+                decision,
+            )
+
+        self.assertEqual(1, subject)
+        self.assertIsNone(reply)
+
+    async def test_stream_unknown_named_customer_requests_correction(self):
+        from app.api.unified_chat import resolve_stream_advisor_subject
+        from app.model.route_decision import (
+            RouteDecision,
+            RouteDomain,
+            RouteTask,
+        )
+
+        decision = RouteDecision(
+            request_text="给不存在客户推荐产品",
+            task=RouteTask.RECOMMEND,
+            domain=RouteDomain.PRODUCT,
+            intent="investment_recommendation",
+            target_agent="advisor",
+            confidence=0.95,
+            entities={"customer_name": "不存在"},
+        )
+
+        with patch(
+            "app.tool.graph_query_tool.resolve_customer_id",
+            new=AsyncMock(return_value=None),
+        ):
+            subject, reply = await resolve_stream_advisor_subject(
+                {"user_id": 101, "role": "理财顾问"},
+                101,
+                decision,
+            )
+
+        self.assertIsNone(subject)
+        self.assertIn("没有找到唯一匹配", reply)
+
     async def test_unified_chat_uses_authenticated_identity_over_claimed_body_identity(self):
         from app.api.unified_chat import unified_chat
         from app.model.schemas import UnifiedChatRequest

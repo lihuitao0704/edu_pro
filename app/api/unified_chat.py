@@ -345,11 +345,50 @@ async def unified_chat_stream_v2(
     # ── 投顾意图 → 真流式 ──
     if intent == "investment_recommendation":
         safe_input = routing_message
-        subject_customer_id = get_stream_subject_customer_id(
-            user, req.user_id, route_decision
+        subject_customer_id, subject_resolution_reply = (
+            await resolve_stream_advisor_subject(
+                user,
+                req.user_id,
+                route_decision,
+            )
         )
+        if subject_customer_id is not None and route_decision is not None:
+            route_decision.entities["customer_id"] = subject_customer_id
 
         async def advisor_event_stream():
+            if subject_resolution_reply:
+                yield {
+                    "event": "meta",
+                    "data": json.dumps(
+                        {
+                            "agent": "advisor",
+                            "session_id": session_id,
+                            "confidence": confidence,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+                yield {
+                    "event": "done",
+                    "data": json.dumps(
+                        {
+                            "reply": subject_resolution_reply,
+                            "recommendations": [],
+                            "customer_profile": None,
+                            "status": "customer_resolution_required",
+                            "session_id": session_id,
+                            "route_decision": (
+                                route_decision.model_dump(mode="json")
+                                if route_decision is not None
+                                else None
+                            ),
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+                return
+
             from app.agent.advisor_agent import AdvisorAgent
             agent = AdvisorAgent(db, session_id, actor_id=actor_id)
             final_payload: dict = {}
@@ -530,21 +569,64 @@ def get_subject_customer_id(user: dict, claimed_user_id: int) -> int | None:
     return target_id or None
 
 
+async def resolve_stream_advisor_subject(
+    user: dict,
+    claimed_user_id: int,
+    route_decision: RouteDecision | None,
+) -> tuple[int | None, str | None]:
+    """Resolve an advisor target without confusing the actor with a customer."""
+    role = get_request_role_from_user(user)
+    if role == "客户":
+        return authenticated_actor_id(user), None
+
+    entities = (
+        route_decision.entities
+        if route_decision is not None
+        and isinstance(route_decision.entities, dict)
+        else {}
+    )
+
+    # A name in the current route represents a newly selected customer and
+    # therefore takes precedence over a possibly stale id in memory.
+    customer_name = str(entities.get("customer_name") or "").strip()
+    if customer_name:
+        from app.tool.graph_query_tool import resolve_customer_id
+
+        resolved_customer_id = await resolve_customer_id(customer_name)
+        if resolved_customer_id is None:
+            return (
+                None,
+                f"没有找到唯一匹配的客户“{customer_name}”。"
+                "请核对姓名，或直接提供客户ID后再试。",
+            )
+        return int(resolved_customer_id), None
+
+    explicit_customer_id = entities.get("customer_id")
+    if explicit_customer_id is not None:
+        try:
+            return int(explicit_customer_id), None
+        except (TypeError, ValueError):
+            return None, "客户ID格式无效，请提供有效的数字客户ID。"
+
+    # Kept for request-schema compatibility. An employee's login id is actor
+    # identity and must never silently become the recommendation subject.
+    del claimed_user_id
+    return None, None
+
+
 def get_stream_subject_customer_id(
     user: dict,
     claimed_user_id: int,
     route_decision: RouteDecision | None,
 ) -> int | None:
-    """Prefer an explicit ID from this turn over a stale selected target."""
+    """Select only a trusted customer id for the streaming advisor."""
+    if get_request_role_from_user(user) == "客户":
+        return authenticated_actor_id(user)
     explicit_customer_id = (
         route_decision.entities.get("customer_id")
         if route_decision is not None
         and isinstance(route_decision.entities, dict)
         else None
     )
-    return get_subject_customer_id(
-        user,
-        explicit_customer_id
-        if explicit_customer_id is not None
-        else claimed_user_id,
-    )
+    del claimed_user_id
+    return int(explicit_customer_id) if explicit_customer_id is not None else None

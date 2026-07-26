@@ -42,15 +42,16 @@ def test_report_cases_have_deterministic_route(message, task, domain, intent):
     assert decision.intent == intent
 
 
-def test_bare_confirmation_requires_operator_context():
-    ambiguous = IntentService._rule_route_decision("确认")
+def test_bare_confirmation_reaches_operator_confirmation_flow():
+    bare_confirmation = IntentService._rule_route_decision("确认")
     operation = IntentService._rule_route_decision(
         "确认",
         context={"last_agent": "operator", "last_intent": "business_operation"},
     )
 
-    assert ambiguous.task == RouteTask.UNKNOWN
-    assert ambiguous.confidence < 0.70
+    assert bare_confirmation.task == RouteTask.EXECUTE
+    assert bare_confirmation.target_agent == "operator"
+    assert bare_confirmation.decision_source == "confirm_cancel_rule"
     assert operation.task == RouteTask.EXECUTE
     assert operation.target_agent == "operator"
 

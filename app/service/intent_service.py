@@ -309,6 +309,13 @@ class IntentService:
             r"(?=的|持仓|账户|工单|交易|[,，。；;\s]|$)",
             message,
         )
+        if customer_name is None:
+            customer_name = re.search(
+                r"(?:给|为|替)\s*"
+                r"([\u4e00-\u9fff]{2,4})\s*"
+                r"(?=推荐|配置|筛选|分析|评估)",
+                message,
+            )
         if customer_name:
             candidate_name = customer_name.group(1)
             non_names = {
@@ -320,6 +327,11 @@ class IntentService:
                 "信息",
                 "名单",
                 "列表",
+                "客户",
+                "用户",
+                "ID",
+                "id",
+                "编号",
                 "的基金",
                 "的产品",
                 "的资料",
@@ -548,14 +560,15 @@ class IntentService:
 
         current_entities = cls._extract_route_entities(message)
         previous_entities = (context or {}).get("entities", {})
-        inherited_customer_id = (
-            current_entities.get("customer_id")
-            or (
-                previous_entities.get("customer_id")
-                if isinstance(previous_entities, dict)
-                else None
-            )
-        )
+        # A customer name explicitly mentioned in the current turn denotes a
+        # new target. Never combine it with a stale customer id from memory.
+        inherited_customer_id = current_entities.get("customer_id")
+        if (
+            inherited_customer_id is None
+            and current_entities.get("customer_name") is None
+            and isinstance(previous_entities, dict)
+        ):
+            inherited_customer_id = previous_entities.get("customer_id")
         is_advisor_followup = (
             (context or {}).get("last_agent") == "advisor"
             or (context or {}).get("last_intent") == "investment_recommendation"
