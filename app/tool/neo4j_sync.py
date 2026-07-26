@@ -71,7 +71,7 @@ def _to_graph_risk_level(risk_level: str) -> str:
     # 中文名称映射
     cn_mapping = {
         "保守型": "R1", "稳健型": "R2", "平衡型": "R3",
-        "进取型": "R4", "激进型": "R5",
+        "积极型": "R4", "进取型": "R4", "激进型": "R5",
     }
     if risk_level in cn_mapping:
         return cn_mapping[risk_level]

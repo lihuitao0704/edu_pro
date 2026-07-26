@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config.settings import get_settings
+from app.config.risk_level_mapping import RISK_LEVEL_MAPPING
 from app.security.passwords import hash_password
 
 
@@ -22,7 +23,7 @@ SEGMENTS = (
     ("普通投资者", "保守型", "C1"),
     ("稳健投资者", "稳健型", "C2"),
     ("普通投资者", "平衡型", "C3"),
-    ("激进投资者", "进取型", "C4"),
+    ("积极投资者", "积极型", "C4"),
     ("高净值客户", "激进型", "C5"),
 )
 
@@ -32,7 +33,7 @@ def build_customers() -> list[dict]:
     experiences = ["1年以下", "1-3年", "3-5年", "5-10年", "10年以上"]
     customers = []
     for index in range(1, 21):
-        segment, risk_level, assessment_level = SEGMENTS[(index - 1) % len(SEGMENTS)]
+        segment, risk_level_name, assessment_level = SEGMENTS[(index - 1) % len(SEGMENTS)]
         assets = 300_000 + index * 70_000
         if segment == "高净值客户":
             assets = 6_000_000 + index * 300_000
@@ -45,7 +46,8 @@ def build_customers() -> list[dict]:
                 "occupation": occupations[(index - 1) % len(occupations)],
                 "annual_income_range": ["10-30万", "30-50万", "50-100万", "100-300万"][(index - 1) % 4],
                 "total_assets": assets,
-                "risk_level": risk_level,
+                "risk_level_code": assessment_level,
+                "risk_level_name": RISK_LEVEL_MAPPING[assessment_level],
                 "assessment_level": assessment_level,
                 "risk_score": 18 + ((index - 1) % 5) * 18,
                 "investment_experience": experiences[(index - 1) % len(experiences)],
@@ -206,14 +208,15 @@ def apply_dataset() -> None:
                 cursor.execute(
                     """
                     INSERT INTO fin_customer_profile
-                    (customer_id,risk_level,risk_score,investment_experience,
+                    (customer_id,risk_level_code,risk_level_name,risk_score,investment_experience,
                      annual_income_range,total_assets,confidence_score,risk_flag,
                      basic_score,experience_score,risk_pref_score,behavior_score,
                      profile_json,create_time,update_time)
-                    VALUES (%s,%s,%s,%s,%s,%s,0.85,'normal',
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,0.85,'normal',
                      %s,%s,%s,%s,
                      %s,NOW(),NOW())
-                    ON DUPLICATE KEY UPDATE risk_level=VALUES(risk_level),
+                    ON DUPLICATE KEY UPDATE risk_level_code=VALUES(risk_level_code),
+                      risk_level_name=VALUES(risk_level_name),
                       risk_score=VALUES(risk_score), investment_experience=VALUES(investment_experience),
                       annual_income_range=VALUES(annual_income_range), total_assets=VALUES(total_assets),
                       confidence_score=0.85,
@@ -223,7 +226,8 @@ def apply_dataset() -> None:
                     """,
                     (
                         customer_id,
-                        customer["risk_level"],
+                        customer["risk_level_code"],
+                        customer["risk_level_name"],
                         customer["risk_score"],
                         customer["investment_experience"],
                         customer["annual_income_range"],

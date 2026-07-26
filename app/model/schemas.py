@@ -65,7 +65,8 @@ class CalibrationHistoryItem(BaseModel):
 class ProfileResult(BaseModel):
     """画像研判结果"""
     customer_id: int
-    risk_level: str
+    risk_level_code: str
+    risk_level_name: str
     risk_score: Optional[int] = None
     total_score: float
     dimensions: Dict[str, DimensionScore]
@@ -113,7 +114,8 @@ class AssessmentResult(BaseModel):
     """风评结果"""
     customer_id: int
     total_score: int
-    risk_level: str
+    risk_level_code: str
+    risk_level_name: str
     valid_until: date
 
 
@@ -126,7 +128,8 @@ class SuitabilityCheckRequest(BaseModel):
 class SuitabilityCheckResult(BaseModel):
     """适当性匹配结果"""
     match: bool
-    customer_level: str
+    customer_level_code: str
+    customer_level_name: str
     product_level: str
     warning: Optional[str] = None
 

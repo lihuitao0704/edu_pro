@@ -7,7 +7,7 @@
   2. 累计触发规则数 ≥ 阈值
   3. 冷却期已过（上次自动调整距今 > cooldown_days）
 
-则自动调整 fin_customer_profile.risk_level，并写入审计记录到 risk_score_record。
+则自动调整 fin_customer_profile.risk_level_code/name，并写入审计记录到 risk_score_record。
 
 设计原则：
   - 保守：每次最多调一档，不跳级
@@ -212,7 +212,7 @@ class CalibrationTrendAnalyzer:
         result = await self.db.execute(stmt)
         profile = result.scalar_one_or_none()
         if profile:
-            return profile.risk_level
+            return profile.risk_level_code
         return None
 
     # ── 执行调整 ───────────────────────────────────────────────────────
@@ -229,7 +229,10 @@ class CalibrationTrendAnalyzer:
         result = await self.db.execute(stmt)
         profile = result.scalar_one_or_none()
         if profile:
-            profile.risk_level = new_level
+            from app.config.risk_level_mapping import normalize_risk_level
+            normalized = normalize_risk_level(new_level)
+            profile.risk_level_code = normalized.risk_level_code
+            profile.risk_level_name = normalized.risk_level_name
             profile.update_time = now
 
         # 2. 写入审计记录到 risk_score_record

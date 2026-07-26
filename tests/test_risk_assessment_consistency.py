@@ -9,7 +9,8 @@ class QuestionnaireConsistencyTests(unittest.IsolatedAsyncioTestCase):
         from app.service.risk_service import RiskService
 
         profile = SimpleNamespace(
-            risk_level=None,
+            risk_level_code=None,
+            risk_level_name=None,
             risk_score=None,
             update_time=None,
             profile_json={},
@@ -29,7 +30,7 @@ class QuestionnaireConsistencyTests(unittest.IsolatedAsyncioTestCase):
 
         # Mock 引擎研判（避免 mock db 耗尽 side_effects，同时验证引擎被调用）
         mock_engine = MagicMock()
-        mock_engine.risk_level = "C5"
+        mock_engine.risk_level_code = "C5"
         mock_engine.circuit_breakers = []
         mock_engine.warnings = []
         with patch.object(service, '_upsert_questionnaire_risk_tag', new=AsyncMock()), \
@@ -41,10 +42,11 @@ class QuestionnaireConsistencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(result.total_score, 100)
         self.assertEqual(result.total_score, profile.risk_score)
         self.assertIsNotNone(profile.update_time)
-        self.assertEqual(result.risk_level, profile.profile_json["risk_level"])
+        self.assertEqual(result.risk_level_code, profile.profile_json["risk_level_code"])
+        self.assertEqual(result.risk_level_name, profile.profile_json["risk_level_name"])
         self.assertEqual(result.total_score, profile.profile_json["risk_score"])
         # 引擎研判被调用
         mock_assess.assert_awaited_once()
         # commit 不再在 submit_assessment 内部调用，由外层 get_db 统一管理
         db.commit.assert_not_called()
-        sync.assert_awaited_once_with(7, result.risk_level)
+        sync.assert_awaited_once_with(7, result.risk_level_code)

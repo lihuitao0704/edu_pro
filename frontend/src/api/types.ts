@@ -27,7 +27,8 @@ export interface Customer {
   age?: number
   occupation?: string
   customer_level?: string
-  risk_level?: string
+  risk_level_code?: 'C1' | 'C2' | 'C3' | 'C4' | 'C5'
+  risk_level_name?: string
   risk_score?: number
   total_assets?: number
   confidence_score?: number

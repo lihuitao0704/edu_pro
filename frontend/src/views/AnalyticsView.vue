@@ -174,7 +174,7 @@ function formatCell(v: any): string {
 // 风险等级颜色（中文字段 + R1-R5 统一映射）
 const RISK_COLORS: Record<string, string> = {
   '保守型': '#22a6b3', '稳健型': '#4fc3f7', '平衡型': '#ffa726',
-  '进取型': '#ef5350', '激进型': '#ab47bc', '未知': '#bdbdbd',
+  '积极型': '#ef5350', '激进型': '#ab47bc', '未知': '#bdbdbd',
   'R1': '#22a6b3', 'R2': '#4fc3f7', 'R3': '#ffa726',
   'R4': '#ef5350', 'R5': '#ab47bc',
 }

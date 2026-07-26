@@ -30,7 +30,7 @@
             <h2>{{ selected.real_name || selected.username }}</h2>
             <p>
               <span class="tag">{{ selected.customer_level || '普通客户' }}</span>
-              <span class="tag">{{ formatRiskLevel(selected.risk_level) }}</span>
+              <span class="tag">{{ selected.risk_level_name || '待评估' }}</span>
               <span>资产 {{ money(selected.total_assets) }}</span>
               <span>· {{ holdings.length }} 项持仓 · 市值 {{ money(totalValue) }}</span>
             </p>
@@ -44,7 +44,7 @@
           <article><span>综合风险分</span><strong>{{ selected.risk_score ?? '—' }}</strong><small>/ 100</small></article>
           <article><span>画像置信度</span><strong>{{ selected.confidence_score ? `${Math.round(Number(selected.confidence_score) * 100)}%` : '—' }}</strong><small>证据融合</small></article>
           <article><span>资产规模</span><strong>{{ money(selected.total_assets) }}</strong><small>总资产估值</small></article>
-          <article><span>适配等级</span><strong>{{ getProductRiskLevel(selected.risk_level) }}</strong><small>产品风险上限</small></article>
+          <article><span>适配等级</span><strong>{{ getProductRiskLevel(selected.risk_level_code) }}</strong><small>产品风险上限</small></article>
           <article class="aml-risk-card" :data-aml-level="selected.aml_risk_level">
             <span>AML风险等级</span>
             <strong>{{ getAmlRiskLabel(selected.aml_risk_level) }}</strong>
@@ -257,7 +257,7 @@ async function onNlpInsight(product: ProductRecommendation, index: number, insig
       risk_level: product.risk_level || '',
       expected_return: typeof product.expected_return === 'number' ? product.expected_return : null,
       rationale: product.rationale || product.reason || product.description || '',
-      customer_risk_level: selected.value?.risk_level || '',
+      customer_risk_level: selected.value?.risk_level_code || '',
       insight_type: insightType,
     })
     const data = result.data || result
@@ -283,7 +283,7 @@ const RISK_LEVEL_DISPLAY: Record<string, string> = {
   c1: 'C1保守型', C1: 'C1保守型',
   c2: 'C2稳健型', C2: 'C2稳健型',
   c3: 'C3平衡型', C3: 'C3平衡型',
-  c4: 'C4进取型', C4: 'C4进取型',
+  c4: 'C4积极型', C4: 'C4积极型',
   c5: 'C5激进型', C5: 'C5激进型',
 }
 function formatRiskLevel(level: unknown): string {

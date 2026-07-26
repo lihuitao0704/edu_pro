@@ -45,7 +45,8 @@ class FinCustomerProfile(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     customer_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
-    risk_level: Mapped[Optional[str]] = mapped_column(String(16), comment="保守型/稳健型/平衡型/进取型/激进型")
+    risk_level_code: Mapped[Optional[str]] = mapped_column(String(2), comment="客户风险等级编码 C1-C5")
+    risk_level_name: Mapped[Optional[str]] = mapped_column(String(8), comment="客户风险等级标准名称")
     risk_score: Mapped[Optional[int]] = mapped_column(Integer, comment="综合评分 0-100")
     investment_experience: Mapped[Optional[str]] = mapped_column(String(16), comment="投资经验")
     annual_income_range: Mapped[Optional[str]] = mapped_column(String(32))

@@ -53,7 +53,7 @@ def _json_default(obj):
 
 def _level_to_name_static(level: str) -> str:
     """风险等级代码转中文名称（静态辅助函数）"""
-    mapping = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}
+    mapping = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "积极型", "C5": "激进型"}
     return mapping.get(level, level)
 
 
@@ -833,13 +833,13 @@ class AdvisorAgent(BaseAgent):
                         from app.service.profile_service import ProfileService
                         profile_svc = ProfileService(db)
                         assess_result = await profile_svc.assess(customer_id, trigger_type="auto_recovery")
-                        risk_level = assess_result.risk_level
+                        risk_level = assess_result.risk_level_code
                         profile_not_found = False  # 画像已创建
                         profile_data = {
                             "customer_id": customer_id,
                             "assessment": {
-                                "risk_level": assess_result.risk_level,
-                                "risk_level_name": _level_to_name_static(assess_result.risk_level),
+                                "risk_level_code": assess_result.risk_level_code,
+                                "risk_level_name": assess_result.risk_level_name,
                                 "total_score": assess_result.total_score,
                                 "confidence_score": assess_result.confidence_score,
                             },
@@ -858,12 +858,12 @@ class AdvisorAgent(BaseAgent):
                         from app.service.profile_service import ProfileService
                         profile_svc = ProfileService(db)
                         assess_result = await profile_svc.assess(customer_id, trigger_type="auto_recovery")
-                        risk_level = assess_result.risk_level
+                        risk_level = assess_result.risk_level_code
                         profile_data = {
                             "customer_id": customer_id,
                             "assessment": {
-                                "risk_level": assess_result.risk_level,
-                                "risk_level_name": _level_to_name_static(assess_result.risk_level),
+                                "risk_level_code": assess_result.risk_level_code,
+                                "risk_level_name": assess_result.risk_level_name,
                                 "total_score": assess_result.total_score,
                                 "confidence_score": assess_result.confidence_score,
                             },
@@ -875,7 +875,7 @@ class AdvisorAgent(BaseAgent):
                         risk_level = "C2"
                 else:
                     assessment = profile_data.get("assessment", {})
-                    risk_level = assessment.get("risk_level")
+                    risk_level = assessment.get("risk_level_code")
 
             # 将画像熔断和实时风控预警合并成一个确定性的适当性上限。
             constraint_text = json.dumps(
@@ -1198,5 +1198,5 @@ class AdvisorAgent(BaseAgent):
         if not isinstance(profile, dict):
             return None
         assessment = profile.get("assessment") or {}
-        risk_level = assessment.get("risk_level") or profile.get("risk_level")
-        return {"risk_level": risk_level} if risk_level else None
+        risk_level = assessment.get("risk_level_code") or profile.get("risk_level_code")
+        return {"risk_level_code": risk_level} if risk_level else None

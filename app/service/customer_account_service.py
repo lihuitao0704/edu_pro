@@ -58,7 +58,7 @@ class CustomerAccountService:
         profile = await self._profile(customer_id)
         if user is None:
             return self._not_found()
-        level = profile.risk_level if profile and profile.risk_level else "尚未评定"
+        level = profile.risk_level_name if profile and profile.risk_level_name else "尚未评定"
         balance = self._money(user.balance)
         return {
             "reply": (
@@ -101,7 +101,7 @@ class CustomerAccountService:
                 ),
                 "data": {"customer_id": customer_id, "scope": "self"},
             }
-        level = profile.risk_level or "尚未评定"
+        level = profile.risk_level_name or "尚未评定"
         score = (
             f"，综合评分 {profile.risk_score}"
             if profile.risk_score is not None

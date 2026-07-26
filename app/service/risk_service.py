@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.model.entities import CustomerTag, RiskAssessment, FinCustomerProfile
 from app.model.schemas import QuestionnaireItem, AssessmentAnswer, AssessmentResult, SuitabilityCheckResult
 from app.engine.score_mapper import check_suitability, map_score_to_risk_level
+from app.config.risk_level_mapping import normalize_risk_level
 from app.memory.profile_cache import ProfileCache
 from app.memory.long_term import LongTermMemory
 from app.tool.neo4j_sync import sync_risk_level
@@ -116,13 +117,15 @@ class RiskService:
 
         # 更新画像基础字段
         if profile:
-            profile.risk_level = risk_level
+            profile.risk_level_code = risk_level
+            profile.risk_level_name = risk_level_name
             profile.risk_score = normalized
             profile.update_time = datetime.now()
         else:
             profile = FinCustomerProfile(
                 customer_id=customer_id,
-                risk_level=risk_level,
+                risk_level_code=risk_level,
+                risk_level_name=risk_level_name,
                 risk_score=normalized,
                 confidence_score=0.9,
             )
@@ -131,7 +134,8 @@ class RiskService:
         snapshot = dict(profile.profile_json or {})
         snapshot.update({
             "customer_id": customer_id,
-            "risk_level": risk_level,
+            "risk_level_code": risk_level,
+            "risk_level_name": risk_level_name,
             "risk_score": normalized,
             "updated_at": datetime.now().isoformat(),
         })
@@ -153,7 +157,7 @@ class RiskService:
             logging.getLogger(__name__).info(
                 "完整引擎研判完成 customer=%s level=%s breakers=%d calibrations=%d",
                 customer_id,
-                engine_result.risk_level,
+                engine_result.risk_level_code,
                 len(engine_result.circuit_breakers),
                 len(engine_result.warnings),
             )
@@ -168,7 +172,8 @@ class RiskService:
         await self.cache.invalidate(customer_id)
 
         # Neo4j 同步
-        final_level = engine_result.risk_level if engine_result else risk_level
+        final_level = engine_result.risk_level_code if engine_result else risk_level
+        final_level_name = normalize_risk_level(final_level).risk_level_name
         try:
             await sync_risk_level(customer_id, final_level)
         except Exception as exc:
@@ -186,7 +191,8 @@ class RiskService:
         return AssessmentResult(
             customer_id=customer_id,
             total_score=normalized,
-            risk_level=final_level,
+            risk_level_code=final_level,
+            risk_level_name=final_level_name,
             valid_until=valid_until,
         )
 
@@ -228,20 +234,21 @@ class RiskService:
     async def check_suitability(self, customer_id: int, product_code: str) -> SuitabilityCheckResult:
         """适当性匹配校验"""
         profile = await self._get_profile(customer_id)
-        if not profile or not profile.risk_level:
+        if not profile or not profile.risk_level_code:
             raise ProfileNotFound(customer_id)
 
         # 从数据库查询产品风险等级
         product_level = await self._infer_product_level(product_code)
-        matched = check_suitability(profile.risk_level, product_level)
+        matched = check_suitability(profile.risk_level_code, product_level)
 
         warning = None
         if not matched:
-            warning = f"适当性不匹配：客户等级 {profile.risk_level} 不允许购买 {product_level} 等级产品"
+            warning = f"适当性不匹配：客户等级 {profile.risk_level_code} 不允许购买 {product_level} 等级产品"
 
         return SuitabilityCheckResult(
             match=matched,
-            customer_level=profile.risk_level,
+            customer_level_code=profile.risk_level_code,
+            customer_level_name=profile.risk_level_name,
             product_level=product_level,
             warning=warning,
         )

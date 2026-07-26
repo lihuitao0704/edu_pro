@@ -45,8 +45,8 @@ class UserMemoryRecallService:
         profile = profile.scalar_one_or_none()
 
         if profile:
-            if profile.risk_level:
-                parts.append(f"风险等级：{profile.risk_level}")
+            if profile.risk_level_code:
+                parts.append(f"风险等级：{profile.risk_level_code} {profile.risk_level_name}")
             if profile.risk_score is not None:
                 parts.append(f"风险评分：{profile.risk_score}分")
             if profile.investment_experience:

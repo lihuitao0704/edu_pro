@@ -37,7 +37,7 @@ class ExplanationAgent(BaseAgent):
         latest = rating_history[0] if rating_history else None
 
         reply = f"【风险等级解读】\n"
-        reply += f"客户等级：{profile.risk_level}\n"
+        reply += f"客户等级：{profile.risk_level_code} {profile.risk_level_name}\n"
         reply += f"综合评分：{profile.risk_score} 分\n\n"
 
         if latest:
@@ -47,10 +47,10 @@ class ExplanationAgent(BaseAgent):
             reply += f"  风险偏好：{latest.risk_pref_score} 分\n"
             reply += f"  行为异常：{latest.behavior_score} 分\n"
 
-        return {"reply": reply, "risk_level": profile.risk_level}
+        return {"reply": reply, "risk_level_code": profile.risk_level_code, "risk_level_name": profile.risk_level_name}
 
     def _explain_recommendation(self, profile, recommendations: list) -> dict:
-        reply = f"根据客户 {profile.risk_level} 风险等级，推荐理由如下：\n\n"
+        reply = f"根据客户 {profile.risk_level_code} {profile.risk_level_name} 风险等级，推荐理由如下：\n\n"
         for i, r in enumerate(recommendations[:3], 1):
             reply += f"{i}. {r.get('product_name', '未知产品')}: {r.get('reason', '匹配客户风险偏好')}\n"
 
@@ -59,7 +59,7 @@ class ExplanationAgent(BaseAgent):
     def _explain_summary(self, profile, rating_history) -> dict:
         reply = (
             f"客户画像摘要：\n"
-            f"  风险等级：{profile.risk_level}\n"
+            f"  风险等级：{profile.risk_level_code} {profile.risk_level_name}\n"
             f"  综合评分：{profile.risk_score} 分\n"
             f"  资产规模：{profile.total_assets} 元\n"
             f"  投资经验：{profile.investment_experience or '暂无'}\n"

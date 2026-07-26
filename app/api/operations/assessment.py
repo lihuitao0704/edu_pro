@@ -66,9 +66,11 @@ async def redo_assessment(
     )
 
     # 更新画像基础风险等级（引擎会在此基础上做全面研判）
+    from app.config.risk_level_mapping import normalize_risk_level
+    normalized_level = normalize_risk_level(risk_level)
     await db.execute(
-        text("UPDATE fin_customer_profile SET risk_level = :rl, risk_score = :rs, update_time = NOW() WHERE customer_id = :cid"),
-        {"rl": risk_level, "rs": normalized, "cid": customer_id},
+        text("UPDATE fin_customer_profile SET risk_level_code = :code, risk_level_name = :name, risk_score = :rs, update_time = NOW() WHERE customer_id = :cid"),
+        {"code": normalized_level.risk_level_code, "name": normalized_level.risk_level_name, "rs": normalized, "cid": customer_id},
     )
     await db.commit()
 
@@ -77,7 +79,7 @@ async def redo_assessment(
     try:
         profile_svc = ProfileService(db)
         engine_result = await profile_svc.assess(customer_id, trigger_type="manual")
-        final_level = engine_result.risk_level
+        final_level = engine_result.risk_level_code
         _logger.info(
             "完整引擎研判完成 customer=%s level=%s breakers=%d warnings=%d",
             customer_id, final_level,

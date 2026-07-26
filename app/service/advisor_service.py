@@ -303,7 +303,7 @@ class AdvisorService:
             "C1": "保守型配置：以货币基金和债券为主，确保本金安全和稳定收益",
             "C2": "稳健型配置：债券为主，辅以少量混合基金，追求适度增值",
             "C3": "平衡型配置：股债平衡，兼顾收益与风险控制",
-            "C4": "进取型配置：股票为主，追求较高收益，承受一定波动",
+            "C4": "积极型配置：股票为主，追求较高收益，承受一定波动",
             "C5": "激进型配置：高比例权益类资产，追求超额收益",
         }
 
@@ -563,7 +563,7 @@ class AdvisorService:
 
     async def _generate_reason(self, product: dict, customer_risk: str, profile) -> str:
         """Generate a deterministic user-facing reason without prompt leakage."""
-        risk_map = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}
+        risk_map = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "积极型", "C5": "激进型"}
         risk_name = risk_map.get(customer_risk, customer_risk)
         product_type = str(product.get("product_type") or "产品")
         reason = (

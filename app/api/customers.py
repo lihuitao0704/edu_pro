@@ -34,7 +34,7 @@ async def list_customers(
             "(u.real_name LIKE :keyword OR u.username LIKE :keyword OR u.phone LIKE :keyword)"
         )
     if risk_level:
-        filters.append("p.risk_level = :risk_level")
+        filters.append("p.risk_level_code = :risk_level")
         params["risk_level"] = risk_level
     where = " AND ".join(filters)
 
@@ -49,7 +49,7 @@ async def list_customers(
     rows_result = await db.execute(
         text(
             "SELECT u.id AS customer_id, u.username, u.real_name, u.phone, u.age, "
-            "u.customer_level, p.risk_level, p.risk_score, p.total_assets, "
+            "u.customer_level, p.risk_level_code, p.risk_level_name, p.risk_score, p.total_assets, "
             "p.confidence_score, p.risk_flag, "
             "COALESCE((SELECT COUNT(*) FROM fin_risk_alert a "
             "  WHERE a.customer_id = u.id AND a.create_time >= NOW() - INTERVAL 30 DAY), 0) "
@@ -92,7 +92,7 @@ async def get_customer(
         text(
             "SELECT u.id AS customer_id, u.username, u.real_name, u.phone, u.email, "
             "u.age, u.education, u.occupation, u.customer_level, "
-            "p.risk_level, p.risk_score, p.investment_experience, "
+            "p.risk_level_code, p.risk_level_name, p.risk_score, p.investment_experience, "
             "p.annual_income_range, p.total_assets, p.asset_allocation, "
             "p.product_preference, p.confidence_score, p.risk_flag, "
             "COALESCE((SELECT COUNT(*) FROM fin_risk_alert a "

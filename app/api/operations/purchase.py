@@ -418,7 +418,7 @@ async def purchase_product(
                 _logger.info(
                     "购买后画像更新完成 customer=%s level=%s breakers=%d warnings=%d",
                     customer_id,
-                    engine_result.risk_level,
+                    engine_result.risk_level_code,
                     len(engine_result.circuit_breakers),
                     len(engine_result.warnings),
                 )

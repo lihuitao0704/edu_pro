@@ -13,7 +13,7 @@
     <template v-else-if="profile">
       <section class="profile-hero">
         <div class="avatar-orbit"><span>{{ String(profile.customer_id).padStart(2, '0') }}</span></div>
-        <div><h2>{{ formatRiskLevelPure(profile.risk_level) }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
+        <div><h2>{{ profile.risk_level_name || '待评估' }}</h2><p>{{ profile.investment_experience || '暂无' }}投资经验 · 年收入 {{ profile.annual_income_range || '待补充' }}</p></div>
         <div class="risk-seal" :data-level="profile.risk_flag"><span>风险标记</span><strong>{{ riskFlagLabel }}</strong></div>
       </section>
       <section class="metric-grid profile-metric-grid">
@@ -37,7 +37,7 @@
         <div class="surface-card">
           <div class="card-heading"><h3>关键研判标签</h3></div>
           <div class="tag-cloud">
-            <span>{{ formatRiskLevelPure(profile.risk_level) }}</span>
+            <span>{{ profile.risk_level_name || '待评估' }}</span>
             <span>{{ profile.investment_experience || '经验待补充' }}</span>
             <span>{{ profile.annual_income_range || '收入待补充' }}</span>
             <span>{{ Number(profile.total_assets || 0) >= 6_000_000 ? '高净值客户' : '零售客户' }}</span>
@@ -87,9 +87,8 @@ const riskProductLevel = computed(() => {
     c3: 'R3', C3: 'R3',
     c4: 'R4', C4: 'R4',
     c5: 'R5', C5: 'R5',
-    保守型: 'R1', 稳健型: 'R2', 平衡型: 'R3', 进取型: 'R4', 激进型: 'R5',
   }
-  return levels[String(profile.value?.risk_level || '')] || '—'
+  return levels[String(profile.value?.risk_level_code || '')] || '—'
 })
 
 const hasRadarData = computed(() => {
@@ -109,31 +108,6 @@ const isProfileStale = computed(() => {
 const money = (value: unknown) => value ? `¥${(Number(value) / 10_000).toFixed(1)}万` : '—'
 const percent = (value: unknown) => value ? `${Math.round(Number(value) * 100)}%` : '—'
 
-// 风险等级映射：c1/c2/c3/c4/c5 → C1保守型/C2稳健型/C3平衡型/C4进取型/C5激进型
-const RISK_LEVEL_DISPLAY: Record<string, string> = {
-  c1: 'C1保守型', C1: 'C1保守型',
-  c2: 'C2稳健型', C2: 'C2稳健型',
-  c3: 'C3平衡型', C3: 'C3平衡型',
-  c4: 'C4进取型', C4: 'C4进取型',
-  c5: 'C5激进型', C5: 'C5激进型',
-}
-function formatRiskLevel(level: unknown): string {
-  if (!level) return '待评估'
-  return RISK_LEVEL_DISPLAY[String(level)] || String(level)
-}
-
-const RISK_LEVEL_PURE: Record<string, string> = {
-  c1: '保守型', C1: '保守型', 保守型: '保守型',
-  c2: '稳健型', C2: '稳健型', 稳健型: '稳健型',
-  c3: '平衡型', C3: '平衡型', 平衡型: '平衡型',
-  c4: '进取型', C4: '进取型', 进取型: '进取型',
-  c5: '激进型', C5: '激进型', 激进型: '激进型',
-}
-function formatRiskLevelPure(level: unknown): string {
-  if (!level) return '待评估'
-  return RISK_LEVEL_PURE[String(level)] || String(level)
-}
-
 // ── 雷达图配色：按风险等级映射主色 ──
 const RADAR_THEMES: Record<string, { stroke: string; glow: string; fill: [string, string]; dot: string }> = {
   C1: { stroke: '#34d399', glow: 'rgba(52,211,153,.40)', fill: ['rgba(52,211,153,.20)', 'rgba(52,211,153,.04)'], dot: '#6ee7b7' },
@@ -145,7 +119,7 @@ const RADAR_THEMES: Record<string, { stroke: string; glow: string; fill: [string
 const FALLBACK_THEME = RADAR_THEMES.C3
 
 function resolveRadarTheme() {
-  const level = String(profile.value?.risk_level || '').toUpperCase()
+  const level = String(profile.value?.risk_level_code || '').toUpperCase()
   return RADAR_THEMES[level] ?? FALLBACK_THEME
 }
 

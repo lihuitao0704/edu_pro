@@ -104,8 +104,8 @@ class ProfileTool(BaseTool):
                 "investment_experience": profile.investment_experience if profile else None,
             },
             "assessment": {
-                "risk_level": assess_result.risk_level,
-                "risk_level_name": self._level_to_name(assess_result.risk_level),
+                "risk_level_code": assess_result.risk_level_code,
+                "risk_level_name": assess_result.risk_level_name,
                 "total_score": assess_result.total_score,
                 "confidence_score": assess_result.confidence_score,
             },
@@ -174,7 +174,7 @@ class ProfileTool(BaseTool):
 
     @staticmethod
     def _level_to_name(level: str) -> str:
-        mapping = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "进取型", "C5": "激进型"}
+        mapping = {"C1": "保守型", "C2": "稳健型", "C3": "平衡型", "C4": "积极型", "C5": "激进型"}
         return mapping.get(level, level)
 
     @staticmethod

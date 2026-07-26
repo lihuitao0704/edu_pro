@@ -14,7 +14,8 @@ class ProfileCacheContractTests(unittest.IsolatedAsyncioTestCase):
                 return_value={
                     "_schema_version": 2,
                     "customer_id": 11,
-                    "risk_level": "C2",
+                    "risk_level_code": "C2",
+                    "risk_level_name": "稳健型",
                     "risk_score": 42,
                     "confidence_score": "0.82",
                     "total_assets": "500000",

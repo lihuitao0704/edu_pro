@@ -22,6 +22,7 @@ from app.engine.behavioral_calibrator import BehavioralCalibrator
 from app.engine.score_mapper import (
     map_score_to_risk_level, calc_total_score, get_suitable_products,
 )
+from app.config.risk_level_mapping import normalize_risk_level
 from app.config.rules_config import (
     PRODUCT_COMPLEXITY_SCORE, TRADE_FREQUENCY_SCORE,
     HISTORICAL_RETURN_SCORE, LOSS_TOLERANCE_ADJUSTMENT,
@@ -239,7 +240,8 @@ class ProfileService:
         warnings = cb_result.warnings + special_result.adjustments
         return ProfileResult(
             customer_id=customer_id,
-            risk_level=final_level,
+            risk_level_code=final_level,
+            risk_level_name=normalize_risk_level(final_level).risk_level_name,
             risk_score=int(total_score),
             total_score=total_score,
             dimensions={
@@ -1068,7 +1070,8 @@ class ProfileService:
         # 序列化完整画像 JSON
         profile_json = {
             "customer_id": customer_id,
-            "risk_level": risk_level,
+            "risk_level_code": risk_level,
+            "risk_level_name": normalize_risk_level(risk_level).risk_level_name,
             "risk_score": risk_score,
             "dimensions": {
                 k: {
@@ -1081,7 +1084,8 @@ class ProfileService:
         }
 
         if profile:
-            profile.risk_level = risk_level
+            profile.risk_level_code = risk_level
+            profile.risk_level_name = normalize_risk_level(risk_level).risk_level_name
             profile.risk_score = risk_score
             profile.basic_score = dimension_scores["basic"]["score"]
             profile.experience_score = dimension_scores["experience"]["score"]
@@ -1092,7 +1096,8 @@ class ProfileService:
         else:
             profile = FinCustomerProfile(
                 customer_id=customer_id,
-                risk_level=risk_level,
+                risk_level_code=risk_level,
+                risk_level_name=normalize_risk_level(risk_level).risk_level_name,
                 risk_score=risk_score,
                 basic_score=dimension_scores["basic"]["score"],
                 experience_score=dimension_scores["experience"]["score"],
@@ -1116,7 +1121,8 @@ class ProfileService:
             "_schema_version": PROFILE_CACHE_SCHEMA_VERSION,
             "id": getattr(profile, "id", None),
             "customer_id": getattr(profile, "customer_id", None),
-            "risk_level": getattr(profile, "risk_level", None),
+            "risk_level_code": getattr(profile, "risk_level_code", None),
+            "risk_level_name": getattr(profile, "risk_level_name", None),
             "risk_score": getattr(profile, "risk_score", None),
             "investment_experience": getattr(profile, "investment_experience", None),
             "annual_income_range": getattr(profile, "annual_income_range", None),

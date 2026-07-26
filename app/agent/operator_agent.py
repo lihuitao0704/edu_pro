@@ -1344,7 +1344,7 @@ async def _tool_query_customer_panoramic(arguments: dict, _op) -> dict:
 
         risk_level = await _get_customer_risk_level(cid, db)
         profile = (await db.execute(text(
-            "SELECT risk_level, risk_score, total_assets, investment_experience, confidence_score "
+            "SELECT risk_level_code, risk_level_name, risk_score, total_assets, investment_experience, confidence_score "
             "FROM fin_customer_profile WHERE customer_id = :cid"), {"cid": cid})).mappings().first()
 
         found, holdings_data = await get_customer_products(customer_name)

@@ -77,7 +77,7 @@ async def submit_assessment(
     enforce_customer_scope(user, req.customer_id)
     service = RiskService(db)
     result = await service.submit_assessment(req.customer_id, req.answers)
-    return success(data=result.model_dump(), message=f"风险评估完成，等级：{result.risk_level}")
+    return success(data=result.model_dump(), message=f"风险评估完成，等级：{result.risk_level_code} {result.risk_level_name}")
 
 
 @router.post("/suitability-check")
