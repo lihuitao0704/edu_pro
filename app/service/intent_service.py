@@ -515,7 +515,18 @@ class IntentService:
             )
             return decision
 
-        if re.fullmatch(r"(确认|确定|好的|行|可以|同意|取消|放弃)[！!。.]?", text):
+        if re.fullmatch(r"(确认|取消)[！!。.]?", text):
+            # "确认"/"取消" 是二次确认流程的关键路径，必须直达 operator
+            # 不依赖上下文：即使上下文断裂，operator 也能正确处理
+            # （operator 内部有 pending confirm 检查，无待确认时会友好提示）
+            return cls._build_route_decision(
+                message,
+                RouteTask.EXECUTE,
+                RouteDomain.TRANSACTION,
+                confidence=1.0,
+                source="confirm_cancel_rule",
+            )
+        if re.fullmatch(r"(确定|好的|行|可以|同意|放弃)[！!。.]?", text):
             last_agent = (context or {}).get("last_agent")
             last_intent = (context or {}).get("last_intent")
             if last_agent == "operator" or last_intent == "business_operation":

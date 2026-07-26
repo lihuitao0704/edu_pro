@@ -153,7 +153,7 @@ class ChatOrchestrator:
             route_context["risk_warning"] = _RISK_AWARE_REPLY_MEDIUM
 
         route_kwargs: dict[str, Any] = {
-            "message": input_decision.sanitized_text,
+            "message": message,
             "session_id": session_id,
             "user_id": actor_id,
             "user_role": actor_role,
