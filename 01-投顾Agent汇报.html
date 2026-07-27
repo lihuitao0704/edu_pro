@@ -1,1 +1,104 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>投顾 Agent｜项目汇报</title><link rel="stylesheet" href="reports.css"></head><body><main class="shell"><header class="top"><div class="brand">FINTELLIGENCE / 投顾 Agent</div><nav class="nav"><a href="index.html">目录</a><a href="00-总体汇报.html">总体</a><a href="02-客服Agent汇报.html">下一页</a></nav></header><section class="hero"><span class="eyebrow">一句结论</span><h1>先理解客户，再在合规边界内给出可解释建议</h1><p class="lead">`AdvisorAgent` 以 LangChain 工具调用组织画像、持仓、产品、配置和知识检索能力；模型负责综合表达，风险与适当性规则负责限定“什么不能推荐”。</p></section><section class="flow-diagram"><div class="flow"><div class="node"><strong>客户提问</strong><span>咨询、比较、配置诉求</span></div><div class="arrow">→</div><div class="node"><strong>画像 / 记忆召回</strong><span>风险、偏好、持仓、Redis 会话</span></div><div class="arrow">→</div><div class="node"><strong>约束过滤</strong><span>适当性、动态风险、产品风险</span></div><div class="arrow">→</div><div class="node"><strong>排序与配置</strong><span>候选产品、TopN、资产配置</span></div><div class="arrow">→</div><div class="node"><strong>GraphRAG 解释</strong><span>Milvus 语义 + Neo4j 关系上下文</span></div><div class="arrow">→</div><div class="node"><strong>SSE 答复</strong><span>流式建议、理由与风险提示</span></div></div><p class="flow-note">当前实现：`advisor_agent.py` 提供多工具入口与流式执行；推荐和配置服务提供可结构化消费的结果。</p></section><section class="grid two"><article class="card"><span class="tag">技术栈</span><h3>LLM 不是单独决策者</h3><ul><li>LangChain：将 LLM 与工具箱组合</li><li>Profile/Holding/Recommendation/Allocation Tool：给出事实和计算</li><li>Redis：会话与跨会话记忆召回</li><li>MySQL、Neo4j、Milvus：业务事实、关系和知识上下文</li></ul></article><article class="card"><span class="tag warn">合规约束</span><h3>把“能说”与“能推荐”分离</h3><ul><li>产品风险不能超过客户适当性范围</li><li>风险预警会收紧推荐范围与文案</li><li>配置输出保留风险提示和推荐依据</li><li>拒绝反馈影响后续偏好信号，不自动调级</li></ul></article></section><h2>设计亮点</h2><section class="grid"><article class="card"><h3>多工具协同</h3><p>把画像、持仓、候选池、配置模板拆成原子能力，便于替换与审计。</p></article><article class="card"><h3>可解释链路</h3><p>GraphRAG 将产品知识与关系上下文注入解释，避免只给黑盒匹配分。</p></article><article class="card"><h3>实时体验</h3><p>流式执行让顾问在复杂工具链路完成时仍可持续看到答复进度。</p></article></section><footer class="footer"><span>联动输入：画像、风控、反馈、分析洞察</span><a href="02-客服Agent汇报.html">客服 Agent →</a></footer></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>投顾 Agent｜项目汇报</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 投顾 Agent</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="00-总体汇报.html">总体</a>
+<a href="02-客服Agent汇报.html">下一页</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">一句结论</span>
+<h1>先理解客户，再在合规边界内给出可解释建议</h1>
+<p class="lead">`AdvisorAgent` 以 LangChain 工具调用组织画像、持仓、产品、配置和知识检索能力；模型负责综合表达，风险与适当性规则负责限定“什么不能推荐”。</p>
+</section>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>客户提问</strong>
+<span>咨询、比较、配置诉求</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>画像 / 记忆召回</strong>
+<span>风险、偏好、持仓、Redis 会话</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>约束过滤</strong>
+<span>适当性、动态风险、产品风险</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>排序与配置</strong>
+<span>候选产品、TopN、资产配置</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>GraphRAG 解释</strong>
+<span>Milvus 语义 + Neo4j 关系上下文</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>SSE 答复</strong>
+<span>流式建议、理由与风险提示</span>
+</div>
+</div>
+<p class="flow-note">当前实现：`advisor_agent.py` 提供多工具入口与流式执行；推荐和配置服务提供可结构化消费的结果。</p>
+</section>
+<section class="grid two">
+<article class="card">
+<span class="tag">技术栈</span>
+<h3>LLM 不是单独决策者</h3>
+<ul>
+<li>LangChain：将 LLM 与工具箱组合</li>
+<li>Profile/Holding/Recommendation/Allocation Tool：给出事实和计算</li>
+<li>Redis：会话与跨会话记忆召回</li>
+<li>MySQL、Neo4j、Milvus：业务事实、关系和知识上下文</li>
+</ul>
+</article>
+<article class="card">
+<span class="tag warn">合规约束</span>
+<h3>把“能说”与“能推荐”分离</h3>
+<ul>
+<li>产品风险不能超过客户适当性范围</li>
+<li>风险预警会收紧推荐范围与文案</li>
+<li>配置输出保留风险提示和推荐依据</li>
+<li>拒绝反馈影响后续偏好信号，不自动调级</li>
+</ul>
+</article>
+</section>
+<h2>设计亮点</h2>
+<section class="grid">
+<article class="card">
+<h3>多工具协同</h3>
+<p>把画像、持仓、候选池、配置模板拆成原子能力，便于替换与审计。</p>
+</article>
+<article class="card">
+<h3>可解释链路</h3>
+<p>GraphRAG 将产品知识与关系上下文注入解释，避免只给黑盒匹配分。</p>
+</article>
+<article class="card">
+<h3>实时体验</h3>
+<p>流式执行让顾问在复杂工具链路完成时仍可持续看到答复进度。</p>
+</article>
+</section>
+<h2>为什么投顾 Agent 值得讲</h2>
+<section class="requirement"><strong>需求映射：</strong>需求文档要求投顾助手完成“客户画像分析、产品推荐、资产配置建议、持仓穿透”，并以 GraphRAG 形成比纯 RAG 更完整的推荐依据。当前实现以画像、持仓、推荐、配置和知识工具组成可追踪工具链，而非让模型直接给出不可验证结论。</section>
+<section class="grid two"><article class="card"><h3>从“经验推荐”到“证据推荐”</h3><p>顾问不再逐页翻产品手册：Agent 同时读取客户风险等级、持仓行业分布、产品适当性与知识上下文。输出不仅有“推荐什么”，还保留“为什么适配、受什么约束、风险在哪里”。</p></article><article class="card"><h3>可回答的技术追问</h3><ul><li>GraphRAG：Milvus 语义召回 + Neo4j 关系补全</li><li>适当性：C1-C5 与产品风险范围作为确定性过滤</li><li>体验：SSE 流式响应，工具调用结果可结构化展示</li><li>治理：风险事件能实时收紧候选池，而非事后提示</li></ul></article></section>
+<footer class="footer">
+<span>联动输入：画像、风控、反馈、分析洞察</span>
+<a href="02-客服Agent汇报.html">客服 Agent →</a>
+</footer>
+</main>
+</body>
+</html>

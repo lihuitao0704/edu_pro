@@ -58,6 +58,17 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertIn("Event Bus", text)
         self.assertIn("Memory Manager", text)
 
+    def test_reports_include_team_and_requirement_driven_value(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("offer收割机", index)
+        for member in ("李惠涛", "林罗英", "刘嘉威", "李嘉兵", "李华桂", "谢伟杰"):
+            self.assertIn(member, index)
+        self.assertIn("项目背景", index)
+        self.assertIn("项目目标", index)
+        for filename in REPORTS:
+            if filename != "index.html":
+                self.assertIn("需求映射", (ROOT / filename).read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

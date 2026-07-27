@@ -1,1 +1,81 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>业务操作 Agent｜项目汇报</title><link rel="stylesheet" href="reports.css"></head><body><main class="shell"><header class="top"><div class="brand">FINTELLIGENCE / 业务操作 Agent</div><nav class="nav"><a href="index.html">目录</a><a href="03-风控Agent汇报.html">上一页</a><a href="05-数据分析Agent汇报.html">下一页</a></nav></header><section class="hero"><span class="eyebrow">一句结论</span><h1>自然语言可以发起业务，但绝不能绕过权限、确认和风控</h1><p class="lead">`operator_agent.py` 将 NL2API 与受控工具注册表结合，把申购、赎回、转账、工单和查询转化为可验证、可审计的业务操作。</p></section><section class="flow-diagram"><div class="flow"><div class="node"><strong>自然语言指令</strong><span>“为张三申购…”</span></div><div class="arrow">→</div><div class="node"><strong>参数提取</strong><span>客户、产品、金额、动作</span></div><div class="arrow">→</div><div class="node"><strong>身份 / 权限</strong><span>RBAC 与客户归属校验</span></div><div class="arrow">→</div><div class="node"><strong>P0-P5 校验</strong><span>适当性、时间、额度、AML、状态</span></div><div class="arrow">→</div><div class="node"><strong>二次确认</strong><span>敏感操作写入 Redis 待确认状态</span></div><div class="arrow">→</div><div class="node"><strong>执行与审计</strong><span>交易/工单落库、发布领域事件</span></div></div><p class="flow-note">当前实现：工具注册表使操作能力可扩展；确认状态、审计记录和事件发布使每次执行可追溯。</p></section><section class="grid"><article class="card"><h3>覆盖的业务动作</h3><p>申购、赎回、转账、重新风险评估、联系信息更新、可疑交易上报、工单创建，以及产品/持仓/客户全景查询。</p></article><article class="card"><h3>为什么先校验</h3><p>资金与客户状态一旦变化难以回滚；系统优先校验风险等级、产品状态、持仓余额、交易时段和日累计限制。</p></article><article class="card"><h3>联动价值</h3><p>成功操作发布交易事实；高风险或可疑操作触发风控预警，从而驱动画像、投顾、客服的后续状态。</p></article></section><footer class="footer"><span>当前实现 / 操作前风控与操作后事件并存</span><a href="05-数据分析Agent汇报.html">数据分析 Agent →</a></footer></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>业务操作 Agent｜项目汇报</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 业务操作 Agent</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="03-风控Agent汇报.html">上一页</a>
+<a href="05-数据分析Agent汇报.html">下一页</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">一句结论</span>
+<h1>自然语言可以发起业务，但绝不能绕过权限、确认和风控</h1>
+<p class="lead">`operator_agent.py` 将 NL2API 与受控工具注册表结合，把申购、赎回、转账、工单和查询转化为可验证、可审计的业务操作。</p>
+</section>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>自然语言指令</strong>
+<span>“为张三申购…”</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>参数提取</strong>
+<span>客户、产品、金额、动作</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>身份 / 权限</strong>
+<span>RBAC 与客户归属校验</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>P0-P5 校验</strong>
+<span>适当性、时间、额度、AML、状态</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>二次确认</strong>
+<span>敏感操作写入 Redis 待确认状态</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>执行与审计</strong>
+<span>交易/工单落库、发布领域事件</span>
+</div>
+</div>
+<p class="flow-note">当前实现：工具注册表使操作能力可扩展；确认状态、审计记录和事件发布使每次执行可追溯。</p>
+</section>
+<section class="grid">
+<article class="card">
+<h3>覆盖的业务动作</h3>
+<p>申购、赎回、转账、重新风险评估、联系信息更新、可疑交易上报、工单创建，以及产品/持仓/客户全景查询。</p>
+</article>
+<article class="card">
+<h3>为什么先校验</h3>
+<p>资金与客户状态一旦变化难以回滚；系统优先校验风险等级、产品状态、持仓余额、交易时段和日累计限制。</p>
+</article>
+<article class="card">
+<h3>联动价值</h3>
+<p>成功操作发布交易事实；高风险或可疑操作触发风控预警，从而驱动画像、投顾、客服的后续状态。</p>
+</article>
+</section>
+<h2>NL2API：让一句话业务办理可控可审计</h2>
+<section class="requirement"><strong>需求映射：</strong>需求文档要求 NL2API 覆盖申购、赎回、转账、信息变更等标准业务接口，并强制权限校验、二次确认和工单留痕。当前实现把自然语言理解限定在工具注册表和明确参数内，模型不能绕过业务校验直接修改资金或客户状态。</section>
+<section class="grid two"><article class="card"><h3>为什么必须二次确认</h3><p>金融操作具有不可逆成本。系统将意图识别与最终执行分离：先显示金额、产品、客户、风险提示与交易要素，再由确认令牌触发真正的 API 调用，降低误操作与越权风险。</p></article><article class="card"><h3>为什么必须审计</h3><p>每次工具调用都可以对应用户、角色、参数、校验结果、执行结果和领域事件。发生争议时，能够沿着“自然语言—工具—规则—落库”链路回放，而不是依赖聊天记录猜测。</p></article></section>
+<footer class="footer">
+<span>当前实现 / 操作前风控与操作后事件并存</span>
+<a href="05-数据分析Agent汇报.html">数据分析 Agent →</a>
+</footer>
+</main>
+</body>
+</html>

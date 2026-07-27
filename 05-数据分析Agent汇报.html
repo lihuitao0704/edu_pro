@@ -1,1 +1,83 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>数据分析 Agent｜项目汇报</title><link rel="stylesheet" href="reports.css"></head><body><main class="shell"><header class="top"><div class="brand">FINTELLIGENCE / 数据分析 Agent</div><nav class="nav"><a href="index.html">目录</a><a href="04-业务操作Agent汇报.html">上一页</a><a href="06-多Agent联动与架构汇报.html">下一页</a></nav></header><section class="hero"><span class="eyebrow">一句结论</span><h1>让业务人员用自然语言看数据，同时把 SQL 风险锁在系统之外</h1><p class="lead">`NL2SQLService` 使用动态 Schema、Few-shot 示例和 LLM 生成查询；真正执行前必须通过只读 SQL 校验，并限制结果行数与表范围。</p></section><section class="flow-diagram"><div class="flow"><div class="node"><strong>自然语言问题</strong><span>“资产超百万客户有多少？”</span></div><div class="arrow">→</div><div class="node"><strong>Schema 选择</strong><span>关键词匹配相关业务表 + Few-shot</span></div><div class="arrow">→</div><div class="node"><strong>生成 SQL</strong><span>LLM 只生成查询草案</span></div><div class="arrow">→</div><div class="node"><strong>SELECT 校验</strong><span>拦截 DELETE / UPDATE / INSERT / DDL</span></div><div class="arrow">→</div><div class="node"><strong>受限执行</strong><span>白名单表、最多 100 行</span></div><div class="arrow">→</div><div class="node"><strong>解释与洞察</strong><span>结果表格、图表、合格信号</span></div></div><p class="flow-note">当前实现：分析结果返回 SQL、数据和解释；只有客户、时间、数值与证据完整的结构化洞察才应进入 Agent 联动。</p></section><section class="grid two"><article class="card"><h3>安全设计</h3><ul><li>SQL 必须以 SELECT 开头</li><li>危险关键词以单词边界拦截</li><li>业务表范围可控，避免暴露系统元数据</li><li>最大返回 100 行，降低误操作与超大结果风险</li></ul></article><article class="card"><span class="tag warn">策略约束</span><h3>洞察不是“自动决策”</h3><p>例如回撤或高频交易可形成可解释的策略信号，供投顾、风控和画像分别消费；不完整或非结构化结果不得发布事件，更不直接调高/调低正式风险等级。</p></article></section><footer class="footer"><span>输入：自然语言；输出：只读 SQL、结果、解释、受控洞察</span><a href="06-多Agent联动与架构汇报.html">多 Agent 联动与架构 →</a></footer></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数据分析 Agent｜项目汇报</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 数据分析 Agent</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="04-业务操作Agent汇报.html">上一页</a>
+<a href="06-多Agent联动与架构汇报.html">下一页</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">一句结论</span>
+<h1>让业务人员用自然语言看数据，同时把 SQL 风险锁在系统之外</h1>
+<p class="lead">`NL2SQLService` 使用动态 Schema、Few-shot 示例和 LLM 生成查询；真正执行前必须通过只读 SQL 校验，并限制结果行数与表范围。</p>
+</section>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>自然语言问题</strong>
+<span>“资产超百万客户有多少？”</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Schema 选择</strong>
+<span>关键词匹配相关业务表 + Few-shot</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>生成 SQL</strong>
+<span>LLM 只生成查询草案</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>SELECT 校验</strong>
+<span>拦截 DELETE / UPDATE / INSERT / DDL</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>受限执行</strong>
+<span>白名单表、最多 100 行</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>解释与洞察</strong>
+<span>结果表格、图表、合格信号</span>
+</div>
+</div>
+<p class="flow-note">当前实现：分析结果返回 SQL、数据和解释；只有客户、时间、数值与证据完整的结构化洞察才应进入 Agent 联动。</p>
+</section>
+<section class="grid two">
+<article class="card">
+<h3>安全设计</h3>
+<ul>
+<li>SQL 必须以 SELECT 开头</li>
+<li>危险关键词以单词边界拦截</li>
+<li>业务表范围可控，避免暴露系统元数据</li>
+<li>最大返回 100 行，降低误操作与超大结果风险</li>
+</ul>
+</article>
+<article class="card">
+<span class="tag warn">策略约束</span>
+<h3>洞察不是“自动决策”</h3>
+<p>例如回撤或高频交易可形成可解释的策略信号，供投顾、风控和画像分别消费；不完整或非结构化结果不得发布事件，更不直接调高/调低正式风险等级。</p>
+</article>
+</section>
+<h2>NL2SQL：把“查数”从 IT 工单变成受控自助服务</h2>
+<section class="requirement"><strong>需求映射：</strong>需求文档要求内部员工自然语言查询业务数据，并以动态 Schema、Few-shot 示例与安全校验保证查询正确、安全。当前实现只允许 SELECT、限制业务表范围和结果行数；这是将“易用性”与“数据治理”同时落地的关键。</section>
+<section class="grid two"><article class="card"><h3>管理价值：分析周期从排队到对话</h3><p>理财顾问可快速查看客户资产和持仓，运营可进行产品统计，风控可定位异常模式；生成 SQL 与结果解释一同返回，既方便复核，也避免黑盒报表。</p></article><article class="card"><h3>安全价值：模型只负责草拟</h3><p>LLM 负责理解问题和生成候选 SQL，规则层负责决定是否可执行。DROP、DELETE、UPDATE、INSERT 等写操作被拦截，查询结果受限，非结构化结论不得直接驱动风险调级。</p></article></section>
+<footer class="footer">
+<span>输入：自然语言；输出：只读 SQL、结果、解释、受控洞察</span>
+<a href="06-多Agent联动与架构汇报.html">多 Agent 联动与架构 →</a>
+</footer>
+</main>
+</body>
+</html>
