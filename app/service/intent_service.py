@@ -512,6 +512,24 @@ class IntentService:
         if any(word in text for word in compliance_faq_keywords):
             return cls._build_route_decision(message, RouteTask.FAQ)
 
+        # 账户操作类 FAQ（修改密码、修改银行卡、修改手机号等）
+        account_operation_keywords = ("修改", "更改", "更换", "绑定", "解绑")
+        account_operation_targets = ("银行卡", "手机", "密码", "邮箱", "地址", "联系方式")
+        if any(word in text for word in account_operation_keywords) and \
+           any(word in text for word in account_operation_targets):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # 风险等级/风评/适当性/投资者分类等通用 FAQ
+        risk_level_faq_keywords = ("风险等级", "风险测评", "风险评估", "风评",
+                                    "适当性", "投资者分类", "合格投资者",
+                                    "R1", "R2", "R3", "R4", "R5",
+                                    "C1", "C2", "C3", "C4", "C5")
+        risk_level_faq_questions = ("是什么", "什么意思", "有哪些", "怎么分",
+                                     "如何划分", "怎么评", "如何评估")
+        if any(word in text for word in risk_level_faq_keywords) and \
+           any(word in text for word in risk_level_faq_questions):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
         # Natural-language database mutations are never delegated to NL2SQL.
         # Block them before generic query markers such as "客户数据" can match.
         unsafe_data_mutation = (
@@ -799,6 +817,9 @@ class IntentService:
             "有什么区别",
             "是否支持",
             "确认时间",
+            "什么是",
+            "有哪些",
+            "规定",
         )
         financial_terms = (
             "产品",
@@ -812,6 +833,21 @@ class IntentService:
             "监管",
             "政策",
             "服务",
+            "投资者",
+            "合格",
+            "适当性",
+            "净值",
+            "份额",
+            "估值",
+            "分红",
+            "定投",
+            "托管",
+            "募集",
+            "风险评估",
+            "风险测评",
+            "反洗钱",
+            "AML",
+            "KYC",
         )
         if any(word in text for word in informational) and any(
             word in text for word in financial_terms

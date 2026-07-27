@@ -181,6 +181,7 @@ class AdvisorAgent(BaseAgent):
         self._settings = get_settings()
 
         # ── 初始化 LLM（投顾 Agent 单独压低 timeout，避免多轮工具调用叠加超时）──
+        import httpx
         self._llm = ChatOpenAI(
             model=self._settings.llm.openai_model_chat,
             temperature=self._settings.llm.openai_temperature,
