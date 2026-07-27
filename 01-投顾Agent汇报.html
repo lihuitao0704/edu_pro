@@ -160,6 +160,12 @@
 </section>
 <section class="grid two"><article class="card"><h3>从“经验推荐”到“证据推荐”</h3><p>顾问不再逐页翻产品手册：Agent 同时读取客户风险等级、持仓行业分布、产品适当性与知识上下文。输出不仅有“推荐什么”，还保留“为什么适配、受什么约束、风险在哪里”。</p></article><article class="card"><h3>可回答的技术追问</h3><ul><li>GraphRAG：Milvus 语义召回 + Neo4j 关系补全</li><li>适当性：C1-C5 与产品风险范围作为确定性过滤</li><li>体验：SSE 流式响应，工具调用结果可结构化展示</li><li>治理：风险事件能实时收紧候选池，而非事后提示</li></ul></article></section>
 <section class="grid two"><article class="card"><h3>亮点：预算分配与角色化表达</h3><p>当顾问给出投资金额时，系统可将配置比例转化为具体预算分配；顾问端保留画像、约束和产品匹配等专业信息，客户侧则用更易理解的叙事输出建议与风险提示。</p></article><article class="card"><h3>边界：投顾不越权</h3><p>AdvisorAgent <strong>不直接执行交易</strong>，也<strong>不修改正式风险评级</strong>。它输出的是被画像、适当性和预警约束的可解释建议；交易与评级分别继续走业务操作和正式风评/审计流程。</p></article></section>
+
+<h2>投顾 Agent 解决的核心痛点</h2>
+<section class="grid two"><article class="card"><h3>动态多表联查 + Cache-Aside</h3><p>画像不再依赖静态标签，而是基于客户、测评、持仓、产品和交易事实动态计算。查询优先读取 Redis，未命中再访问 MySQL 并回填缓存；MySQL 始终是可审计的业务事实来源。</p></article><article class="card"><h3>七大核心工具</h3><p><code>smart_recommend</code>、画像、产品、配置、持仓、客群对比与 GraphRAG 工具共同覆盖推荐闭环。LangChain 仅负责工具编排，确定性规则和业务服务仍保持独立可控。</p></article></section>
+<section class="grid three"><article class="card"><h3>Neo4j 同步失败</h3><p>图谱是 MySQL 业务事实的可重建投影。同步异常进入可观测重试与人工介入队列，不以图谱失败覆盖或篡改主数据。</p></article><article class="card"><h3>默认 R1 推荐</h3><p>客户未完成或风评已过期时，链路先提示完成测评，并仅开放保守候选池；这是一项临时推荐约束，不会自动变更正式风险等级。</p></article><article class="card"><h3>受控复核与保守策略</h3><p>行为信号出现显著偏离时，系统收紧候选范围、强化风险提示并触发受控复核，完整保留证据与审计记录。</p></article></section>
+<h2>从“经验推荐”到“证据推荐”</h2>
+<section class="grid two"><article class="card"><h3>治理边界</h3><p>AdvisorAgent <strong>不直接执行交易</strong>，也<strong>不修改正式风险评级</strong>；正式 C1-C5 的变化只由正式风险测评与审计流程完成。</p></article><article class="card"><h3>需求映射</h3><p>客户画像、持仓分析、产品匹配、资产配置和 GraphRAG 组成从事实依据到客户解释的可追溯链路，让每一条推荐都有来源、约束和理由。</p></article></section>
 <footer class="footer">
 <span>联动输入：画像、风控、反馈、分析洞察</span>
 <a href="02-客服Agent汇报.html">客服 Agent →</a>
