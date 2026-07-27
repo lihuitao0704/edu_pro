@@ -28,6 +28,24 @@ REPORTS = {
 
 
 class ReportHtmlTest(unittest.TestCase):
+    def test_advisor_report_covers_replacement_content_with_integrated_style(self):
+        html = (ROOT / "01-投顾Agent汇报.html").read_text(encoding="utf-8")
+        for anchor in (
+            'href="00-总体汇报.html"', 'href="02-客服Agent汇报.html"',
+            'href="reports.css"', "投顾 Agent 解决的核心痛点",
+            "动态多表联查", "Cache-Aside", "七大核心工具",
+            "Neo4j 同步失败", "默认 R1 推荐", "受控复核与保守策略",
+            "LangChain", "从“经验推荐”到“证据推荐”",
+            "不直接执行交易", "不修改正式风险评级", "需求映射",
+        ):
+            self.assertIn(anchor, html)
+        for tool in (
+            "smart_recommend", "profile_tool", "recommend_products", "asset_allocation",
+            "analysis_holdings", "compare_customers", "graphrag_search",
+        ):
+            self.assertIn(tool, html)
+        self.assertNotIn('href="01-投顾Agent汇报(2).html"', html)
+
     def test_multi_agent_report_explains_algorithmic_decisions(self):
         html = (ROOT / "06-多Agent联动与架构汇报.html").read_text(encoding="utf-8")
         for anchor in (
