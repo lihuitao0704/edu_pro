@@ -130,7 +130,7 @@ class CustomerServiceAgent:
             ("TRANSFER_HUMAN", None): "transfer_human",
             ("FAQ", "POLICY"): "policy_interpretation",
             ("FAQ", "TRANSACTION"): "faq",
-            ("FAQ", None): "product_inquiry",
+            ("FAQ", None): "faq",  # 默认 FAQ 意图，而不是 product_inquiry
         }
         intent = routed_customer_intents.get((route_task, route_domain))
         if intent is None:

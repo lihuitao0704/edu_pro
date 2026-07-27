@@ -495,6 +495,41 @@ class IntentService:
                 message, RouteTask.TRANSFER_HUMAN, RouteDomain.GENERAL
             )
 
+        # 公司/机构相关信息查询 → FAQ（如"公司总部在哪"、"客服电话多少"等）
+        company_keywords = ("公司", "总部", "地址", "在哪", "客服电话", "客服电话多少",
+                            "营业时间", "网点", "分支机构", "联系方式", "官网", "网址")
+        if any(word in text for word in company_keywords) and any(
+            word in text for word in ("在哪", "多少", "是什么", "怎么", "如何", "有没有", "几个")
+        ):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+        # 单独的"公司总部在哪"等简短问句
+        if ("公司" in text or "总部" in text) and ("在哪" in text or "哪里" in text):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # 反洗钱/合规类 FAQ（知识在 faq_knowledge 中，不应路由到 policy_interpretation）
+        compliance_faq_keywords = ("反洗钱", "AML", "可疑交易", "大额交易报告",
+                                    "客户身份识别", "KYC")
+        if any(word in text for word in compliance_faq_keywords):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # 账户操作类 FAQ（修改密码、修改银行卡、修改手机号等）
+        account_operation_keywords = ("修改", "更改", "更换", "绑定", "解绑")
+        account_operation_targets = ("银行卡", "手机", "密码", "邮箱", "地址", "联系方式")
+        if any(word in text for word in account_operation_keywords) and \
+           any(word in text for word in account_operation_targets):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
+        # 风险等级/风评/适当性/投资者分类等通用 FAQ
+        risk_level_faq_keywords = ("风险等级", "风险测评", "风险评估", "风评",
+                                    "适当性", "投资者分类", "合格投资者",
+                                    "R1", "R2", "R3", "R4", "R5",
+                                    "C1", "C2", "C3", "C4", "C5")
+        risk_level_faq_questions = ("是什么", "什么意思", "有哪些", "怎么分",
+                                     "如何划分", "怎么评", "如何评估")
+        if any(word in text for word in risk_level_faq_keywords) and \
+           any(word in text for word in risk_level_faq_questions):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
         # Natural-language database mutations are never delegated to NL2SQL.
         # Block them before generic query markers such as "客户数据" can match.
         unsafe_data_mutation = (
@@ -782,6 +817,9 @@ class IntentService:
             "有什么区别",
             "是否支持",
             "确认时间",
+            "什么是",
+            "有哪些",
+            "规定",
         )
         financial_terms = (
             "产品",
@@ -795,6 +833,21 @@ class IntentService:
             "监管",
             "政策",
             "服务",
+            "投资者",
+            "合格",
+            "适当性",
+            "净值",
+            "份额",
+            "估值",
+            "分红",
+            "定投",
+            "托管",
+            "募集",
+            "风险评估",
+            "风险测评",
+            "反洗钱",
+            "AML",
+            "KYC",
         )
         if any(word in text for word in informational) and any(
             word in text for word in financial_terms
