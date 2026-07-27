@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>风控 Agent｜项目汇报</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 风控 Agent</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="02-客服Agent汇报.html">上一页</a>
+<a href="04-业务操作Agent汇报.html">下一页</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">一句结论</span>
+<h1>将风险判断前置到资金变化之前，并将结果传递给全链路</h1>
+<p class="lead">风控能力由规则引擎、交易流程服务、风险监控服务和预警工单组成：既控制单笔操作，也为投顾、画像与客服提供一致的动态风险状态。</p>
+</section>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>交易请求</strong>
+<span>申购、赎回、转账、可疑上报</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>事前评估</strong>
+<span>适当性、额度、状态、时间、AML</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>决策</strong>
+<span>允许 / 人工复核 / 拦截</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>风险预警</strong>
+<span>规则命中、等级、状态、证据</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>工单与联动</strong>
+<span>处理闭环、投顾约束、客服提示</span>
+</div>
+</div>
+<p class="flow-note">当前实现：`TransactionFlowService` 和 `RiskMonitorService` 将交易上下文、规则检测、预警持久化与工单处理串联。</p>
+</section>
+<section class="grid two">
+<article class="card">
+<h3>确定性规则引擎</h3>
+<ul>
+<li>四维画像评分：基础、经验、风险偏好、行为</li>
+<li>熔断与特殊场景处理</li>
+<li>风险等级映射、置信度与适当性矩阵</li>
+<li>预警生命周期及处理状态</li>
+</ul>
+</article>
+<article class="card">
+<span class="tag risk">关键边界</span>
+<h3>动态约束 ≠ 正式风险等级</h3>
+<p>预警可将 `risk_flag` 同步为投顾推荐约束、客服风险提示和画像动态状态；正式 C1-C5 等级仅由风险评估/画像研判流程变更。</p>
+</article>
+</section>
+<h2>金融合规红线如何被编码</h2>
+<section class="requirement"><strong>需求映射：</strong>需求文档要求适当性匹配、反洗钱规则、分级预警、风险画像和三层记忆，并明确 C1 客户不能购买 R4/R5 产品。当前实现将这些要求前置为交易闸门、产品匹配、熔断规则和预警工单，而非只在页面弹出风险提示。</section>
+<section class="grid two"><article class="card"><h3>从抽查到逐笔控制</h3><p>金额、产品状态、客户状态、持仓余额、交易时间、日累计限额、风险标记与可疑交易等条件进入操作前校验；高风险请求不会先成交、后补救。</p></article><article class="card"><h3>从单点预警到协同处置</h3><p>预警事实可经 Event Bus 投递给画像、投顾和客服：画像更新动态信号，投顾收紧建议，客服生成审慎沟通提示；风控专员通过工单完成处置和闭环。</p></article></section>
+<footer class="footer">
+<span>联动输出：预警事实、动态风险约束、待处理工单</span>
+<a href="04-业务操作Agent汇报.html">业务操作 Agent →</a>
+</footer>
+</main>
+</body>
+</html>
