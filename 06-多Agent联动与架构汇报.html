@@ -11,10 +11,8 @@
 <header class="top">
 <div class="brand">FINTELLIGENCE / 多 Agent 联动与架构</div>
 <nav class="nav">
-<a href="index.html">目录</a>
 <a href="05-数据分析Agent汇报.html">上一页</a>
-<a href="记忆架构.html">下一页：记忆架构</a>
-<a href="00-总体汇报.html">总体汇报</a>
+<a href="07-记忆架构汇报.html">下一页</a>
 </nav>
 </header>
 <section class="hero">
@@ -22,6 +20,8 @@
 <h1>多 Agent 的关键不在“数量”，而在事实一致、事件可追溯、消费可幂等</h1>
 <p class="lead">统一入口隐藏复杂性，Router 与 ChatOrchestrator 提供横切管控；跨 Agent 协作以业务事实为起点，通过 Outbox 和 Redis 广播形成可恢复的领域事件链路。</p>
 </section>
+<section class="requirement"><strong>核心结论：</strong>我用 Router 决定“谁处理”，用 Outbox 与事件总线实现可靠协作，决定“处理后谁必须联动”。这样专业能力可以独立演进，业务事实仍保持一致。</section>
+<section class="grid two"><article class="card"><h3>答辩重点：同步控制、异步联动</h3><p>认证、权限、适当性与交易审批走同步主路径，必须先得到结果；画像刷新、风险通知、图谱同步等走异步领域事件，避免把后续联动阻塞在客户当前请求中。</p></article><article class="card"><h3>亮点与边界</h3><p>Outbox 先随业务事务落库，再由 Relay 发布；消费者以事件标识维护幂等台账。Redis 负责实时广播，但不被表述为单独保证可靠性的唯一机制。</p></article></section>
 <h2>金融级端到端架构与业务主线</h2>
 <figure class="architecture-figure">
 <img src="report-assets/financial-ai-architecture.png" alt="金融智能助手 AI 课程答辩全景架构图：从用户角色、统一接入与认证安全、会话记忆和路由、多 Agent 协作、事件驱动、数据与知识基础设施到统一响应与审计降级的完整连接关系">
@@ -108,7 +108,7 @@
 <section class="grid three"><article class="card"><h3>可答辩的创新点</h3><p>以 Outbox + 广播 + 幂等消费取代 Agent 之间的硬编码串行调用；任一模块可演进，业务事实仍保持一致。</p></article><article class="card"><h3>可演示的真实闭环</h3><p>从一次申购、一次大额转账或一次投诉出发，演示预检、预警、工单、推荐约束、客户沟通与记忆回写。</p></article><article class="card"><h3>可扩展的治理边界</h3><p>把正式风险等级、动态风险约束、情绪与市场信号分层存储；避免“模型一句话”直接改变合规核心数据。</p></article></section>
 <footer class="footer">
 <span>当前实现 + 设计约束 / 流程图优先</span>
-<a href="记忆架构.html">下一页：记忆架构 →</a>
+<a href="07-记忆架构汇报.html">下一页 →</a>
 </footer>
 </main>
 </body>

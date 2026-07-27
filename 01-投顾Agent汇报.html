@@ -11,8 +11,7 @@
 <header class="top">
 <div class="brand">FINTELLIGENCE / 投顾 Agent</div>
 <nav class="nav">
-<a href="index.html">目录</a>
-<a href="00-总体汇报.html">总体</a>
+<a href="00-总体汇报.html">上一页</a>
 <a href="02-客服Agent汇报.html">下一页</a>
 </nav>
 </header>
@@ -21,6 +20,8 @@
 <h1>从“人找策略”到“策略找人”</h1>
 <p class="lead">我们将顶级投资经理的分析框架模型化，通过 AI 实现“千人千面”的个性化资产配置：把复杂的市场波动转化为稳健的财富增长方案，让专业投资服务触手可及。</p>
 </section>
+<section class="requirement"><strong>核心结论：</strong>我把投顾的工作从“人找策略”推进到“策略找人”。LLM 负责在七类工具之间编排，画像、风评、预警和适当性规则共同决定推荐范围，而不是让模型凭一句话给出买卖结论。</section>
+<section class="grid two"><article class="card"><h3>答辩重点：一次编排完成全链路</h3><p><code>smart_recommend</code> 将画像查询、风险预警、产品匹配与资产配置合并为一次受控工具调用，降低多轮调用延迟，也保证各步骤使用同一份客户约束。</p></article><article class="card"><h3>亮点与边界</h3><p>推荐结果是可解释建议，不是交易指令。若画像缺失或风评过期，系统先提示测评并降级至低风险产品；正式购买仍需业务操作 Agent 的合规校验与确认。</p></article></section>
 <section class="grid two">
 <article class="card"><span class="tag">我们解决什么</span><h3>让专业判断规模化，而不是让模型替代合规</h3><p>过去是顾问在产品、行情和客户资料中寻找策略；现在由 AdvisorAgent 先识别客户约束、持仓缺口与产品适配，再把可解释的候选策略推给正确的人。</p></article>
 <article class="card"><span class="tag warn">我们如何做到</span><h3>“千人千面”来自事实、规则与知识的组合</h3><p>画像、持仓、风险等级、产品适当性、市场知识和反馈信号共同构成决策输入；LLM 负责生成易懂说明，规则引擎始终握有推荐边界。</p></article>

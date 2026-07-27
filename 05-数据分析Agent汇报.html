@@ -11,10 +11,8 @@
 <header class="top">
 <div class="brand">FINTELLIGENCE / 数据分析 Agent · 个人答辩</div>
 <nav class="nav">
-<a href="index.html">目录</a>
 <a href="04-业务操作Agent汇报.html">上一页</a>
-<a href="06-多Agent联动与架构汇报.html">下一页：联动架构</a>
-<a href="答辩稿.md">答辩逐字稿</a>
+<a href="06-多Agent联动与架构汇报.html">下一页</a>
 </nav>
 </header>
 
@@ -23,6 +21,7 @@
 <h1>把“人找数据”变成受控的自然语言分析，<br>再把可信洞察接入金融级协同闭环</h1>
 <p class="lead">我负责数据分析 Agent 的整体链路与总体框架优化：让业务人员用自然语言查询客户、产品、持仓和交易数据；让模型只生成候选 SQL；让规则、权限和证据决定查询能否执行；再把有来源、有阈值、可复核的洞察以事件方式提供给画像、风控和投顾。</p>
 </section>
+<section class="requirement"><strong>核心结论：</strong>我让员工能够进行受控的自然语言分析，同时把 SQL 执行权牢牢留在规则层。只有通过五道安全闸门且满足洞察白名单的结果，才能成为其他 Agent 的受控输入。</section>
 
 <section class="requirement">
 <strong>需求映射：</strong>需求文档 Phase 2 的 F2.3 要求 NL2SQL 支持业务人员自然语言查询、动态 Schema、Few-shot、只读 SQL 校验和结果解释；Phase 5 要求分析结果支持其他 Agent 决策。当前项目将其落为 <code>NL2SQLService</code>、<code>/api/chat/analyst</code>、洞察白名单、事务 Outbox 与 Redis 事件订阅链路。

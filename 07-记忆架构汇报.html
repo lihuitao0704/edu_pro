@@ -11,9 +11,8 @@
 <header class="top">
 <div class="brand">FINTELLIGENCE / 记忆架构</div>
 <nav class="nav">
-<a href="index.html">目录</a>
-<a href="06-多Agent联动与架构汇报.html">联动与架构</a>
-<a href="00-总体汇报.html">总体汇报</a>
+<a href="06-多Agent联动与架构汇报.html">上一页</a>
+<a href="00-index.html">下一页</a>
 </nav>
 </header>
 
@@ -22,6 +21,8 @@
 <h1>从记住一次对话，<br>到持续服务一个客户</h1>
 <p class="lead">我们把“记忆”设计成受权限、时效和事实约束的决策上下文：既让 Agent 理解客户，又不让缓存、历史对话或模型推断越过金融业务边界。</p>
 </section>
+<section class="requirement"><strong>核心结论：</strong>我让 Agent 记住客户，但不混淆事实、缓存和推断。MySQL 是业务事实源，Redis 提供时效，Milvus 和 Neo4j 只为检索、关系解释与辅助决策提供证据。</section>
+<section class="grid two"><article class="card"><h3>答辩重点：按可信度分层</h3><p>会话上下文、客户画像、交易事实、知识片段与关系图谱分别服务不同的时效和可信度要求。Agent 读取前必须带身份、会话和业务范围，不能把任意历史内容当作事实。</p></article><article class="card"><h3>亮点与边界</h3><p>缓存可以加速、RAG 可以引用、图谱可以解释，但它们都不能覆盖 MySQL 业务事实，更不能替代正式风险评级、交易确认或合规审计。</p></article></section>
 
 <section class="grid">
 <article class="card">

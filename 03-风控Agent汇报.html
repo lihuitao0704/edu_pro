@@ -11,7 +11,6 @@
 <header class="top">
 <div class="brand">FINTELLIGENCE / 风控 Agent</div>
 <nav class="nav">
-<a href="index.html">目录</a>
 <a href="02-客服Agent汇报.html">上一页</a>
 <a href="04-业务操作Agent汇报.html">下一页</a>
 </nav>
@@ -21,6 +20,8 @@
 <h1>将风险判断前置到资金变化之前，并将结果传递给全链路</h1>
 <p class="lead">风控能力由规则引擎、交易流程服务、风险监控服务和预警工单组成：既控制单笔操作，也为投顾、画像与客服提供一致的动态风险状态。</p>
 </section>
+<section class="requirement"><strong>核心结论：</strong>我把风控设计成风险闭环：从规则识别、预警生成到处置反馈和审计留痕连续发生。动态信号可以约束推荐、触发核验和提示客服，但不能绕过测评流程直接修改正式风险评级。</section>
+<section class="grid two"><article class="card"><h3>答辩重点：事前拦截与事后联动分层</h3><p>交易前由适当性、额度、AML 和账户状态等规则决定“能不能做”；交易后或定时分析形成风险事件，通过事件总线通知画像、投顾与客服决定“谁需要知道”。</p></article><article class="card"><h3>亮点与边界</h3><p>预警是待核验的业务信号，不等于最终裁决。C1-C5 等正式风险评级必须经过风评问卷、规则引擎、校准和审计，避免模型或单次行为数据越权改写合规事实。</p></article></section>
 <section class="flow-diagram">
 <div class="flow">
 <div class="node">

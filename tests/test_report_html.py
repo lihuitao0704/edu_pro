@@ -3,8 +3,19 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPORT_CHAIN = [
+    "00-index.html",
+    "00-总体汇报.html",
+    "01-投顾Agent汇报.html",
+    "02-客服Agent汇报.html",
+    "03-风控Agent汇报.html",
+    "04-业务操作Agent汇报.html",
+    "05-数据分析Agent汇报.html",
+    "06-多Agent联动与架构汇报.html",
+    "07-记忆架构汇报.html",
+]
 REPORTS = {
-    "index.html": "金融多 Agent 智能财富管理平台",
+    "00-index.html": "金融多 Agent 智能财富管理平台",
     "00-总体汇报.html": "总体汇报",
     "01-投顾Agent汇报.html": "投顾 Agent",
     "02-客服Agent汇报.html": "客服 Agent",
@@ -12,7 +23,7 @@ REPORTS = {
     "04-业务操作Agent汇报.html": "业务操作 Agent",
     "05-数据分析Agent汇报.html": "数据分析 Agent",
     "06-多Agent联动与架构汇报.html": "多 Agent 联动",
-    "记忆架构.html": "记忆架构",
+    "07-记忆架构汇报.html": "记忆架构",
 }
 
 
@@ -25,8 +36,6 @@ class ReportHtmlTest(unittest.TestCase):
                 html = page.read_text(encoding="utf-8")
                 self.assertIn('<meta charset="UTF-8">', html)
                 self.assertIn(expected_title, html)
-                if filename != "index.html":
-                    self.assertIn("index.html", html)
                 self.assertIn('class="flow-diagram"', html)
                 self.assertNotIn("https://", html)
                 self.assertNotIn("http://", html)
@@ -44,6 +53,42 @@ class ReportHtmlTest(unittest.TestCase):
             with self.subTest(filename=filename):
                 html = (ROOT / filename).read_text(encoding="utf-8")
                 self.assertIn(anchor, html)
+
+    def test_report_navigation_is_a_single_previous_next_chain(self):
+        for index, filename in enumerate(REPORT_CHAIN[1:], start=1):
+            with self.subTest(filename=filename):
+                html = (ROOT / filename).read_text(encoding="utf-8")
+                previous = REPORT_CHAIN[index - 1]
+                following = REPORT_CHAIN[index + 1] if index < len(REPORT_CHAIN) - 1 else REPORT_CHAIN[0]
+                self.assertIn(f'<a href="{previous}">上一页</a>', html)
+                self.assertIn(f'<a href="{following}">下一页</a>', html)
+                nav = html.split('<nav class="nav">', 1)[1].split('</nav>', 1)[0]
+                self.assertEqual(nav.count('<a href='), 2)
+
+    def test_report_pages_do_not_reference_replaced_filenames(self):
+        for filename in REPORT_CHAIN:
+            with self.subTest(filename=filename):
+                html = (ROOT / filename).read_text(encoding="utf-8")
+                self.assertNotIn('href="index.html"', html)
+                self.assertNotIn('href="记忆架构.html"', html)
+
+    def test_reports_have_distinct_defense_narratives(self):
+        anchors = {
+            "00-总体汇报.html": ("核心结论", "统一路由"),
+            "01-投顾Agent汇报.html": ("策略找人", "smart_recommend"),
+            "02-客服Agent汇报.html": ("有依据的回答", "转人工"),
+            "03-风控Agent汇报.html": ("风险闭环", "正式风险评级"),
+            "04-业务操作Agent汇报.html": ("受控业务动作", "P0-P5"),
+            "05-数据分析Agent汇报.html": ("受控的自然语言分析", "洞察白名单"),
+            "06-多Agent联动与架构汇报.html": ("可靠协作", "Outbox"),
+            "07-记忆架构汇报.html": ("不混淆事实", "业务事实源"),
+        }
+        for filename, expected in anchors.items():
+            with self.subTest(filename=filename):
+                html = (ROOT / filename).read_text(encoding="utf-8")
+                for anchor in expected:
+                    self.assertIn(anchor, html)
+                self.assertNotIn("我会这样讲", html)
 
     def test_advisor_report_explains_defense_value_and_profile_guardrail(self):
         text = (ROOT / "01-投顾Agent汇报.html").read_text(encoding="utf-8")
@@ -98,18 +143,18 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertTrue((ROOT / "report-assets" / "financial-ai-architecture.png").is_file())
 
     def test_reports_include_team_and_requirement_driven_value(self):
-        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        index = (ROOT / "00-index.html").read_text(encoding="utf-8")
         self.assertIn("offer收割机", index)
         for member in ("李惠涛", "林罗英", "刘嘉威", "李嘉兵", "李华桂", "谢伟杰"):
             self.assertIn(member, index)
         self.assertIn("项目背景", index)
         self.assertIn("项目目标", index)
         for filename in REPORTS:
-            if filename != "index.html":
+            if filename != "00-index.html":
                 self.assertIn("需求映射", (ROOT / filename).read_text(encoding="utf-8"))
 
     def test_memory_architecture_is_code_aligned_and_governed(self):
-        text = (ROOT / "记忆架构.html").read_text(encoding="utf-8")
+        text = (ROOT / "07-记忆架构汇报.html").read_text(encoding="utf-8")
         for anchor in (
             "chat:v2:{actor_id}:{session_id}:messages",
             "chat:v2:{actor_id}:{session_id}:context",
