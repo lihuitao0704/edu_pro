@@ -495,6 +495,17 @@ class IntentService:
                 message, RouteTask.TRANSFER_HUMAN, RouteDomain.GENERAL
             )
 
+        # 公司/机构相关信息查询 → FAQ（如"公司总部在哪"、"客服电话多少"等）
+        company_keywords = ("公司", "总部", "地址", "在哪", "客服电话", "客服电话多少",
+                            "营业时间", "网点", "分支机构", "联系方式", "官网", "网址")
+        if any(word in text for word in company_keywords) and any(
+            word in text for word in ("在哪", "多少", "是什么", "怎么", "如何", "有没有", "几个")
+        ):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+        # 单独的"公司总部在哪"等简短问句
+        if ("公司" in text or "总部" in text) and ("在哪" in text or "哪里" in text):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
         # Natural-language database mutations are never delegated to NL2SQL.
         # Block them before generic query markers such as "客户数据" can match.
         unsafe_data_mutation = (
