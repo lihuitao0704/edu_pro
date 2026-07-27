@@ -197,6 +197,21 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertNotIn("当前实现为 <b>MySQL 事务 Outbox", text)
         self.assertNotIn("Redis Stream / Kafka", text)
 
+    def test_memory_animation_page_has_two_routes_and_player_controls(self):
+        page = ROOT / "记忆架构-动画流程图.html"
+        self.assertTrue(page.is_file())
+        html = page.read_text(encoding="utf-8")
+        for anchor in (
+            "读取路径", "写入路径", "播放", "暂停", "上一步", "下一步", "重播",
+            "Redis", "MySQL", "Milvus", "MinIO", "Neo4j", "业务事实源",
+            "Memory Manager", "Outbox", "Redis Pub/Sub", "prefers-reduced-motion",
+            "不修改正式 C1-C5 风险评级",
+        ):
+            self.assertIn(anchor, html)
+        self.assertIn("readSteps", html)
+        self.assertIn("writeSteps", html)
+        self.assertIn("<svg", html)
+
 
 if __name__ == "__main__":
     unittest.main()
