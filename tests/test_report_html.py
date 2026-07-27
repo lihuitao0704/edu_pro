@@ -228,6 +228,18 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertIn("steps.length", html)
         self.assertIn("<svg", html)
 
+    def test_portfolio_animation_connects_entry_parallel_fanout_and_closure(self):
+        html = (ROOT / "持仓收益与产品推荐-动画流程图.html").read_text(encoding="utf-8")
+        for anchor in (
+            'id="e1" class="edge" d="M220 104V203H302"',
+            'id="e2" class="edge" d="M472 203H565"',
+            "并行读取 / 汇聚",
+            'id="e9" class="edge parallel" d="M650 482V425H1075V449"',
+            'id="e10" class="edge parallel" d="M650 482V405H1330V449"',
+            'id="e22" class="edge feedback" d="M1415 944V1060H40V343H70"',
+        ):
+            self.assertIn(anchor, html)
+
 
 if __name__ == "__main__":
     unittest.main()
