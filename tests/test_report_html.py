@@ -231,12 +231,17 @@ class ReportHtmlTest(unittest.TestCase):
     def test_portfolio_animation_connects_entry_parallel_fanout_and_closure(self):
         html = (ROOT / "持仓收益与产品推荐-动画流程图.html").read_text(encoding="utf-8")
         for anchor in (
-            'id="e1" class="edge" d="M220 104V203H302"',
-            'id="e2" class="edge" d="M472 203H565"',
+            "e1:'M220 125V283H302'",
+            "e2:'M472 283H565'",
             "并行读取 / 汇聚",
-            'id="e9" class="edge parallel" d="M650 482V425H1075V449"',
-            'id="e10" class="edge parallel" d="M650 482V405H1330V449"',
-            'id="e22" class="edge feedback" d="M1415 944V1060H40V343H70"',
+            "e9:'M650 609V568H1075V576'",
+            "e10:'M650 609V548H1330V576'",
+            "e22:'M1415 1127V1260H40V446H70'",
+            "memory:[70,413]",
+            "'0 0 1640 1320'",
+            '.controls{position:sticky;top:10px;z-index:20',
+            '.lane-label{font:800 17px',
+            '.node-title{font:800 14px',
         ):
             self.assertIn(anchor, html)
 
