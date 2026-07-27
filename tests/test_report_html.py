@@ -13,7 +13,6 @@ REPORTS = {
     "05-数据分析Agent汇报.html": "数据分析 Agent",
     "06-多Agent联动与架构汇报.html": "多 Agent 联动",
     "记忆架构.html": "记忆架构",
-    "数据分析.html": "数据分析与总体框架答辩",
 }
 
 
@@ -59,7 +58,7 @@ class ReportHtmlTest(unittest.TestCase):
             self.assertIn(anchor, text)
 
     def test_personal_defense_artifacts_cover_analytics_and_architecture(self):
-        report = (ROOT / "数据分析.html").read_text(encoding="utf-8")
+        report = (ROOT / "05-数据分析Agent汇报.html").read_text(encoding="utf-8")
         for anchor in (
             "本人负责范围",
             "NL2SQL",
@@ -78,6 +77,7 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertIn("各位评委老师", script_text)
         self.assertIn("数据分析 Agent", script_text)
         self.assertIn("总体框架优化", script_text)
+        self.assertFalse((ROOT / "数据分析.html").exists())
 
     def test_multi_agent_architecture_embeds_financial_process_design(self):
         text = (ROOT / "06-多Agent联动与架构汇报.html").read_text(encoding="utf-8")
