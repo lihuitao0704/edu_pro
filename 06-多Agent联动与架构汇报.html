@@ -1,1 +1,173 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>多 Agent 联动与架构汇报｜项目汇报</title><link rel="stylesheet" href="reports.css"></head><body><main class="shell"><header class="top"><div class="brand">FINTELLIGENCE / 多 Agent 联动与架构</div><nav class="nav"><a href="index.html">目录</a><a href="05-数据分析Agent汇报.html">上一页</a><a href="00-总体汇报.html">回到总体</a></nav></header><section class="hero"><span class="eyebrow">终章结论</span><h1>多 Agent 的关键不在“数量”，而在事实一致、事件可追溯、消费可幂等</h1><p class="lead">统一入口隐藏复杂性，Router 与 ChatOrchestrator 提供横切管控；跨 Agent 协作以业务事实为起点，通过 Outbox 和 Redis 广播形成可恢复的领域事件链路。</p></section><h2>全平台分层流程</h2><section class="flow-diagram"><div class="flow"><div class="node"><strong>Vue 3 前端</strong><span>客户对话、顾问、风控、运营</span></div><div class="arrow">→</div><div class="node"><strong>FastAPI / API</strong><span>HTTP / SSE、认证与响应契约</span></div><div class="arrow">→</div><div class="node"><strong>Router + Orchestrator</strong><span>意图分发、风险预检、追踪</span></div><div class="arrow">→</div><div class="node"><strong>六类 Agent</strong><span>客服、画像、投顾、风控、操作、分析</span></div><div class="arrow">→</div><div class="node"><strong>服务 / 工具 / 规则</strong><span>LLM、RAG、推荐、交易、规则引擎</span></div><div class="arrow">→</div><div class="node"><strong>五类底座</strong><span>MySQL、Redis、Neo4j、Milvus、MinIO</span></div></div><p class="flow-note">连接语义：HTTP/SSE 承载交互，SQLAlchemy Async 管理事实数据，Redis Pub/Sub 承载领域事件，Neo4j/Milvus 支持关系与语义检索。</p></section><h2>闭环一：交易风险如何影响全链路</h2><section class="flow-diagram"><div class="flow"><div class="node"><strong>业务操作</strong><span>交易请求与事前评估</span></div><div class="arrow">→</div><div class="node"><strong>风险预警</strong><span>预警事实写入 MySQL</span></div><div class="arrow">→</div><div class="node"><strong>Outbox</strong><span>事务提交后可靠投递</span></div><div class="arrow">→</div><div class="node"><strong>Redis 广播</strong><span>`event:agent_domain`</span></div><div class="arrow">→</div><div class="node"><strong>画像 / 投顾 / 客服</strong><span>动态标记、推荐约束、风险提示</span></div></div><p class="flow-note"><span class="tag risk">合规约束</span> 消费使用 `event_id + consumer` 幂等记录；风险事件改变的是动态策略状态，不自动修改正式 C1-C5 风险等级。</p></section><h2>闭环二：推荐反馈与数据洞察</h2><section class="grid two"><article class="flow-diagram"><div class="flow"><div class="node"><strong>投顾推荐</strong><span>客户拒绝原因</span></div><div class="arrow">→</div><div class="node"><strong>反馈事件</strong><span>偏好信号</span></div><div class="arrow">→</div><div class="node"><strong>客户画像</strong><span>更新避免类别</span></div><div class="arrow">→</div><div class="node"><strong>下一次推荐</strong><span>候选池排除</span></div></div></article><article class="flow-diagram"><div class="flow"><div class="node"><strong>NL2SQL</strong><span>只读结果</span></div><div class="arrow">→</div><div class="node"><strong>洞察提取</strong><span>客户、时间、数值、证据齐全</span></div><div class="arrow">→</div><div class="node"><strong>领域事件</strong><span>受控发布</span></div><div class="arrow">→</div><div class="node"><strong>投顾 / 风控 / 画像</strong><span>消费策略信号</span></div></div></article></section><section class="grid"><article class="card"><h3>统一事件信封</h3><p>事件含 `event_id`、`event_type`、`source_agent`、客户、关联 ID、时间与不可变 payload，让业务事实可定位、可重放。</p></article><article class="card"><h3>事实优先</h3><p>MySQL 中的交易、预警与处理状态是事实源；缓存和广播用于加速与协作，不能替代事实判断。</p></article><article class="card"><h3>可扩展而不失控</h3><p>新增 Agent 只需声明生产/消费的领域事件与契约，不应绕过统一入口或自行修改核心风险等级。</p></article></section><footer class="footer"><span>当前实现 + 设计约束 / 流程图优先</span><a href="00-总体汇报.html">回到总体汇报 →</a></footer></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>多 Agent 联动与架构汇报｜项目汇报</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 多 Agent 联动与架构</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="05-数据分析Agent汇报.html">上一页</a>
+<a href="00-总体汇报.html">回到总体</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">终章结论</span>
+<h1>多 Agent 的关键不在“数量”，而在事实一致、事件可追溯、消费可幂等</h1>
+<p class="lead">统一入口隐藏复杂性，Router 与 ChatOrchestrator 提供横切管控；跨 Agent 协作以业务事实为起点，通过 Outbox 和 Redis 广播形成可恢复的领域事件链路。</p>
+</section>
+<h2>全平台分层流程</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>Vue 3 前端</strong>
+<span>客户对话、顾问、风控、运营</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>FastAPI / API</strong>
+<span>HTTP / SSE、认证与响应契约</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Router + Orchestrator</strong>
+<span>意图分发、风险预检、追踪</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>六类 Agent</strong>
+<span>客服、画像、投顾、风控、操作、分析</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>服务 / 工具 / 规则</strong>
+<span>LLM、RAG、推荐、交易、规则引擎</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>五类底座</strong>
+<span>MySQL、Redis、Neo4j、Milvus、MinIO</span>
+</div>
+</div>
+<p class="flow-note">连接语义：HTTP/SSE 承载交互，SQLAlchemy Async 管理事实数据，Redis Pub/Sub 承载领域事件，Neo4j/Milvus 支持关系与语义检索。</p>
+</section>
+<h2>闭环一：交易风险如何影响全链路</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>业务操作</strong>
+<span>交易请求与事前评估</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>风险预警</strong>
+<span>预警事实写入 MySQL</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Outbox</strong>
+<span>事务提交后可靠投递</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Redis 广播</strong>
+<span>`event:agent_domain`</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>画像 / 投顾 / 客服</strong>
+<span>动态标记、推荐约束、风险提示</span>
+</div>
+</div>
+<p class="flow-note">
+<span class="tag risk">合规约束</span> 消费使用 `event_id + consumer` 幂等记录；风险事件改变的是动态策略状态，不自动修改正式 C1-C5 风险等级。</p>
+</section>
+<h2>闭环二：推荐反馈与数据洞察</h2>
+<section class="grid two">
+<article class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>投顾推荐</strong>
+<span>客户拒绝原因</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>反馈事件</strong>
+<span>偏好信号</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>客户画像</strong>
+<span>更新避免类别</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>下一次推荐</strong>
+<span>候选池排除</span>
+</div>
+</div>
+</article>
+<article class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>NL2SQL</strong>
+<span>只读结果</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>洞察提取</strong>
+<span>客户、时间、数值、证据齐全</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>领域事件</strong>
+<span>受控发布</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>投顾 / 风控 / 画像</strong>
+<span>消费策略信号</span>
+</div>
+</div>
+</article>
+</section>
+<section class="grid">
+<article class="card">
+<h3>统一事件信封</h3>
+<p>事件含 `event_id`、`event_type`、`source_agent`、客户、关联 ID、时间与不可变 payload，让业务事实可定位、可重放。</p>
+</article>
+<article class="card">
+<h3>事实优先</h3>
+<p>MySQL 中的交易、预警与处理状态是事实源；缓存和广播用于加速与协作，不能替代事实判断。</p>
+</article>
+<article class="card">
+<h3>可扩展而不失控</h3>
+<p>新增 Agent 只需声明生产/消费的领域事件与契约，不应绕过统一入口或自行修改核心风险等级。</p>
+</article>
+</section>
+<h2>金融级业务流程附录</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>用户行为</strong><span>咨询、推荐、交易、投诉、登录</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>统一编排</strong><span>Chat Orchestrator 与 Router 意图分发</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>业务与控制 Agent</strong><span>投顾、操作、风控、合规、安全、市场、分析、画像</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>事件与记忆闭环</strong><span>Outbox / Event Bus / Memory Manager / 用户状态</span></div>
+</div>
+<p class="flow-note">新增附录覆盖交易、转账、策略调整、推荐审核、画像、分析、市场、情绪、销售合规、安全与投诉等 14 个金融业务场景。所有 Mermaid 源码均可直接复制运行。</p>
+<p><a class="tag" href="金融财富助手-Multi-Agent业务流程图设计.md">打开《金融财富助手 Multi-Agent 业务流程图设计文档》</a></p>
+</section>
+<footer class="footer">
+<span>当前实现 + 设计约束 / 流程图优先</span>
+<a href="00-总体汇报.html">回到总体汇报 →</a>
+</footer>
+</main>
+</body>
+</html>

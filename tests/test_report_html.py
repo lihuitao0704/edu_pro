@@ -44,6 +44,22 @@ class ReportHtmlTest(unittest.TestCase):
                 html = (ROOT / filename).read_text(encoding="utf-8")
                 self.assertIn(anchor, html)
 
+    def test_multi_agent_architecture_links_financial_process_design(self):
+        document = ROOT / "金融财富助手-Multi-Agent业务流程图设计.md"
+        self.assertTrue(document.is_file())
+        text = document.read_text(encoding="utf-8")
+        for number, title in enumerate((
+            "用户发起交易", "大额转账风险审核", "风控发现风险，驱动投顾调整策略",
+            "投顾推荐产品，风控审核", "投顾执行购买", "交易行为更新用户画像",
+            "数据分析发现异常交易", "数据分析优化投资组合", "市场事件广播",
+            "用户画像变化驱动投顾调整", "客服识别用户情绪", "合规销售审核",
+            "账户安全保护", "客户投诉闭环",
+        ), start=1):
+            self.assertIn(f"## {number}. {title}", text)
+        self.assertGreaterEqual(text.count("```mermaid"), 14)
+        architecture = (ROOT / "06-多Agent联动与架构汇报.html").read_text(encoding="utf-8")
+        self.assertIn(document.name, architecture)
+
 
 if __name__ == "__main__":
     unittest.main()
