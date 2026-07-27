@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数据分析与总体框架答辩｜金融多 Agent 智能财富管理平台</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 个人答辩</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="05-数据分析Agent汇报.html">数据分析模块</a>
+<a href="06-多Agent联动与架构汇报.html">总体架构</a>
+<a href="答辩稿.md">答辩逐字稿</a>
+</nav>
+</header>
+
+<section class="hero">
+<span class="eyebrow">答辩主题 · 本人负责：数据分析 Agent + 总体框架优化</span>
+<h1>让业务数据“能问、敢用、会联动”</h1>
+<p class="lead">我负责把自然语言分析从“能生成 SQL”做成一条受控的数据服务链路，同时参与统一编排、事件一致性、记忆和可观测性优化，让单个 Agent 的分析结果真正能进入多 Agent 的金融业务闭环。</p>
+</section>
+
+<section class="requirement"><strong>需求映射：</strong>需求文档在 Phase 2 要求数据分析 Agent 具备“自然语言查询、Schema 注入、安全校验、结果解读”，并在 Phase 5 进入统一入口和多 Agent 协作。我的实现以 NL2SQL、BI 看板、洞察白名单与事件闭环，将这两部分要求连成同一条可演示链路。</section>
+
+<section class="grid two">
+<article class="card"><span class="tag">本人负责范围</span><h3>数据分析 Agent</h3><p>完成从自然语言提问、Schema 选择、SQL 生成与安全校验，到结果脱敏、解释、可视化与洞察联动的端到端流程；前端同时提供 BI 仪表盘与自然语言查询工作台。</p></article>
+<article class="card"><span class="tag warn">本人负责范围</span><h3>总体框架优化</h3><p>围绕统一入口、Router、Chat Orchestrator、事件 Outbox、Redis 广播、记忆分层与 Trace 留痕梳理边界，让不同 Agent 不只“能调用”，更能安全地协作与恢复。</p></article>
+</section>
+
+<section class="quote">答辩核心结论：数据分析 Agent 的价值不是替员工“写一条 SQL”，而是把数据问题转化为有权限、有边界、有解释、可被其他 Agent 消费的业务洞察。</section>
+
+<h2>一、数据分析 Agent：从一句话到可信洞察</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>员工自然语言提问</strong><span>例如：统计近 30 天各等级风险预警</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Router Agent</strong><span>识别 data_analysis 意图，校验角色可访问</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>NL2SQL</strong><span>关键词选表 + Schema / 外键 / few-shot 注入</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>五道安全闸门</strong><span>拒识、只读、禁词、敏感列、行数限制</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>MySQL 查询</strong><span>安全 SELECT、结果脱敏、最多 100 行</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>解释与展示</strong><span>自然语言结论、SQL、表格、图表、耗时</span></div>
+</div>
+<p class="flow-note">主路径由 <code>NL2SQLService</code>、<code>router_agent.py</code> 和 <code>AnalyticsView.vue</code> 落地；查询缓存按用户和问题 hash 隔离，默认 TTL 为 10 分钟。</p>
+</section>
+
+<section class="grid">
+<article class="card"><div class="metric">01</div><h3>先判断“该不该查”</h3><p>对问候、闲聊、过短输入和无业务关键词问题直接友好拒识，避免 LLM 把任何一句话都翻译成 SQL，降低错误查询和无效消耗。</p></article>
+<article class="card"><div class="metric">02</div><h3>再决定“查哪些表”</h3><p>根据“持仓、预警、AUM、风评”等关键词动态提取相关 Schema，并补充表关系与 few-shot 示例；不是把整库结构无差别塞给模型。</p></article>
+<article class="card"><div class="metric">03</div><h3>最后把“结果讲明白”</h3><p>返回可审阅 SQL、脱敏后的明细、自然语言解释和前端图表，并保留生成、执行、解读三个阶段的耗时，方便演示与排障。</p></article>
+</section>
+
+<h2>二、五道安全闸门：让自然语言查询可用于金融场景</h2>
+<section class="grid two">
+<article class="card"><span class="tag risk">请求前</span><h3>意图预检 + 最小 Schema</h3><p>非数据问题不进入生成环节；业务关键词只选择相关业务表。这样既减少模型幻觉，也避免无关字段进入提示上下文。</p></article>
+<article class="card"><span class="tag risk">生成后</span><h3>注释清洗 + SELECT 白名单</h3><p>先剥离 SQL 注释再校验，语句必须以 SELECT 开头；禁止 DROP、DELETE、UPDATE、INSERT、ALTER、TRUNCATE 等任何写操作。</p></article>
+<article class="card"><span class="tag risk">执行前</span><h3>危险语法与多语句拦截</h3><p>额外拒绝 UNION、INTO、LOAD_FILE、EXEC、EXECUTE 和多语句，防止通过变形 SQL 绕开只读约束。</p></article>
+<article class="card"><span class="tag risk">执行中 / 后</span><h3>敏感字段二次防御</h3><p>密码、令牌、身份证等敏感列既不允许出现在 SQL 中，也会在返回结果中再次移除；再统一进行数据脱敏。</p></article>
+<article class="card"><span class="tag risk">资源边界</span><h3>100 行上限 + 用户隔离缓存</h3><p>查询最多返回 100 行并标记截断状态；缓存键包含 user_id 与问题哈希，避免不同用户互相命中结果。</p></article>
+<article class="card"><span class="tag">答辩要点</span><h3>模型生成不等于系统执行</h3><p>LLM 只是 SQL 候选生成器。真正执行前，必须依次通过规则验证、敏感数据控制和资源限制，这就是金融数据分析与普通聊天机器人的区别。</p></article>
+</section>
+
+<h2>三、从“查数据”升级为“看经营”：BI 仪表盘</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>6 个预计算指标</strong><span>服务端聚合 SQL</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>/analytics/bi/dashboard</strong><span>统一返回最新业务快照</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Vue 3 + ECharts</strong><span>六张业务图表与结论文案</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>分析工作台</strong><span>切换到 NL2SQL 追问明细</span></div>
+</div>
+<p class="flow-note">BI 负责“主动看全局”，NL2SQL 负责“按问题下钻”。两个入口共用业务数据底座，但分别满足管理驾驶舱与临时分析的使用习惯。</p>
+</section>
+<table>
+<thead><tr><th>6 个业务指标</th><th>我展示的业务意义</th><th>可联动对象</th></tr></thead>
+<tbody>
+<tr><td>客户 AUM 分布</td><td>识别高价值客群与资产分层</td><td>投顾服务分级、客户经理跟进</td></tr>
+<tr><td>风险—收益对比</td><td>观察产品货架的风险收益结构是否合理</td><td>投顾推荐、产品管理</td></tr>
+<tr><td>热销产品 Top5</td><td>识别交易活跃产品和客户偏好方向</td><td>投顾候选池、运营活动</td></tr>
+<tr><td>月度交易趋势</td><td>看申购、赎回、转账的资金流向变化</td><td>风控关注、经营复盘</td></tr>
+<tr><td>风险预警分布</td><td>看风险事件数量与级别结构</td><td>风控专员、工单优先级</td></tr>
+<tr><td>产品货架矩阵</td><td>看不同产品类型与 R1–R5 的覆盖度</td><td>产品供给、适当性匹配</td></tr>
+</tbody>
+</table>
+
+<h2>四、最有价值的联动：洞察只在“可验证”时才离开分析模块</h2>
+<section class="grid two">
+<article class="card"><span class="tag">分析洞察白名单</span><h3>不是把 LLM 的自由文本直接广播给其他 Agent</h3><p><code>insight_extractor.py</code> 只从带有 customer_id 和数值证据的查询行中提取两类事实：持仓回撤 ≤ -10%，或单周交易次数 ≥ 10 且有金额证据。</p></article>
+<article class="card"><span class="tag warn">受控事件闭环</span><h3>洞察 → 事务 Outbox → 画像 / 风控</h3><p>洞察作为 <code>analytics_insight</code> 领域事件进入事务 Outbox；下游将它保存为推荐约束或触发交易频率监测，而不是直接修改正式 C1–C5 风险等级。</p></article>
+</section>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>NL2SQL 返回明细</strong><span>带 customer_id 和数值证据</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>分析洞察白名单</strong><span>回撤 / 高频交易两类规则</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>事务 Outbox</strong><span>先写事件，再提交业务事务</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Redis Pub/Sub</strong><span>实时发布领域事件</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>画像 / 风控消费者</strong><span>更新约束、发起监测、失效缓存</span></div>
+</div>
+</section>
+
+<h2>五、总体框架优化：从需求文档到可运行的金融级协作</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>Vue 3 工作台</strong><span>BI、自然语言查询、角色化界面</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>FastAPI 统一入口</strong><span>认证、RBAC、HTTP / SSE</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Chat Orchestrator</strong><span>输入安全、风险预检、实体、Trace</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Router Agent</strong><span>意图、路由计划、角色校验</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>专业 Agent / 工具</strong><span>客服、投顾、风控、操作、NL2SQL</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>数据与事件底座</strong><span>MySQL、Redis、Milvus、Neo4j、MinIO、Outbox</span></div>
+</div>
+<p class="flow-note">我的优化目标不是再增加一个 Agent，而是把每个 Agent 放进同一套“权限—编排—事实—事件—记忆—审计”的运行骨架中。</p>
+</section>
+<table>
+<thead><tr><th>需求文档的目标</th><th>当前项目效果与优化亮点</th><th>答辩价值</th></tr></thead>
+<tbody>
+<tr><td>5 类业务 Agent + 统一入口</td><td>引入 Chat Orchestrator、Router Agent、RoutePlan / RouteValidator，将输入安全、风险预检、实体追踪和角色权限前置为公共能力。</td><td>新 Agent 不必重复实现横切安全逻辑，系统更易扩展。</td></tr>
+<tr><td>NL2SQL：自然语言、Schema 注入、安全查询</td><td>升级为意图预检、动态相关 Schema、外键关系、few-shot、五道安全闸门、脱敏、缓存、耗时输出和前端再执行工作台。</td><td>从“能查”提升到“可在业务环境中使用”。</td></tr>
+<tr><td>Redis Pub/Sub 跨 Agent 通信</td><td>增加 MySQL 事务 Outbox、Relay、消费幂等账本和失败重试；数据库事实提交后才广播。</td><td>避免“数据已变但事件丢失”或重复消费导致状态不一致。</td></tr>
+<tr><td>三层记忆</td><td>会话消息、owner-scoped 路由上下文、画像 Cache-Aside、对话归档、Milvus 知识、Neo4j 关系和 MinIO 原文件各自归位。</td><td>让记忆可追溯、可失效、可降级，而不是无限叠加 Prompt。</td></tr>
+<tr><td>多 Agent 协作</td><td>分析结果通过“分析洞察白名单”转为可验证事件；图谱同步具备补偿重试，Trace 记录链路。</td><td>分析结论真正能帮助投顾与风控，又不越过正式评级边界。</td></tr>
+</tbody>
+</table>
+
+<h2>六、现场演示建议：3 分钟讲出个人贡献</h2>
+<section class="grid">
+<article class="card"><span class="tag">第 1 分钟</span><h3>展示经营全局</h3><p>打开 BI 仪表盘，依次点出 AUM、风险收益、热销产品、交易趋势、预警分布、产品货架六个视角，强调它们来自实时聚合而非静态截图。</p></article>
+<article class="card"><span class="tag">第 2 分钟</span><h3>展示自然语言下钻</h3><p>输入“查询资产超过 100 万的客户，并按风险等级统计”，展示系统生成的 SELECT、结果表格、图表和耗时；随后说明不允许写操作和敏感字段。</p></article>
+<article class="card"><span class="tag">第 3 分钟</span><h3>展示不是孤岛</h3><p>用“持仓回撤超过 10%”或“单周高频交易”说明：只有有客观字段证据的结果才能变成 analytics_insight，再由事件链路影响投顾约束和风控监测。</p></article>
+</section>
+
+<section class="quote">我的收尾：我负责的不是一个查询页面，而是把“经营数据—可信分析—受控事件—业务行动”接成闭环；这也是项目从满足需求文档，到具备金融级工程表达的关键一步。</section>
+
+<footer class="footer"><span>依据：需求文档、NL2SQL 服务、BI 接口、Vue 数据分析工作台、Router / Outbox / 记忆模块</span><a href="答辩稿.md">打开答辩逐字稿 →</a></footer>
+</main>
+</body>
+</html>
