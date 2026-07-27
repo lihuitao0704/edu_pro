@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>投顾 Agent｜核心能力汇报</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; color:#1a1a2e; background:#f5f7fb; line-height:1.8; }
+  .shell { max-width:1100px; margin:0 auto; padding:40px 24px 80px; }
+  .top { display:flex; justify-content:space-between; align-items:center; margin-bottom:40px; padding-bottom:20px; border-bottom:1px solid #e0e4ea; }
+  .brand { font-size:14px; font-weight:600; color:#5c6b8a; letter-spacing:2px; }
+  .nav a { color:#4a6cf7; text-decoration:none; font-size:14px; margin-left:20px; }
+  .hero { text-align:center; margin-bottom:48px; }
+  .eyebrow { display:inline-block; background:#eef2ff; color:#4a6cf7; padding:4px 16px; border-radius:20px; font-size:13px; font-weight:600; margin-bottom:16px; }
+  h1 { font-size:32px; font-weight:700; margin-bottom:16px; color:#0d0e24; }
+  .lead { font-size:17px; color:#4a5568; max-width:780px; margin:0 auto 24px; line-height:1.9; }
+  .summary-box { background:#fff; border-left:4px solid #4a6cf7; padding:18px 24px; margin-bottom:48px; border-radius:0 8px 8px 0; box-shadow:0 2px 8px rgba(0,0,0,.04); font-size:15px; }
+  .summary-box strong { color:#4a6cf7; }
+  h2 { font-size:22px; font-weight:700; margin:48px 0 24px; color:#0d0e24; padding-bottom:8px; border-bottom:2px solid #4a6cf7; display:inline-block; }
+  h3 { font-size:17px; font-weight:700; margin:0 0 8px; color:#1a1a2e; }
+  .card { background:#fff; border-radius:10px; padding:24px; box-shadow:0 2px 12px rgba(0,0,0,.05); }
+  .card p,.card li { font-size:14px; color:#4a5568; }
+  .card ul { padding-left:20px; margin-top:8px; }
+  .card li { margin-bottom:4px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:20px; margin-bottom:32px; }
+  .grid.two { grid-template-columns:1fr 1fr; }
+  .grid.three { grid-template-columns:repeat(3,1fr); }
+  .tag { display:inline-block; font-size:12px; font-weight:700; padding:2px 10px; border-radius:4px; margin-bottom:10px; background:#eef2ff; color:#4a6cf7; }
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,.05); margin-bottom:32px; }
+  th { background:#4a6cf7; color:#fff; padding:14px 16px; font-size:14px; text-align:left; font-weight:600; }
+  td { padding:14px 16px; font-size:14px; color:#4a5568; border-bottom:1px solid #eef1f7; }
+  tr:last-child td { border-bottom:none; }
+  td:first-child,th:first-child { width:180px; font-weight:600; color:#1a1a2e; }
+  .highlight-box { background:linear-gradient(135deg,#f0f4ff,#fafbff); border:1px solid #dce4f8; border-radius:10px; padding:20px 24px; margin-bottom:20px; }
+  .highlight-box h3 { color:#4a6cf7; }
+  .highlight-box .label { display:inline-block; background:#fff; border:1px solid #4a6cf7; color:#4a6cf7; padding:2px 10px; border-radius:4px; font-size:12px; font-weight:700; margin-bottom:8px; }
+  .flow-list { background:#fff; border-radius:10px; padding:24px; box-shadow:0 2px 12px rgba(0,0,0,.05); }
+  .flow-list .step { display:flex; align-items:baseline; margin-bottom:12px; }
+  .flow-list .step:last-child { margin-bottom:0; }
+  .flow-list .num { background:#4a6cf7; color:#fff; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; margin-right:12px; flex-shrink:0; }
+  .footer { text-align:center; margin-top:60px; padding-top:32px; border-top:1px solid #e0e4ea; font-size:13px; color:#8894b0; }
+  .footer a { color:#4a6cf7; text-decoration:none; }
+  .conclusion-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+  @media (max-width:768px) {
+    .grid.two,.conclusion-grid { grid-template-columns:1fr; }
+    .grid.three { grid-template-columns:1fr; }
+    h1 { font-size:24px; }
+  }
+</style>
+</head>
+<body>
+<main class="shell">
+
+<!-- Header -->
+<header class="top">
+<div class="brand">FINTELLIGENCE / 投顾 Agent</div>
+</header>
+
+<!-- 一、核心价值与理念 -->
+<section class="hero">
+<span class="eyebrow">核心价值与理念</span>
+<h1>从"人找策略"到"策略找人"</h1>
+<p class="lead">将顶级投资经理的分析框架模型化，通过 AI 提供"千人千面"的个性化资产配置，让专业的投顾服务触手可及。</p>
+<div class="summary-box"><strong>关键结论：</strong>投顾工作不再依赖模型凭一句话给出买卖结论，而是由 LLM 在七大核心工具间进行编排，由客户画像、风险测评、市场预警和适当性规则共同决定推荐范围。</div>
+</section>
+
+<!-- 投顾 Agent 解决的核心痛点 -->
+<h2>一（续）、投顾 Agent 解决的核心痛点</h2>
+<table>
+<thead>
+<tr><th style="width:60px;">痛点</th><th style="width:300px;">传统做法</th><th>本系统的解决方式</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>① 理财顾问效率低，无法规模化</strong></td>
+<td>顾问手动翻阅客户资料、产品手册、合规文件，出一份方案要 2-3 小时，一个顾问最多服务 50 个客户。</td>
+<td>投顾 Agent 自动聚合画像 + 产品 + 风险规则，一键生成推荐方案，分钟级出结果，AI 7×24 在线，服务能力不再受人力限制。</td>
+</tr>
+<tr>
+<td><strong>② 客户画像静态、滞后、不准确</strong></td>
+<td>标签靠人工打，评估一次管一年，和实际行为偏差大；顾问靠记忆了解客户，换了顾问就从头开始。</td>
+<td>动态客户画像：规则引擎五阶段管道自动计算，行为校准 + 置信度衰减，画像随客户行为持续演化，任何顾问打开系统就能看到最新画像。</td>
+</tr>
+<tr>
+<td><strong>③ 风评与推荐脱节</strong></td>
+<td>客户风评做一次就归档，后续推荐不看实际风险承受能力；顾问凭经验判断，合规风险高。</td>
+<td>投顾 Agent 推荐前自动检测风评状态 → 画像风险等级 → 产品适当性矩阵，越级购买触发披露确认，贯穿全流程的适当性管控。</td>
+</tr>
+<tr>
+<td><strong>④ 画像利用不充分 — 有数据没洞察</strong></td>
+<td>CRM 里堆满客户数据，但顾问做推荐时还是靠经验拍脑袋，数据和决策是两张皮。</td>
+<td>投顾 Agent 以画像为决策中枢：画像 → 适当性筛选 → 产品推荐 → 资产配置，四步全自动，且每一步都可视可解释。</td>
+</tr>
+</tbody>
+</table>
+
+<!-- 二、用户画像核心亮点 -->
+<h2>二、用户画像核心亮点</h2>
+
+<section class="grid">
+<div class="highlight-box">
+<div class="label">数据架构</div>
+<h3>动态多表联查 + Cache-Aside 缓存</h3>
+<p>画像数据不是静态字段，而是从多个业务表动态计算得出：</p>
+<ul>
+<li><strong>跨表联查：</strong>一次研判关联 <code>sys_user</code> + <code>fin_customer_profile</code> + <code>fin_risk_assessment</code> + <code>fin_holdings</code> + <code>fin_product</code> + <code>fin_transaction</code> 六张表</li>
+<li><strong>动态计算：</strong>最高持仓产品类型、近一年交易频率、历史盈亏水平、亏损承受能力均从数据库实时统计</li>
+<li><strong>Cache-Aside 模式：</strong>查询先走 Redis（TTL 7天），未命中则查 MySQL 并回填缓存；画像更新后主动失效缓存</li>
+</ul>
+</div>
+</section>
+
+<!-- 三、七大核心工具详解 -->
+<h2>三、七大核心工具详解</h2>
+<p style="color:#4a5568;font-size:14px;margin-bottom:20px;">我们将投顾所需的核心能力拆分为七个原子化工具，确保每一步推荐都有据可依：</p>
+
+<table>
+<thead>
+<tr><th>工具名称</th><th>核心功能</th><th>数据来源</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smart_recommend</code></td>
+<td><strong>一键智能推荐：</strong>自动串联风控预警检查 → 风评状态检查 → 画像查询 → 产品推荐 → 资产配置，一次调用完成全链路。</td>
+<td>MySQL + Neo4j + Redis</td>
+</tr>
+<tr>
+<td><code>profile_tool</code></td>
+<td><strong>查询客户风险画像：</strong>精准获取客户四维度得分、C1-C5风险等级、熔断规则触发情况及警告信息。</td>
+<td>MySQL + Redis</td>
+</tr>
+<tr>
+<td><code>recommend_products</code></td>
+<td><strong>产品推荐打分排序：</strong>执行严格的漏斗筛选（风险过滤 → 适当性过滤 → 偏好过滤 → 持仓互补），并进行多因子排序输出 TopN。</td>
+<td>MySQL</td>
+</tr>
+<tr>
+<td><code>asset_allocation</code></td>
+<td><strong>资产配置建议：</strong>根据客户 C1-C5 风险等级，科学给出货币类、债券类、混合类、股票类及现金的比例分配建议。</td>
+<td>MySQL</td>
+</tr>
+<tr>
+<td><code>analysis_holdings</code></td>
+<td><strong>持仓综合分析：</strong>穿透分析持仓明细、行业集中度、盈亏汇总，并结合 Neo4j 图谱进行深度的行业穿透分析。</td>
+<td>MySQL + Neo4j</td>
+</tr>
+<tr>
+<td><code>compare_customers</code></td>
+<td><strong>客户对比分析：</strong>支持多维度的客群对比，包括画像差异、共同持仓情况以及行业偏好对比。</td>
+<td>MySQL + Neo4j</td>
+</tr>
+<tr>
+<td><code>graphrag_search</code></td>
+<td><strong>知识增强检索：</strong>融合 Milvus 向量相似度检索与 Neo4j 图谱多跳查询，为推荐提供深度的知识上下文。</td>
+<td>Neo4j + Milvus</td>
+</tr>
+</tbody>
+</table>
+
+<!-- 四、三大核心工程亮点 -->
+<h2>四、三大核心工程亮点</h2>
+
+<section class="grid">
+<div class="highlight-box">
+<div class="label">亮点一</div>
+<h3>Neo4j 同步失败自动重试机制</h3>
+<p><strong>问题背景：</strong>知识图谱（Neo4j）数据同步可能因网络抖动失败，导致推荐数据不一致。</p>
+<p><strong>解决方案：</strong>主业务异步非阻塞，失败时数据快照写入 MySQL 兜底表。后台定时任务（每60秒）采用线性退避策略最多重试10次，若仍失败则标记为人工介入。</p>
+<p><strong>业务价值：</strong>保证了知识图谱数据的最终一致性，确保推荐质量不受底层同步问题的影响。</p>
+</div>
+<div class="highlight-box">
+<div class="label">亮点二</div>
+<h3>注册后风评问卷弹窗与默认 R1 推荐</h3>
+<p><strong>问题背景：</strong>用户注册后若无有效风评，直接推荐存在合规风险。</p>
+<p><strong>解决方案：</strong>前端通过接口判断并弹出问卷；后端在风评完成前，<code style="background:#eef2ff;padding:1px 6px;border-radius:3px;">smart_recommend</code> 工具会强制将客户降级为 C1（保守型），仅推荐 R1（低风险）产品，并在回复中明确告知问卷入口。</p>
+<p><strong>业务价值：</strong>合规优先，严守适当性底线；通过前端弹窗与后端降级双重提醒，主动引导客户完成测评，形成业务闭环。</p>
+</div>
+<div class="highlight-box">
+<div class="label">亮点三</div>
+<h3>风险等级自动降级机制</h3>
+<p><strong>问题背景：</strong>客户自评风险等级可能与其实际交易行为（如恐慌性赎回）存在偏差。</p>
+<p><strong>解决方案：</strong>系统通过 BehavioralCalibrator 对比自评与行为画像。当偏差方向一致且达到阈值时，每次最多下调一个风险等级（如 C4 降至 C3），设有7天冷却期，并保留完整审计记录。</p>
+<p><strong>业务价值：</strong>用客观的交易行为数据纠偏主观的自评画像，有效防范适当性风险，使客户画像更真实可靠。</p>
+</div>
+</section>
+
+<!-- 五、技术栈与合规约束 -->
+<h2>五、技术栈与合规约束</h2>
+
+<section class="grid two" style="margin-bottom:32px;">
+<div class="card">
+<h3 style="color:#4a6cf7;">技术栈</h3>
+<ul>
+<li><strong>LangChain：</strong>将 LLM 与七大工具箱组合</li>
+<li><strong>Profile / Holding / Recommendation / Allocation Tool：</strong>提供事实与计算</li>
+<li><strong>Redis：</strong>会话与跨会话记忆召回</li>
+<li><strong>MySQL、Neo4j、Milvus：</strong>存储业务事实、关系和知识上下文</li>
+</ul>
+</div>
+<div class="card">
+<h3 style="color:#e53e3e;">合规约束</h3>
+<ul>
+<li><strong>适当性匹配：</strong>产品风险等级不能超过客户适当性范围</li>
+<li><strong>风险预警联动：</strong>风险预警会收紧推荐范围与文案</li>
+<li><strong>风险提示：</strong>配置输出保留风险提示和推荐依据</li>
+<li><strong>反馈治理：</strong>拒绝反馈会影响后续偏好信号，但不会自动调整风险等级</li>
+</ul>
+</div>
+</section>
+
+<!-- 六、总结与展望 -->
+<h2>六、总结与展望</h2>
+
+<div class="highlight-box">
+<h3>从"经验推荐"到"证据推荐"</h3>
+<p>依托七大核心工具的原子化编排，顾问不再需要逐页翻阅产品手册。Agent 能够同时读取客户风险等级、持仓行业分布、产品适当性与知识上下文，输出的不仅有"推荐什么"，更保留了"为什么适配、受什么约束、风险在哪里"的完整逻辑链路。</p>
+</div>
+
+<div class="highlight-box">
+<h3>坚守合规底线，实现"双重保护"</h3>
+<p>我们将合规要求深度内化为系统能力。通过"注册后风评弹窗与默认 R1 推荐"以及"风险等级自动降级"两大工程亮点，系统能够用客观的交易行为数据纠偏主观画像，确保在风评缺失或行为异常时，依然能守住适当性底线，实现从"事后抽检"到"实时伴随"的合规守护。</p>
+</div>
+
+<div class="highlight-box">
+<h3>夯实底层基建，保障数据一致</h3>
+<p>针对金融级数据要求，我们设计了"Neo4j 同步失败自动重试机制"，通过异步非阻塞与兜底重试策略，彻底解决了复杂图谱数据同步的痛点，确保每一次"千人千面"的推荐都建立在绝对准确的数据基石之上。</p>
+</div>
+
+<div class="card" style="border-left:4px solid #e53e3e;border-radius:0 10px 10px 0;">
+<h3 style="color:#e53e3e;">严守业务边界，投顾不越权</h3>
+<p>AdvisorAgent 始终定位为"辅助决策工具"而非"投资顾问"。它不直接执行交易，也不修改正式风险评级，仅输出被画像、适当性和预警约束的可解释建议。真正的交易与评级，依然由受控的业务操作链路和正式审计流程来完成，确保 AI 赋能下的金融服务安全、稳健、合规。</p>
+</div>
+
+<footer class="footer">
+<span>FINTELLIGENCE · 智能财富管理投顾 Agent</span>
+</footer>
+
+</main>
+</body>
+</html>
