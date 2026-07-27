@@ -576,9 +576,6 @@ async def resolve_stream_advisor_subject(
 ) -> tuple[int | None, str | None]:
     """Resolve an advisor target without confusing the actor with a customer."""
     role = get_request_role_from_user(user)
-    if role == "客户":
-        return authenticated_actor_id(user), None
-
     entities = (
         route_decision.entities
         if route_decision is not None
@@ -586,8 +583,45 @@ async def resolve_stream_advisor_subject(
         else {}
     )
 
-    # A name in the current route represents a newly selected customer and
-    # therefore takes precedence over a possibly stale id in memory.
+    if role == "客户":
+        # 隐私保护：客户身份不能查询他人信息
+        actor_id = authenticated_actor_id(user)
+        customer_name = str(entities.get("customer_name") or "").strip()
+        explicit_customer_id = entities.get("customer_id")
+        if customer_name:
+            from app.tool.graph_query_tool import resolve_customer_id
+            resolved = await resolve_customer_id(customer_name)
+            if resolved is not None and int(resolved) != actor_id:
+                return (
+                    None,
+                    (
+                        '抱歉，为了保护客户隐私，'
+                        '我只能协助您查询本人账户相关信息。'
+                        '您可以试试：'
+                        '"查看我的风险等级"'
+                        '"查询我的持仓"'
+                        '或"查询我的交易记录"。'
+                    ),
+                )
+        if explicit_customer_id is not None:
+            try:
+                if int(explicit_customer_id) != actor_id:
+                    return (
+                        None,
+                        (
+                            '抱歉，为了保护客户隐私，'
+                            '我只能协助您查询本人账户相关信息。'
+                            '您可以试试：'
+                            '"查看我的风险等级"'
+                            '"查询我的持仓"'
+                            '或"查询我的交易记录"。'
+                        ),
+                    )
+            except (TypeError, ValueError):
+                return None, "客户ID格式无效，请提供有效的数字客户ID。"
+        return actor_id, None
+
+    # 员工角色：通过姓名或 ID 解析目标客户
     customer_name = str(entities.get("customer_name") or "").strip()
     if customer_name:
         from app.tool.graph_query_tool import resolve_customer_id

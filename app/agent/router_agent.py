@@ -196,6 +196,28 @@ class RouterAgent:
             decision.entities["customer_id"] = user_id
             params["customer_id"] = user_id
 
+        # 隐私保护：客户身份不能查询他人信息
+        if user_role == "客户" and customer_id is not None and customer_id != user_id:
+            return UnifiedChatResponse(
+                intent=intent,
+                agent=agent_name,
+                confidence=confidence,
+                session_id=session_id,
+                reply=(
+                    "抱歉，为了保护客户隐私，"
+                    "我只能协助您查询本人账户相关信息。"
+                    "您可以试试："
+                    "“查看我的风险等级”"
+                    "“查询我的持仓”"
+                    "或“查询我的交易记录”。"
+                ),
+                data={
+                    "blocked": "privacy_customer_scope",
+                    "reason": "客户身份仅能访问本人信息",
+                    "route_decision": decision.model_dump(mode="json"),
+                },
+            )
+
         # ── Step 3: 分发给业务 Agent ──
         try:
             if agent_name == "customer_service":

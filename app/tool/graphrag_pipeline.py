@@ -107,7 +107,12 @@ class GraphRAGPipeline:
         self.vector_weight = settings.graphrag.vector_weight   # 默认 0.6
         self.graph_weight = settings.graphrag.graph_weight      # 默认 0.4
 
-        # LLM（实体提取 + 回答生成 共用）
+        # LLM（实体提取 + 回答生成 共用）— 禁用自动代理检测
+        import httpx
+        http_client = httpx.AsyncClient(
+            trust_env=False,
+            timeout=settings.llm.openai_timeout,
+        )
         self._llm = ChatOpenAI(
             model=settings.llm.openai_model_chat,
             temperature=0.3,   # 实体提取需要低温度保证稳定
@@ -116,6 +121,7 @@ class GraphRAGPipeline:
             max_retries=settings.llm.openai_max_retries,
             openai_api_key=settings.llm.openai_api_key,
             base_url=settings.llm.openai_base_url,
+            http_client=http_client,
         )
 
         # Embedding 客户端（向量检索用）
