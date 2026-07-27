@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace-page page-stack">
+  <div class="page-stack">
     <section class="page-intro">
       <div><h2>用户画像</h2><p>聚合基础属性、风险偏好、投资经验和行为信号。</p></div>
       <form v-if="auth.user?.role !== '客户'" class="inline-search" @submit.prevent="load">

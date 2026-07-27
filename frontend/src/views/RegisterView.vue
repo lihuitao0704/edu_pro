@@ -3,7 +3,7 @@
     <section class="auth-hero">
       <div class="story-orbit orbit-one" />
       <div class="story-orbit orbit-two" />
-      <div class="login-logo" aria-label="Fintelligence">F</div>
+      <div class="login-logo">澄</div>
       <span class="eyebrow light">OPEN YOUR ACCOUNT</span>
       <h1>开启智能财富之旅。</h1>
       <p>注册即享 AI 驱动的客户画像、智能投顾与全流程业务协同，让专业金融服务触手可及。</p>

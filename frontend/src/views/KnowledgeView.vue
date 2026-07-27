@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace-page page-stack">
+  <div class="page-stack">
     <section class="page-intro">
       <div><h2>让 Agent 使用可信知识</h2><p>文档上传后自动完成解析、切片、向量化和来源追踪。</p></div>
       <div class="milvus-state" :class="{ online: status?.milvus_connected }"><i /><span>Milvus</span><strong>{{ status?.milvus_connected ? 'ONLINE' : 'OFFLINE' }}</strong></div>

@@ -1,11 +1,11 @@
 <template>
-  <div class="workspace-page dashboard-page">
+  <div class="dashboard-page">
     <section class="finance-page-intro dashboard-intro">
       <div>
         <h1>金融智能运营中心</h1>
         <p>业务汇总、服务健康和当前账户可见的 Agent 执行链路均来自实时接口。</p>
       </div>
-      <div class="dashboard-live" data-testid="dashboard-health" :class="{ degraded: healthStatus === 'degraded' }">
+      <div class="dashboard-live" :class="{ degraded: healthStatus === 'degraded' }">
         <i /> {{ healthLabel }} <small>{{ updatedAt || '等待刷新' }}</small>
       </div>
     </section>

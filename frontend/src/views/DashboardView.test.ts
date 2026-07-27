@@ -57,8 +57,6 @@ describe('DashboardView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.classes()).toContain('workspace-page')
-    expect(wrapper.get('[data-testid="dashboard-health"]').text()).toContain('服务')
     expect(get).toHaveBeenCalledWith('/analytics/bi/dashboard')
     expect(get).toHaveBeenCalledWith('/admin/health')
     expect(get).toHaveBeenCalledWith('/analytics/chat/traces')

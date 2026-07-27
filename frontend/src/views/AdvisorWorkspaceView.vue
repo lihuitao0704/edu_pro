@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace-page advisor-grid">
+  <div class="advisor-grid">
     <aside class="customer-browser surface-card">
       <div class="card-heading"><h3>客户名册</h3></div>
       <form class="search-box" @submit.prevent="search"><input v-model="keyword" placeholder="姓名 / 用户名 / 手机号" /><button>⌕</button></form>
