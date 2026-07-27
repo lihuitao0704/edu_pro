@@ -45,6 +45,18 @@ class ReportHtmlTest(unittest.TestCase):
                 html = (ROOT / filename).read_text(encoding="utf-8")
                 self.assertIn(anchor, html)
 
+    def test_advisor_report_explains_defense_value_and_profile_guardrail(self):
+        text = (ROOT / "01-投顾Agent汇报.html").read_text(encoding="utf-8")
+        for anchor in (
+            "从“人找策略”到“策略找人”",
+            "千人千面",
+            "顶级投资经理",
+            "画像缺失 / 风评过期",
+            "风险测评提醒弹窗",
+            "低风险产品",
+        ):
+            self.assertIn(anchor, text)
+
     def test_multi_agent_architecture_embeds_financial_process_design(self):
         text = (ROOT / "06-多Agent联动与架构汇报.html").read_text(encoding="utf-8")
         for number, title in enumerate((

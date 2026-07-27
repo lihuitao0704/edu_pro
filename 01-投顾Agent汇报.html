@@ -17,9 +17,13 @@
 </nav>
 </header>
 <section class="hero">
-<span class="eyebrow">一句结论</span>
-<h1>先理解客户，再在合规边界内给出可解释建议</h1>
-<p class="lead">`AdvisorAgent` 以 LangChain 工具调用组织画像、持仓、产品、配置和知识检索能力；模型负责综合表达，风险与适当性规则负责限定“什么不能推荐”。</p>
+<span class="eyebrow">答辩核心价值</span>
+<h1>从“人找策略”到“策略找人”</h1>
+<p class="lead">我们将顶级投资经理的分析框架模型化，通过 AI 实现“千人千面”的个性化资产配置：把复杂的市场波动转化为稳健的财富增长方案，让专业投资服务触手可及。</p>
+</section>
+<section class="grid two">
+<article class="card"><span class="tag">我们解决什么</span><h3>让专业判断规模化，而不是让模型替代合规</h3><p>过去是顾问在产品、行情和客户资料中寻找策略；现在由 AdvisorAgent 先识别客户约束、持仓缺口与产品适配，再把可解释的候选策略推给正确的人。</p></article>
+<article class="card"><span class="tag warn">我们如何做到</span><h3>“千人千面”来自事实、规则与知识的组合</h3><p>画像、持仓、风险等级、产品适当性、市场知识和反馈信号共同构成决策输入；LLM 负责生成易懂说明，规则引擎始终握有推荐边界。</p></article>
 </section>
 <section class="flow-diagram">
 <div class="flow">
@@ -54,6 +58,16 @@
 </div>
 </div>
 <p class="flow-note">当前实现：`advisor_agent.py` 提供多工具入口与流式执行；推荐和配置服务提供可结构化消费的结果。</p>
+</section>
+<h2>答辩亮点：先风评、后精推的双重保护</h2>
+<section class="flow-diagram">
+<div class="layers">
+<div class="layer"><b>① 推荐请求</b>AdvisorAgent 的 <code>smart_recommend</code> 先读取客户画像，并校验最近一份风评的有效期。</div>
+<div class="layer"><b>② 画像缺失 / 风评过期</b>前端根据 <code>/risk/assessment-status</code> 提示 <strong>风险测评提醒弹窗</strong>，客户可直接进入 16 题风险测评；投顾链路同步返回清晰的测评提示。</div>
+<div class="layer"><b>③ 测评完成</b>生成 C1–C5 风险等级，恢复“画像 + 持仓 + 偏好 + 产品适当性”的全量个性化推荐与资产配置。</div>
+<div class="layer"><b>④ 未完成时的后端兜底</b>系统不让推荐中断，但强制按 C1 保守型匹配，仅输出 R1 <strong>低风险产品</strong>，同时保留“完成风评后可获得更精准建议”的引导。</div>
+</div>
+<p class="flow-note">这不是单纯的 UI 提示：前端弹窗改善体验，后端 C1 / R1 降级保护保证即使绕过页面也不会得到超适当性的推荐。代码依据：<code>AppLayout.vue</code>、<code>app/api/risk.py</code>、<code>advisor_agent.py</code>。</p>
 </section>
 <section class="grid two">
 <article class="card">
