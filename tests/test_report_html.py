@@ -212,6 +212,22 @@ class ReportHtmlTest(unittest.TestCase):
         self.assertIn("writeSteps", html)
         self.assertIn("<svg", html)
 
+    def test_portfolio_recommendation_animation_page_has_complete_flow(self):
+        page = ROOT / "持仓收益与产品推荐-动画流程图.html"
+        self.assertTrue(page.is_file())
+        html = page.read_text(encoding="utf-8")
+        for anchor in (
+            "持仓收益率", "高收益产品", "HoldingTool", "RecommendationTool",
+            "ProfileAgent", "RiskMonitor", "OutputSafetyFilter", "SSE",
+            "Outbox", "Redis Pub/Sub", "MySQL", "Redis", "Milvus", "MinIO", "Neo4j",
+            "适当性", "历史业绩不代表未来", "不自动改变正式 C1-C5 风险等级",
+            "播放", "暂停", "上一步", "下一步", "重播", "prefers-reduced-motion",
+        ):
+            self.assertIn(anchor, html)
+        self.assertIn("const steps = [", html)
+        self.assertIn("steps.length", html)
+        self.assertIn("<svg", html)
+
 
 if __name__ == "__main__":
     unittest.main()
