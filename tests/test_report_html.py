@@ -102,6 +102,27 @@ class ReportHtmlTest(unittest.TestCase):
         ):
             self.assertIn(anchor, text)
 
+    def test_advisor_page_covers_full_flow_and_engineering_enhancements(self):
+        html = (ROOT / "01-投顾Agent汇报.html").read_text(encoding="utf-8")
+        for anchor in (
+            "完整投顾流程架构",
+            "七工具",
+            "客户身份校验",
+            "风险画像与动态约束",
+            "产品推荐与资产配置",
+            "业务操作 Agent",
+            "Outbox",
+            "Redis Pub/Sub",
+            "需求文档中的基础能力",
+            "当前工程增强",
+            "预算分配",
+            "SSE 工具进度",
+            "不直接执行交易",
+            "不修改正式风险评级",
+        ):
+            self.assertIn(anchor, html)
+        self.assertGreaterEqual(html.count('class="flow-diagram"'), 3)
+
     def test_personal_defense_artifacts_cover_analytics_and_architecture(self):
         report = (ROOT / "05-数据分析Agent汇报.html").read_text(encoding="utf-8")
         for anchor in (

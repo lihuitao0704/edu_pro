@@ -27,38 +27,54 @@
 <article class="card"><span class="tag warn">我们如何做到</span><h3>“千人千面”来自事实、规则与知识的组合</h3><p>画像、持仓、风险等级、产品适当性、市场知识和反馈信号共同构成决策输入；LLM 负责生成易懂说明，规则引擎始终握有推荐边界。</p></article>
 </section>
 <section class="flow-diagram">
+<h2>完整投顾流程架构</h2>
 <div class="flow">
 <div class="node">
-<strong>客户提问</strong>
-<span>咨询、比较、配置诉求</span>
+<strong>理财顾问 / 客户</strong>
+<span>推荐、比较、配置需求</span>
 </div>
 <div class="arrow">→</div>
 <div class="node">
-<strong>画像 / 记忆召回</strong>
-<span>风险、偏好、持仓、Redis 会话</span>
+<strong>Router Agent</strong>
+<span>识别投顾意图、校验角色</span>
 </div>
 <div class="arrow">→</div>
 <div class="node">
-<strong>约束过滤</strong>
-<span>适当性、动态风险、产品风险</span>
+<strong>客户身份校验</strong>
+<span>customer_id、状态、会话归属</span>
 </div>
 <div class="arrow">→</div>
 <div class="node">
-<strong>排序与配置</strong>
-<span>候选产品、TopN、资产配置</span>
+<strong>风险画像与动态约束</strong>
+<span>风评、持仓、预警、适当性</span>
 </div>
 <div class="arrow">→</div>
 <div class="node">
-<strong>GraphRAG 解释</strong>
-<span>Milvus 语义 + Neo4j 关系上下文</span>
+<strong>AdvisorAgent 七工具</strong>
+<span>LLM 选择并编排工具</span>
 </div>
 <div class="arrow">→</div>
 <div class="node">
-<strong>SSE 答复</strong>
-<span>流式建议、理由与风险提示</span>
+<strong>产品推荐与资产配置</strong>
+<span>匹配度、比例、预算分配</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>业务操作 Agent</strong>
+<span>确认后进入受控交易链路</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Outbox / Redis Pub/Sub</strong>
+<span>推荐、成交与偏好事件联动</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Memory Manager</strong>
+<span>会话、画像、事实、图谱回写</span>
 </div>
 </div>
-<p class="flow-note">当前实现：`advisor_agent.py` 提供多工具入口与流式执行；推荐和配置服务提供可结构化消费的结果。</p>
+<p class="flow-note">答辩时我会强调：投顾建议不是孤立对话，而是由身份、事实、规则和事件共同约束的一条金融服务链。<code>advisor_agent.py</code> 负责工具编排；真正的交易确认、适当性校验和状态落库仍在后续受控业务链路完成。</p>
 </section>
 <h2>答辩亮点：先风评、后精推的双重保护</h2>
 <section class="flow-diagram">
@@ -69,6 +85,16 @@
 <div class="layer"><b>④ 未完成时的后端兜底</b>系统不让推荐中断，但强制按 C1 保守型匹配，仅输出 R1 <strong>低风险产品</strong>，同时保留“完成风评后可获得更精准建议”的引导。</div>
 </div>
 <p class="flow-note">这不是单纯的 UI 提示：前端弹窗改善体验，后端 C1 / R1 降级保护保证即使绕过页面也不会得到超适当性的推荐。代码依据：<code>AppLayout.vue</code>、<code>app/api/risk.py</code>、<code>advisor_agent.py</code>。</p>
+</section>
+<h2>七工具：让模型编排，让服务给出事实</h2>
+<section class="grid">
+<article class="card"><span class="tag">01</span><h3>smart_recommend</h3><p>组合入口：串联画像、预警、候选产品与配置建议，确保一次推荐使用同一份约束条件。</p></article>
+<article class="card"><span class="tag">02</span><h3>profile_tool</h3><p>读取客户风险等级、画像维度与诊断规则，为“适合谁”提供事实基础。</p></article>
+<article class="card"><span class="tag">03</span><h3>recommend_products</h3><p>在适当性与动态风险约束后的候选池中计算匹配度并排序。</p></article>
+<article class="card"><span class="tag">04</span><h3>asset_allocation</h3><p>将客户可承受风险转成可解释的资产比例建议，并支持预算分配。</p></article>
+<article class="card"><span class="tag">05</span><h3>analysis_holdings</h3><p>读取 MySQL 持仓与 Neo4j 关系，识别集中度、缺口与已有暴露。</p></article>
+<article class="card"><span class="tag">06</span><h3>compare_customers</h3><p>用于顾问侧同类客群对比，帮助解释客户分层与推荐差异。</p></article>
+<article class="card"><span class="tag">07</span><h3>graphrag_search</h3><p>结合 Milvus 语义召回与 Neo4j 关系上下文，补充产品知识和推荐理由。</p></article>
 </section>
 <section class="grid two">
 <article class="card">
@@ -107,9 +133,33 @@
 <p>流式执行让顾问在复杂工具链路完成时仍可持续看到答复进度。</p>
 </article>
 </section>
-<h2>为什么投顾 Agent 值得讲</h2>
+<h2>需求文档与当前实现：从功能清单到可运行的投顾链路</h2>
 <section class="requirement"><strong>需求映射：</strong>需求文档要求投顾助手完成“客户画像分析、产品推荐、资产配置建议、持仓穿透”，并以 GraphRAG 形成比纯 RAG 更完整的推荐依据。当前实现以画像、持仓、推荐、配置和知识工具组成可追踪工具链，而非让模型直接给出不可验证结论。</section>
+<section class="grid two">
+<article class="card"><h3>需求文档中的基础能力</h3><ul><li>客户画像分析与风险偏好识别</li><li>产品推荐、资产配置与持仓穿透</li><li>GraphRAG 连接产品知识与关系信息</li><li>面向客户和顾问的智能投顾交互</li></ul></article>
+<article class="card"><h3>当前工程增强</h3><ul><li>LLM 在七工具之间自主编排，<code>smart_recommend</code> 封装高频组合链路</li><li>风评缺失/过期触发弹窗与 C1/R1 保守降级，前后端双重保护</li><li>按金额生成预算分配，并以角色化叙事区分顾问报告与客户表达</li><li>SSE 工具进度展示调用阶段，风险事件可收紧候选池并进入事件闭环</li></ul></article>
+</section>
+<h2>推荐结果如何进入金融级闭环</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>投顾建议</strong><span>产品、比例、预算分配、理由</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>客户确认</strong><span>建议与正式指令分离</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>业务操作 Agent</strong><span>权限、适当性、二次确认</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>交易 / 推荐事实</strong><span>MySQL 业务数据</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Outbox</strong><span>与业务事务一起落库</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Redis Pub/Sub</strong><span>画像、风控、图谱订阅</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Memory Manager</strong><span>下一次服务读取最新状态</span></div>
+</div>
+<p class="flow-note">这条链路说明“推荐”如何成为可追溯的服务事实：若客户确认购买，业务操作 Agent 才会执行交易；成交、拒绝或风险预警都通过 Outbox 和 Redis Pub/Sub 驱动后续画像、风控与关系图谱更新。</p>
+</section>
 <section class="grid two"><article class="card"><h3>从“经验推荐”到“证据推荐”</h3><p>顾问不再逐页翻产品手册：Agent 同时读取客户风险等级、持仓行业分布、产品适当性与知识上下文。输出不仅有“推荐什么”，还保留“为什么适配、受什么约束、风险在哪里”。</p></article><article class="card"><h3>可回答的技术追问</h3><ul><li>GraphRAG：Milvus 语义召回 + Neo4j 关系补全</li><li>适当性：C1-C5 与产品风险范围作为确定性过滤</li><li>体验：SSE 流式响应，工具调用结果可结构化展示</li><li>治理：风险事件能实时收紧候选池，而非事后提示</li></ul></article></section>
+<section class="grid two"><article class="card"><h3>亮点：预算分配与角色化表达</h3><p>当顾问给出投资金额时，系统可将配置比例转化为具体预算分配；顾问端保留画像、约束和产品匹配等专业信息，客户侧则用更易理解的叙事输出建议与风险提示。</p></article><article class="card"><h3>边界：投顾不越权</h3><p>AdvisorAgent <strong>不直接执行交易</strong>，也<strong>不修改正式风险评级</strong>。它输出的是被画像、适当性和预警约束的可解释建议；交易与评级分别继续走业务操作和正式风评/审计流程。</p></article></section>
 <footer class="footer">
 <span>联动输入：画像、风控、反馈、分析洞察</span>
 <a href="02-客服Agent汇报.html">客服 Agent →</a>
