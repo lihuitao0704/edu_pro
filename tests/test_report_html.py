@@ -54,9 +54,13 @@ class ReportHtmlTest(unittest.TestCase):
             "账户安全保护", "客户投诉闭环",
         ), start=1):
             self.assertIn(f"场景{number}：{title}", text)
-        self.assertGreaterEqual(text.count('class="flow-diagram"'), 17)
+        self.assertGreaterEqual(text.count('class="flow-diagram"'), 15)
         self.assertIn("Event Bus", text)
         self.assertIn("Memory Manager", text)
+        self.assertNotIn("闭环一：", text)
+        self.assertNotIn("闭环二：", text)
+        for layer in ("用户、角色与前端交互", "统一接入、认证与安全边界", "会话记忆、实体追踪与路由编排", "多 Agent 与客户自动化层", "事件驱动协作", "数据、缓存、知识、图谱与模型基础设施", "统一响应、可观测性、审计与降级保障"):
+            self.assertIn(layer, text)
 
     def test_reports_include_team_and_requirement_driven_value(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8")

@@ -21,7 +21,7 @@
 <h1>多 Agent 的关键不在“数量”，而在事实一致、事件可追溯、消费可幂等</h1>
 <p class="lead">统一入口隐藏复杂性，Router 与 ChatOrchestrator 提供横切管控；跨 Agent 协作以业务事实为起点，通过 Outbox 和 Redis 广播形成可恢复的领域事件链路。</p>
 </section>
-<h2>全平台分层流程</h2>
+<h2>金融级端到端架构与业务主线</h2>
 <section class="flow-diagram">
 <div class="flow">
 <div class="node">
@@ -56,85 +56,15 @@
 </div>
 <p class="flow-note">连接语义：HTTP/SSE 承载交互，SQLAlchemy Async 管理事实数据，Redis Pub/Sub 承载领域事件，Neo4j/Milvus 支持关系与语义检索。</p>
 </section>
-<h2>闭环一：交易风险如何影响全链路</h2>
-<section class="flow-diagram">
-<div class="flow">
-<div class="node">
-<strong>业务操作</strong>
-<span>交易请求与事前评估</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>风险预警</strong>
-<span>预警事实写入 MySQL</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>Outbox</strong>
-<span>事务提交后可靠投递</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>Redis 广播</strong>
-<span>`event:agent_domain`</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>画像 / 投顾 / 客服</strong>
-<span>动态标记、推荐约束、风险提示</span>
-</div>
-</div>
-<p class="flow-note">
-<span class="tag risk">合规约束</span> 消费使用 `event_id + consumer` 幂等记录；风险事件改变的是动态策略状态，不自动修改正式 C1-C5 风险等级。</p>
-</section>
-<h2>闭环二：推荐反馈与数据洞察</h2>
-<section class="grid two">
-<article class="flow-diagram">
-<div class="flow">
-<div class="node">
-<strong>投顾推荐</strong>
-<span>客户拒绝原因</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>反馈事件</strong>
-<span>偏好信号</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>客户画像</strong>
-<span>更新避免类别</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>下一次推荐</strong>
-<span>候选池排除</span>
-</div>
-</div>
-</article>
-<article class="flow-diagram">
-<div class="flow">
-<div class="node">
-<strong>NL2SQL</strong>
-<span>只读结果</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>洞察提取</strong>
-<span>客户、时间、数值、证据齐全</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>领域事件</strong>
-<span>受控发布</span>
-</div>
-<div class="arrow">→</div>
-<div class="node">
-<strong>投顾 / 风控 / 画像</strong>
-<span>消费策略信号</span>
-</div>
-</div>
-</article>
+<div class="arch-legend"><span><b>同步主链路</b>：身份、权限、意图、路由与执行闸门</span><span><b>异步协作</b>：Outbox / Redis 广播与幂等消费</span><span><b>状态回写</b>：Memory、画像、图谱与审计</span></div>
+<section class="architecture-map">
+<article class="arch-layer"><h3>① 用户、角色与前端交互</h3><div class="arch-row"><div class="arch-box"><b>客户</b><span>本人查询、产品咨询、投资建议</span></div><div class="arch-box"><b>理财顾问 / 客户经理</b><span>客户服务、推荐方案、受控业务办理</span></div><div class="arch-box"><b>风控专员 / 管理员</b><span>预警查询、处置、权限内全局视图</span></div><div class="arch-box"><b>AI 财富助手 / 员工操作页</b><span>统一自然语言入口与明确业务场景入口</span></div></div></article>
+<article class="arch-layer access"><h3>② 统一接入、认证与安全边界</h3><div class="arch-row"><div class="arch-box"><b>登录认证</b><span>账号校验、JWT 身份令牌</span></div><div class="arch-box"><b>身份上下文</b><span>actor_id、角色与客户归属校验</span></div><div class="arch-box"><b>会话所有权</b><span>session_id 绑定主体，防止跨用户访问</span></div><div class="arch-box"><b>统一对话 API</b><span>/api/unified-chat 与 SSE 流式通道</span></div><div class="arch-box"><b>Input Safety Filter</b><span>敏感词、越权与风险操作预检</span></div><div class="arch-box"><b>C4 交易安全预检</b><span>金额、收款方、高风险客户与确认约束</span></div></div></article>
+<article class="arch-layer memory"><h3>③ 会话记忆、实体追踪与路由编排</h3><div class="arch-row"><div class="arch-box"><b>Memory Manager</b><span>Redis 会话上下文、最近意图与待确认状态</span></div><div class="arch-box"><b>Entity Tracker</b><span>客户、产品、金额、期限等实体持续追踪</span></div><div class="arch-box"><b>Intent Service</b><span>高置信规则优先，LLM 分类兜底</span></div><div class="arch-box"><b>Route Plan / Validator</b><span>多 Agent 路由、RBAC 与参数校验</span></div><div class="arch-box"><b>Router Agent</b><span>将复杂自然语言分派给专业 Agent</span></div></div></article>
+<article class="arch-layer agents"><h3>④ 多 Agent 与客户自动化层</h3><div class="arch-row"><div class="arch-box"><b>Customer Account Service</b><span>客户基本信息、画像、持仓、流水与权限范围</span></div><div class="arch-box"><b>Customer Service Agent</b><span>FAQ、政策/产品咨询、RAG 检索、情绪识别</span></div><div class="arch-box"><b>Advisor Agent</b><span>画像、持仓、推荐、配置、GraphRAG 与解释</span></div><div class="arch-box"><b>Profile Agent</b><span>四维评分、C1-C5、置信度、熔断规则</span></div><div class="arch-box"><b>NL2SQL Agent</b><span>自然语言查数、只读 SQL 校验与结果解读</span></div><div class="arch-box"><b>Risk Monitor</b><span>规则检测、预警、工单与动态风险约束</span></div><div class="arch-box"><b>Operator</b><span>申购、赎回、转账、工单、审计与二次确认</span></div></div><p class="arch-signal">工具链：RAG 知识链 · 投顾/画像工具链 · 员工操作工具链；工具只提供原子能力，关键业务决定仍由规则和权限边界约束。</p></article>
+<article class="arch-layer events"><h3>⑤ 事件驱动协作</h3><div class="arch-row"><div class="arch-box"><b>业务域事件</b><span>交易、预警、反馈、画像、工单等业务事实</span></div><div class="arch-box"><b>agent_event_outbox</b><span>同事务持久化 pending / publishing / published</span></div><div class="arch-box"><b>Outbox Relay</b><span>异步投递，失败可重试，不丢失事实</span></div><div class="arch-box"><b>Domain Event Handler</b><span>按事件类型分发给订阅方</span></div><div class="arch-box"><b>幂等消费账本</b><span>event_id + consumer 防重放</span></div><div class="arch-box"><b>Redis Pub/Sub</b><span>风险、画像、工单、图谱同步等实时广播</span></div></div><p class="arch-signal">核心原则：先落业务事实，再发布事件；同步只用于金融闸门，跨 Agent 影响通过事件异步协作。</p></article>
+<article class="arch-layer data"><h3>⑥ 数据、缓存、知识、图谱与模型基础设施</h3><div class="arch-row"><div class="arch-box"><b>MySQL</b><span>用户、画像、产品、持仓、交易、预警、会话、Outbox</span></div><div class="arch-box"><b>Redis</b><span>会话上下文、画像缓存、风险标记、Pub/Sub</span></div><div class="arch-box"><b>Milvus</b><span>FAQ、产品、政策向量知识，支撑 RAG</span></div><div class="arch-box"><b>Neo4j</b><span>客户—产品—行业—持仓关系，支撑 GraphRAG</span></div><div class="arch-box"><b>OpenAI 兼容 LLM</b><span>意图理解、工具调用、文本生成与解释</span></div><div class="arch-box"><b>本地 Embedding</b><span>文档向量化与离线降级能力</span></div></div></article>
+<article class="arch-layer output"><h3>⑦ 统一响应、可观测性、审计与降级保障</h3><div class="arch-row"><div class="arch-box"><b>结果汇总 / Response Enhancer</b><span>统一 Agent 结果、推荐内容和风险提示</span></div><div class="arch-box"><b>Output Safety Filter</b><span>输出合规、隐私与占位信息检查</span></div><div class="arch-box"><b>Trace Service</b><span>trace_id、Agent spans、耗时与调用链</span></div><div class="arch-box"><b>会话归档与审计</b><span>操作审计、工具调用与工单追溯</span></div><div class="arch-box"><b>异常与降级</b><span>Redis / 图谱 / RAG / LLM 分级降级</span></div><div class="arch-box"><b>SSE 返回</b><span>流式文本、推荐卡片与前端状态呈现</span></div></div></article>
 </section>
 <section class="grid">
 <article class="card">
@@ -150,19 +80,8 @@
 <p>新增 Agent 只需声明生产/消费的领域事件与契约，不应绕过统一入口或自行修改核心风险等级。</p>
 </article>
 </section>
-<h2>金融级业务流程附录</h2>
-<section class="flow-diagram">
-<div class="flow">
-<div class="node"><strong>用户行为</strong><span>咨询、推荐、交易、投诉、登录</span></div>
-<div class="arrow">→</div>
-<div class="node"><strong>统一编排</strong><span>Chat Orchestrator 与 Router 意图分发</span></div>
-<div class="arrow">→</div>
-<div class="node"><strong>业务与控制 Agent</strong><span>投顾、操作、风控、合规、安全、市场、分析、画像</span></div>
-<div class="arrow">→</div>
-<div class="node"><strong>事件与记忆闭环</strong><span>Outbox / Event Bus / Memory Manager / 用户状态</span></div>
-</div>
-<p class="flow-note">新增附录覆盖交易、转账、策略调整、推荐审核、画像、分析、市场、情绪、销售合规、安全与投诉等 14 个金融业务场景。所有 Mermaid 源码均可直接复制运行。</p>
-</section>
+<h2>金融级业务场景集：从用户行为到状态回写</h2>
+<p class="lead">上方架构图给出“谁负责什么、数据在哪里、事件如何流动”；以下 14 个场景将这条主线落到真实业务。每个场景均遵循：用户行为 → 路由与业务 Agent → Event Bus → 订阅协作 → Memory 更新 → 用户状态变化。</p>
 <section class="grid two">
 <article class="flow-diagram"><h3>场景1：用户发起交易</h3><p class="small">用户购买基金；客服理解需求，业务操作创建申请，风控审核，画像消费成交事实。</p><div class="flow"><div class="node"><strong>用户/客服</strong><span>交易诉求</span></div><div class="arrow">→</div><div class="node"><strong>业务操作</strong><span>申请与确认</span></div><div class="arrow">→</div><div class="node"><strong>风控</strong><span>适当性审核</span></div><div class="arrow">→</div><div class="node"><strong>Event Bus</strong><span>transaction.completed</span></div><div class="arrow">→</div><div class="node"><strong>画像/Memory</strong><span>偏好、交易、图谱</span></div></div><p class="flow-note">事件：交易金额、产品、状态。Memory：Redis 回执；MySQL 流水/画像；Milvus 服务摘要；Neo4j 客户—产品关系。</p></article>
 <article class="flow-diagram"><h3>场景2：大额转账风险审核</h3><p class="small">“我要转账50万元”；业务操作与安全 Agent 共同核验，风控检查金额、历史行为、账户风险与 AML。</p><div class="flow"><div class="node"><strong>用户</strong><span>大额转账</span></div><div class="arrow">→</div><div class="node"><strong>业务/安全</strong><span>参数、身份、设备</span></div><div class="arrow">→</div><div class="node"><strong>风控</strong><span>AML 与行为检查</span></div><div class="arrow">→</div><div class="node"><strong>Event Bus</strong><span>risk.transfer.assessed</span></div><div class="arrow">→</div><div class="node"><strong>执行/复核/拦截</strong><span>状态更新</span></div></div><p class="flow-note">Memory：Redis 待复核；MySQL 审核轨迹；Milvus 核验摘要；Neo4j 资金与风险关系。</p></article>
