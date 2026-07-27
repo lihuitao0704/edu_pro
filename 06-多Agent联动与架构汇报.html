@@ -22,7 +22,11 @@
 <p class="lead">统一入口隐藏复杂性，Router 与 ChatOrchestrator 提供横切管控；跨 Agent 协作以业务事实为起点，通过 Outbox 和 Redis 广播形成可恢复的领域事件链路。</p>
 </section>
 <h2>金融级端到端架构与业务主线</h2>
-<section class="flow-diagram">
+<figure class="architecture-figure">
+<img src="report-assets/financial-ai-architecture.png" alt="金融智能助手 AI 课程答辩全景架构图：从用户角色、统一接入与认证安全、会话记忆和路由、多 Agent 协作、事件驱动、数据与知识基础设施到统一响应与审计降级的完整连接关系">
+<figcaption>全景架构图：实线为同步请求链路，橙色虚线为异步事件/广播，绿色虚线为状态反馈与记忆驱动。图中内容与项目当前模块、事件链路和数据基础设施保持一致。</figcaption>
+</figure>
+<section class="flow-diagram overview-flow">
 <div class="flow">
 <div class="node">
 <strong>Vue 3 前端</strong>
