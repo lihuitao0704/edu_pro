@@ -28,6 +28,18 @@ REPORTS = {
 
 
 class ReportHtmlTest(unittest.TestCase):
+    def test_multi_agent_report_explains_algorithmic_decisions(self):
+        html = (ROOT / "06-多Agent联动与架构汇报.html").read_text(encoding="utf-8")
+        for anchor in (
+            "算法驱动的智能决策", "贝叶斯更新", "高斯混合模型", "GMM",
+            "UserCF", "协同过滤", "LightGBM Rank", "Learning-to-Rank",
+            "知识图谱 Agent", "Isolation Forest", "异常概率 92%",
+            "不自动修改正式 C1-C5 风险等级", "先进入合规候选池",
+            "历史表现不构成未来收益承诺", "人工审核",
+        ):
+            self.assertIn(anchor, html)
+        self.assertGreaterEqual(html.count('class="algorithm-card"'), 6)
+
     def test_report_set_has_titles_navigation_and_flow_diagrams(self):
         for filename, expected_title in REPORTS.items():
             with self.subTest(filename=filename):
