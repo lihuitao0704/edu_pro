@@ -12,6 +12,7 @@ REPORTS = {
     "04-业务操作Agent汇报.html": "业务操作 Agent",
     "05-数据分析Agent汇报.html": "数据分析 Agent",
     "06-多Agent联动与架构汇报.html": "多 Agent 联动",
+    "记忆架构.html": "记忆架构",
 }
 
 
@@ -72,6 +73,24 @@ class ReportHtmlTest(unittest.TestCase):
         for filename in REPORTS:
             if filename != "index.html":
                 self.assertIn("需求映射", (ROOT / filename).read_text(encoding="utf-8"))
+
+    def test_memory_architecture_is_code_aligned_and_governed(self):
+        text = (ROOT / "记忆架构.html").read_text(encoding="utf-8")
+        for anchor in (
+            "chat:v2:{actor_id}:{session_id}:messages",
+            "chat:v2:{actor_id}:{session_id}:context",
+            "profile:{customer_id}",
+            "MySQL 事务 Outbox + Redis Pub/Sub",
+            "MinIO",
+            "Milvus",
+            "Neo4j",
+            "Memory Manager",
+            "不作为正式风险等级",
+            "已实现",
+            "建议补强",
+        ):
+            self.assertIn(anchor, text)
+        self.assertNotIn("Redis Stream / Kafka", text)
 
 
 if __name__ == "__main__":

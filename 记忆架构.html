@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>记忆架构｜金融多 Agent 智能财富管理平台</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 记忆架构</div>
+<nav class="nav">
+<a href="index.html">目录</a>
+<a href="06-多Agent联动与架构汇报.html">联动与架构</a>
+<a href="00-总体汇报.html">总体汇报</a>
+</nav>
+</header>
+
+<section class="memory-hero">
+<span class="eyebrow">代码核验版 · 金融级记忆闭环</span>
+<h1>记忆不是“把聊天记录塞进 Prompt”，<br>而是受权限、时效与事实约束的决策上下文</h1>
+<p class="lead">本页以当前仓库实现为基线，区分会话上下文、客户画像、业务事实、语义知识、关系图谱和审计证据；所有 Agent 只读取被授权的最小必要上下文，业务事实始终以 MySQL 为准。</p>
+</section>
+
+<section class="assessment-grid">
+<article class="card">
+<span class="tag risk">严格结论</span>
+<h3>原图方向正确，但不能直接作为最终记忆架构</h3>
+<p>它识别了 Redis、MySQL、Milvus、Neo4j 与 Memory Manager，但混入了通用应用链路，未写清数据权威性、键级隔离、TTL、失效、事件幂等和知识源追溯；这些恰恰是金融系统记忆是否可信的关键。</p>
+</article>
+<article class="card">
+<span class="tag warn">纠正</span>
+<h3>事件总线应按代码标注</h3>
+<p>当前实现为 <b>MySQL 事务 Outbox + Redis Pub/Sub</b>，不是 Redis Streams / Kafka：提交成功后才广播，消费通过 <code>agent_event_consumption</code> 去重。图中不应把未落地的消息中间件写成既有能力。</p>
+</article>
+<article class="card">
+<span class="tag">核心原则</span>
+<h3>“快”与“准”各有归属</h3>
+<p>Redis 提供短时状态与缓存；MySQL 保存业务事实和审计；Milvus 只做语义召回；Neo4j 做关系投影；MinIO 保存原始知识文件。任一缓存或模型输出都不能替代合规事实源。</p>
+</article>
+</section>
+
+<section class="requirement"><strong>需求映射：</strong>需求文档要求“短期 Redis、中期 MySQL + Redis、长期 Milvus + Neo4j + MinIO”，并以 RAG / GraphRAG 支撑问答与推荐。本架构进一步补齐了业务事实、会话归档、事件一致性和金融合规治理的边界。</section>
+
+<h2>完整项目记忆架构</h2>
+<section class="memory-system" aria-label="金融智能财富系统完整记忆架构图">
+<p class="memory-system-title">从一次请求到下一次更好的决策</p>
+<p class="memory-system-subtitle">实线表示当前同步读写路径；事务提交后的记忆更新通过 Outbox 与 Redis Pub/Sub 异步传递。每个存储层都标出“存什么、谁是事实源、如何回收”。</p>
+
+<section class="memory-lane access">
+<div class="memory-lane-title"><span class="memory-lane-number">1</span>安全接入与记忆访问边界</div>
+<div class="memory-node-row">
+<div class="memory-node current"><b>用户 / 顾问 / 风控专员</b><small>客户身份、员工角色、业务客户 ID 共同决定访问范围。</small></div>
+<div class="memory-node current"><b>认证与 RBAC</b><small>JWT、actor_id、actor_role；禁止以客户端传来的 customer_id 越权读取历史。</small></div>
+<div class="memory-node current"><b>Chat Orchestrator</b><small>输入安全过滤、风险预检、实体跟踪、路由与 Trace 的统一入口。</small></div>
+<div class="memory-node governance"><b>最小必要上下文</b><small>只为当前任务拼装已授权信息；敏感字段先脱敏，日志保存 masked 输入输出。</small></div>
+</div>
+</section>
+
+<section class="memory-lane session">
+<div class="memory-lane-title"><span class="memory-lane-number">2</span>L0 · 实时会话记忆：短上下文与当前办理状态</div>
+<div class="memory-node-row">
+<div class="memory-node current"><b>会话消息 List</b><code>chat:v2:{actor_id}:{session_id}:messages</code><small>Redis List；每次写入刷新 TTL 1,800 秒。按约 4,096 Token 从新到旧截断。</small></div>
+<div class="memory-node current"><b>会话路由上下文</b><code>chat:v2:{actor_id}:{session_id}:context</code><small>实体、last_intent、last_agent、pending_route_decision；Redis TTL 7 天，且严格校验 actor_id。</small></div>
+<div class="memory-node current"><b>操作 / 风险瞬时状态</b><code>risk_flag:{customer_id}<br>cs_risk_ctx:{customer_id}</code><small>投顾风险投影与客服风险上下文均为 24 小时 TTL；预警待处理索引用于跨 Agent 联动。</small></div>
+<div class="memory-node proposed"><b>绝对会话上限与待确认 TTL</b><small>当前消息 List 仅“续期 30 分钟”，代码未强制最大会话寿命；待确认/待处理索引也应统一 TTL、归属与清理策略。</small></div>
+</div>
+</section>
+
+<section class="memory-lane profile">
+<div class="memory-lane-title"><span class="memory-lane-number">3</span>L1 · 客户状态记忆：画像缓存与业务事实</div>
+<div class="memory-node-row">
+<div class="memory-node current"><b>画像缓存 Cache-Aside</b><code>profile:{customer_id}</code><small>Redis JSON；TTL 7 天。先读缓存，未命中读 MySQL，再回填；schema version 不符即回源。</small></div>
+<div class="memory-node current"><b>客户画像事实源</b><code>fin_customer_profile · customer_tag</code><small>风险等级、评分、客户等级、偏好、动态风险标记和标签；风评、持仓、交易、情绪/分析信号更新后失效缓存。</small></div>
+<div class="memory-node current"><b>业务与情景记忆</b><code>fin_transaction · fin_holdings<br>product_recommendation · fin_risk_alert</code><small>交易、持仓、推荐反馈、风险预警与工单是可追溯业务事实，不由 LLM 直接写入。</small></div>
+<div class="memory-node governance"><b>正式评级与动态信号分层</b><small>情绪、交易频率、推荐拒绝等进入推荐约束和画像偏好，<b>不作为正式风险等级</b>；C1–C5 仍须走风评、规则、校准和审计链路。</small></div>
+</div>
+</section>
+
+<section class="memory-lane knowledge">
+<div class="memory-lane-title"><span class="memory-lane-number">4</span>L2 · 长期知识与关系记忆：可召回、可追源、可补偿</div>
+<div class="memory-node-row">
+<div class="memory-node source"><b>原始知识文件</b><code>MinIO / knowledge-docs</code><small>PDF、Word、Markdown 等原文件；不是向量库的附属品，而是复核与重新解析的来源。</small></div>
+<div class="memory-node current"><b>知识元数据与版本</b><code>fin_knowledge_meta</code><small>类型、版本、状态、expire_at、MinIO 路径和 Milvus collection；删除时先清向量和对象，再标记“过期”。</small></div>
+<div class="memory-node current"><b>语义知识记忆</b><code>Milvus: faq_knowledge<br>product_knowledge · policy_knowledge</code><small>Embedding → TopK 粗排 → LLM rerank → 分数过滤 → 回填来源；它提供证据片段，不保存交易事实。</small></div>
+<div class="memory-node current"><b>关系记忆投影</b><code>Neo4j: Customer–Product–Transaction–Risk</code><small>持仓、交易、风险等级等从 MySQL 增量同步；同步失败进入 <code>fin_graph_sync_retry</code>，最多重试 10 次后人工处理。</small></div>
+</div>
+</section>
+
+<section class="memory-lane audit">
+<div class="memory-lane-title"><span class="memory-lane-number">5</span>L3 · 归档、审计与闭环：让“记住”可以解释和纠错</div>
+<div class="memory-node-row">
+<div class="memory-node current"><b>对话归档与召回</b><code>conversation_archive<br>fin_chat_session · fin_chat_message</code><small>Redis 不可用时降级读归档；召回服务抽取画像摘要、最近历史偏好和跨会话对话片段。</small></div>
+<div class="memory-node current"><b>领域事件账本</b><code>agent_event_outbox<br>agent_event_consumption</code><small>同一数据库事务写业务事实和 Outbox；Relay 成功才广播，消费账本以 event_id + consumer 保证幂等。</small></div>
+<div class="memory-node current"><b>可观测审计</b><code>fin_agent_trace<br>fin_agent_trace_span · fin_chat_feedback</code><small>Trace、Span、意图、Agent、时延、Token 与脱敏输入输出形成证据链；反馈可用于质量分析。</small></div>
+<div class="memory-node proposed"><b>分级留存与可删除性</b><small>补齐数据分类、留存期限、客户删除请求、知识版本回滚、PII 字段级加密和审计导出策略，避免“永久记住”的合规风险。</small></div>
+</div>
+</section>
+</section>
+
+<h2>一次请求如何安全读取“记忆”</h2>
+<section class="memory-flow-grid">
+<article class="memory-flow-card">
+<span class="tag">读路径 / 当前实现</span>
+<h3>按可信度和时效组装，不把所有库灌入 Prompt</h3>
+<ol class="memory-steps">
+<li><b>身份定界。</b>认证结果绑定 actor_id、role、目标 customer_id；Memory Manager 以会话拥有者隔离上下文。</li>
+<li><b>会话优先。</b>读取 Redis 消息与路由上下文；Redis 失效时，消息可降级从 <code>conversation_archive</code> 恢复。</li>
+<li><b>事实优先。</b>画像服务先读 <code>profile:{customer_id}</code>，未命中回源 MySQL；敏感办理再读取正式风险状态与规则。</li>
+<li><b>按意图检索知识。</b>FAQ、产品、政策分别路由至 Milvus 集合，RAG 经过 rerank 与阈值过滤，并带回 source_info。</li>
+<li><b>补充关系证据。</b>投顾场景读取 Neo4j 的客户—持仓—产品关系；图谱不可用时不替代 MySQL 的业务判断。</li>
+<li><b>受控注入。</b>LLM 只获得经裁剪的会话、画像摘要、检索证据与规则结果；最终输出仍要经过安全过滤和审计。</li>
+</ol>
+</article>
+<article class="memory-flow-card">
+<span class="tag warn">读路径 / 必须坚持的边界</span>
+<h3>金融事实不能被“记忆召回”覆盖</h3>
+<ul class="strict-list">
+<li><b>交易、余额、持仓、正式风险等级：</b>必须从 MySQL / 规则引擎实时读取，绝不能信任历史 Prompt、缓存或向量片段。</li>
+<li><b>知识引用：</b>Milvus 命中只代表相关性；需关联 <code>fin_knowledge_meta</code> 的状态、版本、过期时间和原文件来源。</li>
+<li><b>多角色隔离：</b>顾问代客服务必须记录 actor 与 customer 两个主体；同一 session_id 不能跨主体复用。</li>
+<li><b>降级：</b>Redis、Milvus、Neo4j 不可用时可以降级，但交易风控不可绕过正式规则、适当性与二次确认。</li>
+<li><b>上下文预算：</b>现有消息截断约 4,096 Token；建议为画像摘要、RAG 片段、图谱摘要分别设预算和优先级。</li>
+</ul>
+<div class="memory-callout"><strong>架构判断：</strong>Memory Retrieval 是“取证和压缩”的服务，不是“授权和裁决”的服务。授权由认证/RBAC 决定，裁决由规则、适当性和业务服务决定。</div>
+</article>
+</section>
+
+<h2>一次业务变化如何更新“记忆”</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node"><strong>业务操作 / 风评完成</strong><span>交易、持仓、画像、预警、推荐反馈</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>MySQL 同事务</strong><span>写入业务事实 + agent_event_outbox</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Outbox Relay</strong><span>提交后轮询，失败保留重试</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>Redis Pub/Sub</strong><span>领域事件实时广播</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>幂等消费者</strong><span>event_id + consumer 防重</span></div>
+<div class="arrow">→</div>
+<div class="node"><strong>失效 / 投影 / 提醒</strong><span>profile cache、风险上下文、Neo4j、客服提示</span></div>
+</div>
+<p class="flow-note">这条链路解释了“事实先落库、再通知”的原因：Redis 广播是实时协作层，不是可靠事实源；事件重复投递不会重复修改画像或重复触发下游处理。</p>
+</section>
+
+<section class="memory-flow-grid">
+<article class="memory-flow-card">
+<span class="tag">更新实例</span>
+<h3>交易成功后的记忆更新顺序</h3>
+<ol class="memory-steps">
+<li><b>交易服务</b>提交 <code>fin_transaction</code>、持仓等业务数据；相关适当性、确认和操作记录留痕。</li>
+<li><b>Outbox</b>写入 <code>transaction_completed</code> 等领域事件，避免“库已提交但通知丢失”。</li>
+<li><b>消费者</b>失效 <code>profile:{customer_id}</code>，使下一次画像读取回源最新事实；必要时刷新风险投影。</li>
+<li><b>图谱同步</b>把变化投影到 Neo4j；若失败，重试表与定时任务保证可观察、可补偿。</li>
+<li><b>后续会话</b>投顾、客服或风控再按权限读取新状态，形成 Agent → Event → Memory → Agent 的闭环。</li>
+</ol>
+</article>
+<article class="memory-flow-card">
+<span class="tag risk">禁止路径</span>
+<h3>以下做法会破坏金融级一致性</h3>
+<ul class="strict-list">
+<li>Agent 直接把“用户说已购买”当作交易事实写进画像或 Neo4j。</li>
+<li>仅向 Redis 发布事件，却没有数据库 Outbox 和失败恢复记录。</li>
+<li>将情绪、市场新闻或模型推断直接上调 / 下调正式 C1–C5 风险等级。</li>
+<li>把原文件、元数据、向量检索结果拆开管理，导致答案无法追溯来源版本。</li>
+<li>缓存失效后仍把缓存当成权威数据，或将顾问对话上下文泄露给其他客户。</li>
+</ul>
+</article>
+</section>
+
+<h2>存储矩阵：什么该存在哪里</h2>
+<table class="memory-matrix">
+<thead><tr><th>记忆域</th><th>当前存储与代码依据</th><th>权威性 / 生命周期</th><th>使用原则</th></tr></thead>
+<tbody>
+<tr><td>会话消息</td><td><span class="code-map">app/memory/session_memory.py</span><br>Redis List + <code>conversation_archive</code> 降级/归档</td><td>Redis 30 分钟续期；MySQL 归档是长期留痕。代码尚未实现“绝对 24 小时上限”。</td><td>只用于对话连贯；按 owner_id、token 预算和数据脱敏处理。</td></tr>
+<tr><td>路由与实体</td><td><span class="code-map">context_manager/session_context.py</span><br><code>chat:v2:{actor_id}:{session_id}:context</code></td><td>Redis 7 天；Redis 不可用时进程内回退，重启会丢失；另可从 <code>fin_chat_session.context_json</code> 恢复已有持久化内容。</td><td>存 last_intent、last_agent、实体和待路由状态，不应存完整敏感业务事实。</td></tr>
+<tr><td>客户画像</td><td><span class="code-map">profile_service.py + profile_cache.py</span><br>Redis <code>profile:{customer_id}</code> + MySQL</td><td>MySQL 为事实源；Redis TTL 7 天，风评/持仓/大额交易/信号更新会失效缓存。</td><td>画像摘要可供 Agent 参考；正式风险等级遵循规则引擎和审计。</td></tr>
+<tr><td>动态风险</td><td><span class="code-map">event_bus.py</span><br><code>risk_flag</code>、<code>cs_risk_ctx</code>、<code>fin_risk_alert</code></td><td>MySQL 活动预警为事实；Redis 快速投影目前 24 小时 TTL。</td><td>用于敏感操作前置拦截和推荐降权；不能单独改变法定/制度风险评级。</td></tr>
+<tr><td>业务与审计</td><td><span class="code-map">model/entities.py</span><br>交易、持仓、推荐、工单、会话、Trace、反馈、Outbox</td><td>MySQL 可追溯事实；以事务、索引、消费账本维持一致性。</td><td>用于核查、重放、追责与质量分析，不能被缓存反向覆盖。</td></tr>
+<tr><td>知识记忆</td><td><span class="code-map">knowledge_service.py + rag_service.py</span><br>MinIO + <code>fin_knowledge_meta</code> + Milvus</td><td>原文件与元数据可追源；向量索引可重建；状态 / 版本 / expire_at 决定是否可用。</td><td>RAG 返回有来源的证据片段；知识命中不可替代实时产品和规则校验。</td></tr>
+<tr><td>关系图谱</td><td><span class="code-map">graph_sync.py + graph_sync_retry_service.py</span><br>Neo4j</td><td>MySQL 业务数据为上游权威；Neo4j 是可重建的关系投影，失败补偿最多 10 次后人工处理。</td><td>用于持仓关联、行业关系和解释；不可单独作为交易结算依据。</td></tr>
+</tbody>
+</table>
+
+<h2>差距清单与完善优先级</h2>
+<section class="memory-governance">
+<article class="card"><span class="tag">已实现</span><h3>对象归属与缓存失效</h3><p>会话键包含 actor_id；画像采用 Cache-Aside；风险、画像、交易变化会触发缓存失效或风险投影刷新。</p></article>
+<article class="card"><span class="tag">已实现</span><h3>事件可靠性基础</h3><p>Outbox 在提交后 Relay，消费者账本幂等；图谱失败可重试并进入人工处理队列。</p></article>
+<article class="card"><span class="tag warn">建议补强 · P0</span><h3>生命周期与敏感信息治理</h3><p>为待确认、预警索引、会话消息设置统一保留与清除策略；建立 PII 分级、字段级加密、检索脱敏与删除工单闭环。</p></article>
+<article class="card"><span class="tag warn">建议补强 · P1</span><h3>检索可控与质量校准</h3><p>记录每次召回来源、分数、版本和注入预算；定期评测 RAG 命中、图谱新鲜度、画像漂移与缓存一致性。</p></article>
+</section>
+
+<section class="memory-callout"><strong>最终架构结论：</strong>项目已经具备多层记忆和事件闭环的核心骨架。要达到金融级可上线标准，重点不是再增加一个“记忆库”，而是将每类数据的权威来源、访问主体、存活时间、失效条件、证据来源、可删除性和降级策略写成可执行的制度与代码。</section>
+
+<footer class="footer"><span>依据：当前项目代码、需求文档、ARCHITECTURE.md</span><span>代码核验范围：记忆、事件、画像、RAG、图谱与审计模块</span></footer>
+</main>
+</body>
+</html>
