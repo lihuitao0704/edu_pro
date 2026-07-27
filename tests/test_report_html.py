@@ -88,8 +88,13 @@ class ReportHtmlTest(unittest.TestCase):
             "不作为正式风险等级",
             "已实现",
             "建议补强",
+            "Mermaid 风格路径图",
+            "事件写入闭环",
         ):
             self.assertIn(anchor, text)
+        self.assertGreaterEqual(text.count('class="memory-mermaid"'), 2)
+        self.assertNotIn("严格结论", text)
+        self.assertNotIn("当前实现为 <b>MySQL 事务 Outbox", text)
         self.assertNotIn("Redis Stream / Kafka", text)
 
 
