@@ -506,6 +506,12 @@ class IntentService:
         if ("公司" in text or "总部" in text) and ("在哪" in text or "哪里" in text):
             return cls._build_route_decision(message, RouteTask.FAQ)
 
+        # 反洗钱/合规类 FAQ（知识在 faq_knowledge 中，不应路由到 policy_interpretation）
+        compliance_faq_keywords = ("反洗钱", "AML", "可疑交易", "大额交易报告",
+                                    "客户身份识别", "KYC")
+        if any(word in text for word in compliance_faq_keywords):
+            return cls._build_route_decision(message, RouteTask.FAQ)
+
         # Natural-language database mutations are never delegated to NL2SQL.
         # Block them before generic query markers such as "客户数据" can match.
         unsafe_data_mutation = (
