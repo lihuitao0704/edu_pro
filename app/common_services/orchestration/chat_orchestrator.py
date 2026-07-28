@@ -238,20 +238,34 @@ class ChatOrchestrator:
     @staticmethod
     def _is_sensitive_query(message: str) -> bool:
         """检测用户消息是否涉及敏感金融操作"""
-        # A question or an initial intention is not an executable transaction.
-        # Hard risk interception is reserved for a concrete final submission.
+        # 检测"大额"关键词
+        has_large_amount = "大额" in message or "大量" in message
+
+        # 检测具体金额
         has_amount = bool(
             re.search(r"\d+(?:\.\d+)?\s*(?:万|万元|元|份)", message)
         )
+
+        # 检测提交标记
         has_submit_marker = any(
             marker in message
             for marker in ("确认提交", "确认交易", "立即执行", "马上执行", "现在就提交")
         )
-        if not (has_amount and has_submit_marker):
-            return False
-        for pattern in _SENSITIVE_PATTERNS:
-            if re.search(pattern, message):
-                return True
+
+        # 检测转账/申购/赎回等关键词
+        has_transaction_keyword = any(
+            keyword in message
+            for keyword in ("转账", "申购", "赎回", "转出", "汇款")
+        )
+
+        # 满足以下任一条件即认为是敏感操作：
+        # 1. 包含"大额"或"大量" + 交易关键词
+        # 2. 包含具体金额 + 提交标记
+        if (has_large_amount and has_transaction_keyword):
+            return True
+        if (has_amount and has_submit_marker):
+            return True
+
         return False
 
     async def _check_risk_context(self, user_id: int, message: str) -> dict:

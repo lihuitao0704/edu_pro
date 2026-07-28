@@ -21,6 +21,7 @@ from app.model.entities import (
     FinTransaction,
     SysUser,
 )
+from app.utils.data_masking import mask_phone, mask_email, mask_id_card
 
 
 class CustomerAccountService:
@@ -51,6 +52,13 @@ class CustomerAccountService:
             return await self._balance(customer_id)
         if any(word in message for word in ("风险", "风评", "风险等级")):
             return await self._risk_profile(customer_id)
+        # 隐私信息查询（手机号、身份证、邮箱）
+        if any(word in message for word in ("手机号", "电话", "联系方式")):
+            return await self._phone(customer_id)
+        if any(word in message for word in ("身份证", "证件号")):
+            return await self._id_card(customer_id)
+        if any(word in message for word in ("邮箱", "邮件")):
+            return await self._email(customer_id)
         return await self._account_summary(customer_id)
 
     async def _account_summary(self, customer_id: int) -> dict[str, Any]:
@@ -89,6 +97,47 @@ class CustomerAccountService:
                 "balance": float(user.balance or 0),
                 "scope": "self",
             },
+        }
+
+    async def _phone(self, customer_id: int) -> dict[str, Any]:
+        user = await self.db.get(SysUser, customer_id)
+        if user is None or not user.phone:
+            return {
+                "reply": "您暂未绑定手机号，可在个人中心进行绑定。",
+                "data": {"customer_id": customer_id, "phone": None, "scope": "self"},
+            }
+        masked = mask_phone(user.phone)
+        # 不使用 Markdown 粗体标记，避免星号被解析
+        return {
+            "reply": f"您的绑定手机号为 {masked}。如需修改，请联系客服或前往个人中心。",
+            "data": {"customer_id": customer_id, "phone": masked, "scope": "self"},
+        }
+
+    async def _id_card(self, customer_id: int) -> dict[str, Any]:
+        user = await self.db.get(SysUser, customer_id)
+        if user is None or not user.id_card:
+            return {
+                "reply": "您暂未上传身份证信息，可在个人中心完成实名认证。",
+                "data": {"customer_id": customer_id, "id_card": None, "scope": "self"},
+            }
+        masked = mask_id_card(user.id_card)
+        # 不使用 Markdown 粗体标记，避免星号被解析
+        return {
+            "reply": f"您的身份证号为 {masked}。",
+            "data": {"customer_id": customer_id, "id_card": masked, "scope": "self"},
+        }
+
+    async def _email(self, customer_id: int) -> dict[str, Any]:
+        user = await self.db.get(SysUser, customer_id)
+        if user is None or not user.email:
+            return {
+                "reply": "您暂未绑定邮箱，可在个人中心进行绑定。",
+                "data": {"customer_id": customer_id, "email": None, "scope": "self"},
+            }
+        masked = mask_email(user.email)
+        return {
+            "reply": f"您的绑定邮箱为 **{masked}**。",
+            "data": {"customer_id": customer_id, "email": masked, "scope": "self"},
         }
 
     async def _risk_profile(self, customer_id: int) -> dict[str, Any]:

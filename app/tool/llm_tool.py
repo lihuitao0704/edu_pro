@@ -51,6 +51,7 @@ class LLMTool:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
+        skip_retry: bool = False,
     ) -> str:
         """
         同步对话（返回完整文本）
@@ -60,6 +61,7 @@ class LLMTool:
             temperature: 温度参数，默认使用配置值
             max_tokens: 最大 token 数，默认使用配置值
             model: 模型名称，默认使用配置值
+            skip_retry: 是否跳过重试（用于延迟敏感场景）
         Returns:
             LLM 回复文本
         """
@@ -68,6 +70,7 @@ class LLMTool:
             temperature=temperature or self.default_temperature,
             max_tokens=max_tokens or self.default_max_tokens,
             model=model or self.model,
+            skip_retry=skip_retry,
         )
         return response
 
@@ -77,12 +80,24 @@ class LLMTool:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         model: str = None,
+        skip_retry: bool = False,
     ) -> str:
-        """带指数退避重试的对话调用"""
+        """带指数退避重试的对话调用
+
+        Args:
+            messages: OpenAI 格式消息列表
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            model: 模型名称
+            skip_retry: 是否跳过重试（用于延迟敏感场景，如路由分类）
+        """
         model = model or self.model
         last_error = None
 
-        for attempt, delay in enumerate([0] + self.retry_delays):
+        # 如果 skip_retry=True，只尝试一次，不使用重试延迟
+        retry_attempts = [0] if skip_retry else [0] + self.retry_delays
+
+        for attempt, delay in enumerate(retry_attempts):
             if delay > 0:
                 logger.info(f"LLM 重试等待 {delay}s（第 {attempt} 次重试）")
                 await asyncio.sleep(delay)
@@ -203,7 +218,8 @@ class LLMTool:
             分类结果文本
         """
         messages = [{"role": "user", "content": prompt}]
-        return await self.chat(messages=messages, temperature=temperature, max_tokens=max_tokens)
+        # 分类任务对延迟敏感，跳过重试以避免在 asyncio.wait_for 超时内累积多次尝试
+        return await self.chat(messages=messages, temperature=temperature, max_tokens=max_tokens, skip_retry=True)
 
     async def chat_with_fallback(
         self,

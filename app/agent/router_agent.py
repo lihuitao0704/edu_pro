@@ -81,23 +81,44 @@ class RouterAgent:
             session_id = uuid.uuid4().hex
 
         # ── Step 0: 风控预检（C4联动）──
-        # 对于有预警的客户，敏感操作强制走客服Agent路径，确保风控提示能触达
-        risk_intercept = await self._risk_precheck(message, user_id, user_role)
-        if risk_intercept:
+        # high 风险客户：直接拦截，强制走客服 Agent，不执行操作
+        # warning 风险客户：不拦截路由，但强制走客服 Agent，附加二次确认提示
+        # 如果已经由上层风控预检处理过（decision_source="risk_precheck"），跳过此步骤
+        if route_decision and route_decision.decision_source == "risk_precheck":
+            # 已经由风控预检处理，直接使用提供的 route_decision
             logger.info(
-                f"风控预检拦截 | user={user_id} | msg={message[:50]}... | "
-                f"risk_flag={risk_intercept.get('risk_flag')}"
+                f"跳过风控预检（已由上层处理）| intent={route_decision.intent} | agent={route_decision.target_agent}"
             )
-            # 强制走客服Agent，由客服Agent的C4联动逻辑处理风控提示
-            result = await self._dispatch_customer_service(message, session_id, user_id)
-            return UnifiedChatResponse(
-                intent="risk_intercepted",
-                agent="customer_service",
-                confidence=1.0,
-                session_id=session_id,
-                reply=result.get("reply", ""),
-                data=result.get("data"),
-            )
+        else:
+            risk_intercept = await self._risk_precheck(message, user_id, user_role)
+            if risk_intercept:
+                risk_flag = risk_intercept.get("risk_flag")
+                logger.info(
+                    f"风控预检 | user={user_id} | risk_flag={risk_flag} | msg={message[:50]}..."
+                )
+                # 构造一个 EXECUTE 类型的 route_decision，让客服 Agent 知道这是交易操作
+                from app.model.route_decision import RouteDecision, RouteTask, RouteDomain
+                route_decision = RouteDecision(
+                    request_text=message,
+                    intent="business_operation",
+                    task=RouteTask.EXECUTE,
+                    domain=RouteDomain.TRANSACTION,
+                    target_agent="customer_service",
+                    confidence=1.0,
+                    decision_source="risk_precheck",
+                )
+                # 强制走客服Agent，由客服Agent的C4联动逻辑处理风控提示
+                result = await self._dispatch_customer_service(
+                    message, session_id, user_id, route_decision
+                )
+                return UnifiedChatResponse(
+                    intent="risk_intercepted" if risk_flag == "high" else "risk_warning",
+                    agent="customer_service",
+                    confidence=1.0,
+                    session_id=session_id,
+                    reply=result.get("reply", ""),
+                    data=result.get("data"),
+                )
 
         # ── Step 1: 生成一次顶层计划；单任务沿用原执行链，多任务安全汇总 ──
         import re
@@ -669,20 +690,20 @@ class RouterAgent:
         self, message: str, user_id: int, user_role: str = "客户"
     ) -> Optional[dict]:
         """
-        C4 风控预检：在路由前检查是否需要拦截
+        C4 风控预检：在路由前检查是否需要干预
 
-        拦截条件（同时满足）：
-        1. 用户角色为客户（员工不拦截）
-        2. 消息包含敏感操作关键词
-        3. 客户的 risk_flag 不为 normal（即 warning 或 high）
+        条件（同时满足）：
+        1. 用户角色为客户（员工不干预）
+        2. 消息包含敏感操作关键词（大额转账、赎回、申购等）
+        3. 客户的 risk_flag 为 warning/medium/high
 
         Returns:
-            命中时返回 {"risk_flag": "high"|"warning"}，未命中返回 None
+            命中时返回 {"risk_flag": "high"|"medium"|"warning"}，未命中返回 None
         """
         if user_role != "客户":
             return None
 
-        # 检测敏感操作（放宽条件：只要有敏感词即可，不强制要求金额+执行标记）
+        # 检测敏感操作（大额转账、赎回、申购等）
         has_sensitive = any(kw in message for kw in self._SENSITIVE_PATTERNS)
         if not has_sensitive:
             return None
@@ -701,8 +722,8 @@ class RouterAgent:
             if not profile_row:
                 return None
             risk_flag = profile_row[0]
-            # 只有 warning / high 才拦截
-            if risk_flag in ("warning", "high"):
+            # warning/medium/high 都需要干预
+            if risk_flag in ("warning", "medium", "high"):
                 logger.info(
                     f"C4风控预检命中 | user={user_id} | risk_flag={risk_flag} | msg={message[:50]}"
                 )

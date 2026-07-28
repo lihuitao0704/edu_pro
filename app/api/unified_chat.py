@@ -289,58 +289,153 @@ async def unified_chat_stream_v2(
     input_decision = InputSafetyFilter().inspect(req.message)
     routing_message = input_decision.sanitized_text
     if input_decision.blocked:
-        # ChatOrchestrator owns the standard safety-block response.
-        route_decision = None
-        route_plan = None
-        intent = "safety_block"
-        confidence = 1.0
-    else:
-        try:
-            from app.service.intent_service import get_intent_service
-            from app.service.route_validator import get_route_validator
+        # 输入被拦截，直接返回安全提示
+        logger.info(f"输入安全拦截 | user={actor_id} | rules={input_decision.matched_rules}")
 
-            intent_svc = get_intent_service()
-            actor_role = get_request_role_from_user(user)
-            route_context = await MemoryManager(db=db).load_context(
-                session_id, actor_id
+        async def safety_block_stream():
+            yield {
+                "event": "meta",
+                "data": json.dumps({
+                    "agent": "safety_guard",
+                    "session_id": session_id,
+                    "intent": "safety_block",
+                }, ensure_ascii=False),
+            }
+            yield {
+                "event": "delta",
+                "data": json.dumps({"content": input_decision.user_message}, ensure_ascii=False),
+            }
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "reply": input_decision.user_message,
+                    "session_id": session_id,
+                }, ensure_ascii=False),
+            }
+
+        return EventSourceResponse(safety_block_stream())
+    else:
+        # ── Step 0: 风控预检（C4联动）──
+        # 在意图分类前拦截高风险用户的敏感操作
+        actor_role = get_request_role_from_user(user)
+        risk_intercept = None
+        logger.info(f"风控预检开始 | actor_role={actor_role} | actor_id={actor_id} | message={routing_message[:50]}")
+
+        if actor_role == "客户":
+            from app.agent.router_agent import RouterAgent
+            router_temp = RouterAgent(db)
+            risk_intercept = await router_temp._risk_precheck(
+                routing_message, actor_id, actor_role
             )
-            route_plan = await intent_svc.plan_route(
-                routing_message,
-                user_role=actor_role,
-                context=route_context,
+            logger.info(f"风控预检结果 | risk_intercept={risk_intercept}")
+
+        if risk_intercept:
+            # 风控预检命中：流式处理
+            from app.model.route_decision import RouteDecision, RouteTask, RouteDomain
+            from app.agent.customer_agent import get_customer_service_agent
+
+            risk_flag = risk_intercept.get("risk_flag")
+            logger.info(
+                f"流式入口风控预检命中 | user={actor_id} | risk_flag={risk_flag} | 流式处理"
             )
-            route_plan.tasks = [
-                get_route_validator().validate(
-                    decision,
+
+            # 使用流式输出
+            async def risk_event_stream():
+                customer_agent = get_customer_service_agent(db)
+                final_reply = ""
+
+                async for event in customer_agent.handle_stream(
+                    session_id=session_id,
+                    user_id=actor_id,
+                    message=routing_message,
+                    actor_id=actor_id,
+                    route_task="EXECUTE",
+                    route_domain="TRANSACTION",
+                ):
+                    evt_type = event.get("type", "delta")
+
+                    if evt_type == "meta":
+                        yield {
+                            "event": "meta",
+                            "data": json.dumps({
+                                "agent": "customer_service",
+                                "session_id": session_id,
+                                "intent": "risk_intercepted" if risk_flag == "high" else "risk_warning",
+                            }, ensure_ascii=False),
+                        }
+                    elif evt_type == "delta":
+                        content = event.get("content", "")
+                        final_reply += content
+                        yield {
+                            "event": "delta",
+                            "data": json.dumps({"content": content}, ensure_ascii=False),
+                        }
+                    elif evt_type == "done":
+                        final_reply = event.get("reply", final_reply)
+                        yield {
+                            "event": "done",
+                            "data": json.dumps({
+                                "reply": final_reply,
+                                "session_id": session_id,
+                            }, ensure_ascii=False),
+                        }
+
+                # 归档对话
+                try:
+                    safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+                    await MemoryService(db).archive_turn(
+                        session_id, actor_id, "customer_service", safe_input, final_reply
+                    )
+                except Exception as exc:
+                    logger.warning("风控流式归档失败: %s", exc)
+
+            return EventSourceResponse(risk_event_stream())
+        else:
+            try:
+                from app.service.intent_service import get_intent_service
+                from app.service.route_validator import get_route_validator
+
+                intent_svc = get_intent_service()
+                route_context = await MemoryManager(db=db).load_context(
+                    session_id, actor_id
+                )
+                route_plan = await intent_svc.plan_route(
+                    routing_message,
                     user_role=actor_role,
                     context=route_context,
                 )
-                for decision in route_plan.tasks
-            ]
-            route_decision = (
-                route_plan.tasks[0] if not route_plan.is_multi_intent else None
-            )
-            if (
-                route_decision is not None
-                and route_decision.intent == "investment_recommendation"
-                and actor_role == "客户"
-            ):
-                route_decision.entities["customer_id"] = actor_id
-            intent = (
-                "multi_intent"
-                if route_plan.is_multi_intent
-                else route_decision.intent
-            )
-            confidence = min(
-                (decision.confidence for decision in route_plan.tasks),
-                default=0.0,
-            )
-        except Exception as exc:
-            logger.warning("流式入口路由预判失败，交由编排层澄清: %s", exc)
-            route_decision = None
-            route_plan = None
-            intent = "clarification"
-            confidence = 0.0
+                route_plan.tasks = [
+                    get_route_validator().validate(
+                        decision,
+                        user_role=actor_role,
+                        context=route_context,
+                    )
+                    for decision in route_plan.tasks
+                ]
+                route_decision = (
+                    route_plan.tasks[0] if not route_plan.is_multi_intent else None
+                )
+                if (
+                    route_decision is not None
+                    and route_decision.intent == "investment_recommendation"
+                    and actor_role == "客户"
+                ):
+                    route_decision.entities["customer_id"] = actor_id
+                intent = (
+                    "multi_intent"
+                    if route_plan.is_multi_intent
+                    else route_decision.intent
+                )
+                confidence = min(
+                    (decision.confidence for decision in route_plan.tasks),
+                    default=0.0,
+                )
+            except Exception as exc:
+                logger.warning("流式入口路由预判失败，交由编排层澄清: %s", exc)
+                route_decision = None
+                route_plan = None
+                intent = "clarification"
+                confidence = 0.0
 
     # ── 投顾意图 → 真流式 ──
     if intent == "investment_recommendation":
@@ -469,7 +564,65 @@ async def unified_chat_stream_v2(
 
         return EventSourceResponse(advisor_event_stream())
 
-    # ── 非投顾意图 → 回退到旧流式（ChatOrchestrator 阻塞后分块）──
+    # ── 客服意图 → 真流式（CustomerServiceAgent 流式输出）──
+    # 只包括客服 Agent 能处理的意图，其他意图走各自的处理逻辑
+    if intent in ("product_faq", "chitchat", "risk_intercepted", "risk_warning"):
+        from app.agent.customer_agent import get_customer_service_agent
+
+        async def customer_event_stream():
+            customer_agent = get_customer_service_agent(db)
+            final_reply = ""
+
+            async for event in customer_agent.handle_stream(
+                session_id=session_id,
+                user_id=actor_id,
+                message=routing_message,
+                actor_id=actor_id,
+                route_task=route_decision.task.value if route_decision else None,
+                route_domain=route_decision.domain.value if route_decision else None,
+            ):
+                evt_type = event.get("type", "delta")
+
+                if evt_type == "meta":
+                    yield {
+                        "event": "meta",
+                        "data": json.dumps({
+                            "agent": event.get("agent", "customer_service"),
+                            "session_id": session_id,
+                            "intent": event.get("intent", intent),
+                        }, ensure_ascii=False),
+                    }
+                elif evt_type == "delta":
+                    content = event.get("content", "")
+                    final_reply += content
+                    yield {
+                        "event": "delta",
+                        "data": json.dumps({"content": content}, ensure_ascii=False),
+                    }
+                elif evt_type == "done":
+                    final_reply = event.get("reply", final_reply)
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({
+                            "reply": final_reply,
+                            "session_id": session_id,
+                        }, ensure_ascii=False),
+                    }
+
+            # 归档对话
+            try:
+                safe_input = InputSafetyFilter().inspect(req.message).sanitized_text
+                if intent != "safety_block":
+                    await MemoryService(db).archive_turn(
+                        session_id, actor_id, "customer_service", safe_input, final_reply
+                    )
+                await PlatformPersistenceService(db).persist_turn(actor_id, safe_input, result=None)
+            except Exception as exc:
+                logger.warning("客服流式归档失败: %s", exc)
+
+        return EventSourceResponse(customer_event_stream())
+
+    # ── 其他意图 → 回退到旧流式（ChatOrchestrator 阻塞后分块）──
     try:
         orchestrator = ChatOrchestrator(router=RouterAgent(db), db=db)
         result = await orchestrator.handle(
