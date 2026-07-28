@@ -85,7 +85,7 @@ class RiskMonitorService:
             return "medium"
         return "high"
 
-    def build_alert(self, tx: dict, triggered: list[BaseAMLRule], level: str, confidence: float) -> dict:
+    def build_alert(self, tx: dict, triggered: list[BaseAMLRule], level: str, confidence: float, anomaly_score: float = 0.0) -> dict:
         """组装预警对象（含可解释性增强：每条规则带触发条件说明）"""
         rule_list = [{"rule_id": r.rule_id, "rule_name": r.rule_name, "risk_level": r.risk_level,
                       "trigger_condition": r.trigger_condition} for r in triggered]
@@ -97,6 +97,7 @@ class RiskMonitorService:
             "alert_level": level,
             "trigger_rules": rule_list,
             "confidence": round(confidence, 2),
+            "anomaly_score": round(anomaly_score, 4),
             "summary": f"客户{tx['customer_id']}触发{len(triggered)}条规则：{names}",
             "recommendation": rec.get(level, ""),
             "status": "pending",
@@ -111,7 +112,7 @@ class RiskMonitorService:
             alert_type=first_rule,
             alert_level=alert["alert_level"],
             trigger_detail=alert["summary"],
-            transaction_ids={"tx_id": alert.get("transaction_id", ""), "trigger_rules": alert["trigger_rules"]},
+            transaction_ids={"tx_id": alert.get("transaction_id", ""), "trigger_rules": alert["trigger_rules"], "anomaly_score": alert.get("anomaly_score", 0)},
             status="pending",
             create_time=datetime.now(),
         )
@@ -210,11 +211,15 @@ class RiskMonitorService:
             stmt = stmt.where(FinRiskAlert.alert_level == level)
         if status:
             stmt = stmt.where(FinRiskAlert.status == status)
+        # 先查总数
+        from sqlalchemy import func, select as sa_select
+        count_stmt = sa_select(func.count()).select_from(stmt.subquery())
+        total_result = await db.execute(count_stmt)
+        total = total_result.scalar()
+        # SQL层分页
+        stmt = stmt.limit(pagesize).offset((page - 1) * pagesize)
         result = await db.execute(stmt)
-        all_alerts = result.scalars().all()
-        total = len(all_alerts)
-        start = (page - 1) * pagesize
-        return total, [_to_dict(a) for a in all_alerts[start:start + pagesize]]
+        return total, [_to_dict(a) for a in result.scalars().all()]
 
     async def get_alert(self, db: AsyncSession, alert_id: str) -> Optional[dict]:
         """查询单条预警（按主键id）"""
@@ -434,5 +439,6 @@ def _to_dict(a: FinRiskAlert) -> dict:
         "trigger_rules": tx_ids.get("trigger_rules", []),
         "summary": a.trigger_detail,
         "status": a.status,
+        "anomaly_score": tx_ids.get("anomaly_score", 0),
         "created_at": a.create_time.isoformat() if a.create_time else "",
     }

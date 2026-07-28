@@ -60,6 +60,7 @@ export interface RiskAlert {
   status: string
   created_at: string
   confidence?: number
+  anomaly_score?: number
   alert_type?: string
 }
 
