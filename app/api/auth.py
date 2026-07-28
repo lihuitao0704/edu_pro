@@ -144,6 +144,18 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         },
     )
     await db.flush()
+
+    # 注册时自动创建空画像记录，风险等级置为占位值，待风评问卷填写后补全
+    await db.execute(
+        text(
+            "INSERT INTO fin_customer_profile "
+            "(customer_id, risk_level_code, risk_level_name, create_time, update_time) "
+            "VALUES (:cid, :rlc, :rln, NOW(), NOW())"
+        ),
+        {"cid": int(result.lastrowid), "rlc": "C3", "rln": "平衡型"},
+    )
+    await db.flush()
+
     return success(
         data={
             "user_id": int(result.lastrowid),
