@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>金融智能助理｜项目框架与多 Agent 协同总览</title>
+  <style>
+    :root{--bg:#020617;--surface:#0f172a;--border:#64748b;--text:#f8fafc;--muted:#b6c2d4;--blue:#60a5fa;--cyan:#67e8f9;--green:#86efac;--amber:#fcd34d;--violet:#c4b5fd;--red:#fda4af;--line:#7c8aa0}*{box-sizing:border-box}html,body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font-family:Inter,"Microsoft YaHei",Arial,sans-serif}body{min-height:100vh;background-image:linear-gradient(rgba(71,85,105,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(71,85,105,.09) 1px,transparent 1px);background-size:32px 32px}header{position:sticky;top:0;z-index:4;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:15px 26px;background:rgba(2,6,23,.94);border-bottom:1px solid #334155;backdrop-filter:blur(10px)}h1{margin:0;font-size:18px;letter-spacing:.02em}.sub{margin-top:3px;color:var(--muted);font-size:12px}.legend{display:flex;flex-wrap:wrap;gap:14px;color:#cbd5e1;font-size:12px}.swatch{display:inline-block;width:26px;border-top:2px solid var(--line);vertical-align:middle;margin-right:5px}.swatch.event{border-color:#fda4af;border-top-style:dashed}.swatch.data{border-color:#67e8f9;border-top-style:dotted}.hint{padding:10px 26px;color:#94a3b8;font-size:12px;background:rgba(15,23,42,.76);border-bottom:1px solid #1e293b}.viewport{overflow:auto;padding:22px;min-height:calc(100vh - 105px)}svg{display:block;width:1920px;height:1280px;margin:auto;background:radial-gradient(circle at 50% 35%,rgba(30,58,138,.17),transparent 43%);border:1px solid #1e293b;box-shadow:0 18px 70px rgba(0,0,0,.45)}.cluster{fill:rgba(15,23,42,.55);stroke:#334155;stroke-width:1.3}.cluster-title{fill:#94a3b8;font-size:15px;font-weight:700;letter-spacing:1.4px}.node rect{fill:#0f172a;stroke:#64748b;stroke-width:1.35;rx:9}.node text{fill:#f8fafc;text-anchor:middle;font-size:14px;font-weight:650}.node .small{fill:#cbd5e1;font-size:11.5px;font-weight:400}.node.front rect{stroke:#60a5fa;fill:#10213e}.node.orch rect{stroke:#c4b5fd;fill:#20183b}.node.agent rect{stroke:#86efac;fill:#10281e}.node.control rect{stroke:#fcd34d;fill:#302710}.node.event rect{stroke:#fda4af;fill:#351524}.node.data rect{stroke:#67e8f9;fill:#102b34}.node.output rect{stroke:#c4b5fd;fill:#211738}.node.diamond polygon{fill:#1d2d4e;stroke:#60a5fa;stroke-width:1.5}.node.diamond text{font-size:13px}.flow{fill:none;stroke:#7c8aa0;stroke-width:1.35;marker-end:url(#arrow)}.flow.blue{stroke:#60a5fa}.flow.green{stroke:#86efac}.flow.event{stroke:#fda4af;stroke-width:1.5;stroke-dasharray:7 6;marker-end:url(#arrow-red)}.flow.data{stroke:#67e8f9;stroke-width:1.2;stroke-dasharray:2 5;marker-end:url(#arrow-cyan)}.label{fill:#cbd5e1;font-size:11.5px}.label.event{fill:#fda4af}.label.green{fill:#86efac}.title{fill:#f8fafc;font-size:29px;font-weight:800;letter-spacing:.6px}.subtitle{fill:#94a3b8;font-size:14px}.foot{fill:#64748b;font-size:11px}.rule{stroke:#334155;stroke-width:1}.badge{fill:#0b1730;stroke:#334155;stroke-width:1}.badge-text{fill:#bae6fd;font-size:12px;font-weight:650}
+    @media(max-width:760px){header{align-items:flex-start;flex-direction:column;padding:13px 16px}.viewport{padding:12px}.hint{padding:9px 16px}.legend{gap:9px}svg{margin:0;transform-origin:top left;transform:scale(.58);margin-bottom:-538px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>金融智能助理｜项目框架与多 Agent 协同总览</h1><div class="sub">代码实况版 · FastAPI + Vue 3 · 统一会话编排 · MySQL Outbox + Redis Pub/Sub</div></div>
+    <div class="legend"><span><i class="swatch"></i>同步主调用</span><span><i class="swatch event"></i>异步领域事件</span><span><i class="swatch data"></i>数据 / 知识访问</span></div>
+  </header>
+  <div class="hint">建议在电脑浏览器中打开并使用 90%–110% 缩放查看；该图适合横向投屏答辩。节点内容均按当前项目实现校正，风险红线表示“预警—画像/投顾/客服”联动。</div>
+  <main class="viewport" aria-label="金融智能助理架构总览图">
+  <svg viewBox="0 0 1920 1280" role="img" aria-label="金融智能助理项目框架与多 Agent 协同架构图">
+    <defs>
+      <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#7c8aa0"/></marker>
+      <marker id="arrow-red" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#fda4af"/></marker>
+      <marker id="arrow-cyan" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#67e8f9"/></marker>
+    </defs>
+    <text x="960" y="42" class="title" text-anchor="middle">金融智能助理 · 端到端运行时架构</text>
+    <text x="960" y="68" class="subtitle" text-anchor="middle">从用户请求、合规决策到多 Agent 联动、事件闭环与数据基础设施</text>
+
+    <rect x="610" y="91" width="700" height="104" class="cluster" rx="14"/><text x="630" y="117" class="cluster-title">01 · 用户与前端交互</text>
+    <g class="node front"><rect x="658" y="128" width="160" height="48"/><text x="738" y="149"><tspan x="738">客户 / 理财顾问</tspan><tspan class="small" x="738" dy="16">风控专员 / 管理员</tspan></text></g>
+    <g class="node front"><rect x="930" y="118" width="300" height="68"/><text x="1080" y="143"><tspan x="1080">Vue 3 统一工作台</tspan><tspan class="small" x="1080" dy="17">聊天 · 投顾 · 风控 · 运营 · 数据分析</tspan></text></g>
+    <path class="flow blue" d="M818 152 H930"/>
+
+    <rect x="300" y="230" width="1320" height="118" class="cluster" rx="14"/><text x="322" y="256" class="cluster-title">02 · API、身份与安全边界</text>
+    <g class="node front"><rect x="398" y="274" width="245" height="54"/><text x="520" y="295"><tspan x="520">FastAPI 统一入口</tspan><tspan class="small" x="520" dy="16">REST · SSE · 静态前端托管</tspan></text></g>
+    <g class="node control"><rect x="748" y="264" width="210" height="72"/><text x="853" y="288"><tspan x="853">认证与审计</tspan><tspan class="small" x="853" dy="16">JWT · RBAC · 操作日志</tspan><tspan class="small" x="853" dy="14">客户数据域隔离</tspan></text></g>
+    <g class="node control"><rect x="1065" y="264" width="210" height="72"/><text x="1170" y="288"><tspan x="1170">安全护栏</tspan><tspan class="small" x="1170" dy="16">输入脱敏 · 输出合规</tspan><tspan class="small" x="1170" dy="14">敏感金融操作保护</tspan></text></g>
+    <g class="node output"><rect x="1378" y="274" width="158" height="54"/><text x="1457" y="295"><tspan x="1457">SSE / API 响应</tspan><tspan class="small" x="1457" dy="16">流式卡片与结果</tspan></text></g>
+    <path class="flow blue" d="M1080 186 V252 H520 V274"/><path class="flow" d="M643 301 H748"/><path class="flow" d="M958 301 H1065"/><path class="flow" d="M1275 301 H1378"/>
+
+    <rect x="265" y="387" width="1390" height="169" class="cluster" rx="14"/><text x="287" y="413" class="cluster-title">03 · 统一会话编排与智能路由</text>
+    <g class="node orch"><rect x="340" y="442" width="208" height="71"/><text x="444" y="466"><tspan x="444">Chat Orchestrator</tspan><tspan class="small" x="444" dy="17">上下文加载 · 流程聚合</tspan><tspan class="small" x="444" dy="14">风险上下文检查</tspan></text></g>
+    <g class="node orch"><rect x="625" y="442" width="150" height="71"/><text x="700" y="466"><tspan x="700">MemoryManager</tspan><tspan class="small" x="700" dy="17">会话记忆</tspan><tspan class="small" x="700" dy="14">实体与指代解析</tspan></text></g>
+    <g class="node orch"><rect x="850" y="442" width="160" height="71"/><text x="930" y="466"><tspan x="930">TraceService</tspan><tspan class="small" x="930" dy="17">Trace / Span</tspan><tspan class="small" x="930" dy="14">时延与审计追踪</tspan></text></g>
+    <g class="node diamond"><polygon points="1165,434 1242,477 1165,520 1088,477"/><text x="1165" y="472"><tspan x="1165">Router Agent</tspan><tspan x="1165" dy="15">意图识别 / 路由</tspan></text></g>
+    <g class="node orch"><rect x="1335" y="442" width="225" height="71"/><text x="1447" y="466"><tspan x="1447">RouteValidator</tspan><tspan class="small" x="1447" dy="17">复合任务计划</tspan><tspan class="small" x="1447" dy="14">角色可达性校验</tspan></text></g>
+    <path class="flow" d="M520 328 V442"/><path class="flow" d="M548 477 H625"/><path class="flow" d="M775 477 H850"/><path class="flow" d="M1010 477 H1088"/><path class="flow blue" d="M1242 477 H1335"/>
+
+    <rect x="53" y="603" width="660" height="265" class="cluster" rx="14"/><text x="75" y="629" class="cluster-title">04A · 确定性业务路由：资金与敏感操作</text>
+    <g class="node control"><rect x="93" y="671" width="178" height="64"/><text x="182" y="695"><tspan x="182">运营 / 交易 Agent</tspan><tspan class="small" x="182" dy="16">申购 · 赎回 · 转账</tspan><tspan class="small" x="182" dy="14">资料更新 · 工单</tspan></text></g>
+    <g class="node control"><rect x="330" y="659" width="175" height="88"/><text x="417" y="684"><tspan x="417">同步控制闸门</tspan><tspan class="small" x="417" dy="16">权限 · 二次确认</tspan><tspan class="small" x="417" dy="14">适当性 · 交易前风控</tspan><tspan class="small" x="417" dy="14">allow / review / block</tspan></text></g>
+    <g class="node event"><rect x="557" y="671" width="120" height="64"/><text x="617" y="696"><tspan x="617">交易 / 工单</tspan><tspan class="small" x="617" dy="16">业务事实落库</tspan><tspan class="small" x="617" dy="14">审计记录</tspan></text></g>
+    <g class="node agent"><rect x="200" y="783" width="190" height="56"/><text x="295" y="805"><tspan x="295">RiskMonitorService</tspan><tspan class="small" x="295" dy="16">AML 规则、分级、预警与工单</tspan></text></g>
+    <g class="node event"><rect x="463" y="783" width="174" height="56"/><text x="550" y="805"><tspan x="550">风险预警事件</tspan><tspan class="small" x="550" dy="16">risk.alert.created / lifecycle</tspan></text></g>
+    <path class="flow" d="M1335 513 C1040 590 560 618 182 671"/><path class="flow" d="M271 703 H330"/><path class="flow" d="M505 703 H557"/><path class="flow green" d="M417 747 V783 H390"/><path class="flow event" d="M390 811 H463"/><path class="flow event" d="M617 735 V783"/><text x="525" y="761" class="label event">中高风险才进入领域事件链</text>
+
+    <rect x="755" y="603" width="1112" height="265" class="cluster" rx="14"/><text x="777" y="629" class="cluster-title">04B · 常规咨询路由：多 Agent 协作与并行能力</text>
+    <g class="node agent"><rect x="795" y="672" width="160" height="64"/><text x="875" y="695"><tspan x="875">客服 Agent</tspan><tspan class="small" x="875" dy="16">FAQ / 政策问答</tspan><tspan class="small" x="875" dy="14">情绪识别 / 转人工</tspan></text></g>
+    <g class="node agent"><rect x="1004" y="672" width="160" height="64"/><text x="1084" y="695"><tspan x="1084">投顾 Agent</tspan><tspan class="small" x="1084" dy="16">推荐 / 配置 / 对比</tspan><tspan class="small" x="1084" dy="14">持仓与图谱分析</tspan></text></g>
+    <g class="node agent"><rect x="1213" y="672" width="160" height="64"/><text x="1293" y="695"><tspan x="1293">画像 Agent</tspan><tspan class="small" x="1293" dy="16">风险等级 / 偏好</tspan><tspan class="small" x="1293" dy="14">客户画像摘要</tspan></text></g>
+    <g class="node agent"><rect x="1422" y="672" width="160" height="64"/><text x="1502" y="695"><tspan x="1502">数据分析 Agent</tspan><tspan class="small" x="1502" dy="16">NL2SQL 只读查询</tspan><tspan class="small" x="1502" dy="14">亏损 / 高频交易洞察</tspan></text></g>
+    <g class="node agent"><rect x="1631" y="672" width="190" height="64"/><text x="1726" y="695"><tspan x="1726">风控查询能力</tspan><tspan class="small" x="1726" dy="16">预警查询 / 处置</tspan><tspan class="small" x="1726" dy="14">风险评估提醒</tspan></text></g>
+    <g class="node event"><rect x="975" y="783" width="180" height="56"/><text x="1065" y="805"><tspan x="1065">客户情绪 / 需求事件</tspan><tspan class="small" x="1065" dy="16">customer_sentiment</tspan></text></g>
+    <g class="node event"><rect x="1228" y="783" width="180" height="56"/><text x="1318" y="805"><tspan x="1318">推荐反馈事件</tspan><tspan class="small" x="1318" dy="16">recommendation_feedback</tspan></text></g>
+    <g class="node event"><rect x="1481" y="783" width="180" height="56"/><text x="1571" y="805"><tspan x="1571">分析洞察事件</tspan><tspan class="small" x="1571" dy="16">analytics_insight</tspan></text></g>
+    <path class="flow" d="M1447 513 C1380 580 1020 610 875 672"/><path class="flow" d="M1447 513 C1410 580 1150 620 1084 672"/><path class="flow" d="M1447 513 C1430 580 1300 620 1293 672"/><path class="flow" d="M1447 513 C1480 580 1502 620 1502 672"/><path class="flow" d="M1447 513 C1570 580 1726 610 1726 672"/>
+    <path class="flow event" d="M875 736 C900 756 990 766 1065 783"/><path class="flow event" d="M1084 736 C1110 754 1230 766 1318 783"/><path class="flow event" d="M1502 736 C1510 754 1550 766 1571 783"/>
+
+    <rect x="160" y="914" width="1600" height="115" class="cluster" rx="14"/><text x="182" y="940" class="cluster-title">05 · 可靠领域事件协作：提交后广播、幂等消费</text>
+    <g class="node event"><rect x="260" y="959" width="205" height="52"/><text x="362" y="980"><tspan x="362">MySQL AgentEventOutbox</tspan><tspan class="small" x="362" dy="16">与业务事务同提交</tspan></text></g>
+    <g class="node event"><rect x="590" y="959" width="180" height="52"/><text x="680" y="980"><tspan x="680">Outbox Relay</tspan><tspan class="small" x="680" dy="16">锁定、发布、重试</tspan></text></g>
+    <g class="node event"><rect x="895" y="949" width="230" height="72"/><text x="1010" y="973"><tspan x="1010">Redis Pub/Sub</tspan><tspan class="small" x="1010" dy="16">event:agent_domain</tspan><tspan class="small" x="1010" dy="14">标准 AgentDomainEvent</tspan></text></g>
+    <g class="node event"><rect x="1265" y="959" width="225" height="52"/><text x="1377" y="980"><tspan x="1377">独立消费者 + 幂等台账</tspan><tspan class="small" x="1377" dy="16">event_id + consumer</tspan></text></g>
+    <g class="node state"><rect x="1585" y="949" width="140" height="72"/><text x="1655" y="973"><tspan x="1655">联动结果</tspan><tspan class="small" x="1655" dy="16">画像风险标记</tspan><tspan class="small" x="1655" dy="14">投顾约束 / 客服上下文</tspan></text></g>
+    <path class="flow event" d="M550 839 C515 885 430 915 362 959"/><path class="flow event" d="M1065 839 C900 890 600 910 465 959"/><path class="flow event" d="M1318 839 C1100 890 640 915 465 959"/><path class="flow event" d="M1571 839 C1140 890 680 915 465 959"/>
+    <path class="flow event" d="M465 985 H590"/><path class="flow event" d="M770 985 H895"/><path class="flow event" d="M1125 985 H1265"/><path class="flow event" d="M1490 985 H1585"/>
+
+    <rect x="75" y="1080" width="1770" height="150" class="cluster" rx="14"/><text x="97" y="1107" class="cluster-title">06 · AI 能力、知识与数据基础设施</text>
+    <g class="node data"><rect x="135" y="1140" width="210" height="58"/><text x="240" y="1162"><tspan x="240">AI 能力层</tspan><tspan class="small" x="240" dy="16">LLM · Prompt · RAG · GraphRAG</tspan></text></g>
+    <g class="node data"><rect x="405" y="1140" width="185" height="58"/><text x="497" y="1162"><tspan x="497">MySQL</tspan><tspan class="small" x="497" dy="16">业务、画像、会话、审计</tspan></text></g>
+    <g class="node data"><rect x="650" y="1140" width="185" height="58"/><text x="742" y="1162"><tspan x="742">Redis</tspan><tspan class="small" x="742" dy="16">会话、缓存、Pub/Sub</tspan></text></g>
+    <g class="node data"><rect x="895" y="1140" width="185" height="58"/><text x="987" y="1162"><tspan x="987">Milvus</tspan><tspan class="small" x="987" dy="16">FAQ / 产品 / 政策向量</tspan></text></g>
+    <g class="node data"><rect x="1140" y="1140" width="185" height="58"/><text x="1232" y="1162"><tspan x="1232">Neo4j</tspan><tspan class="small" x="1232" dy="16">客户 · 持仓 · 产品图谱</tspan></text></g>
+    <g class="node data"><rect x="1385" y="1140" width="185" height="58"/><text x="1477" y="1162"><tspan x="1477">MinIO</tspan><tspan class="small" x="1477" dy="16">原始知识文档</tspan></text></g>
+    <g class="node output"><rect x="1630" y="1140" width="155" height="58"/><text x="1707" y="1162"><tspan x="1707">统一输出</tspan><tspan class="small" x="1707" dy="16">增强、合规、追踪、归档</tspan></text></g>
+    <path class="flow data" d="M1084 736 C970 930 500 1040 240 1140"/><path class="flow data" d="M1293 736 C1200 940 700 1040 497 1140"/><path class="flow data" d="M875 736 C810 940 760 1060 742 1140"/><path class="flow data" d="M875 736 C920 960 970 1060 987 1140"/><path class="flow data" d="M1084 736 C1140 950 1215 1060 1232 1140"/><path class="flow data" d="M875 736 C1070 990 1390 1070 1477 1140"/>
+    <path class="flow blue" d="M1378 1011 C1450 1070 1640 1095 1707 1140"/>
+    <text x="960" y="1262" class="foot" text-anchor="middle">事实校准：事件总线为 Redis Pub/Sub + MySQL Outbox，不是 Kafka / Redis Stream；正式风险等级 C1–C5 与动态 risk_flag 分离。</text>
+  </svg>
+  </main>
+</body>
+</html>

@@ -1,0 +1,78 @@
+问题1：
+客户身份提问：我要转账
+回复：
+我已理解您想办理转账。AI 助手可以帮助核对条件和整理参数，但不会在聊天中直接提交资金操作。请在交易页面核对产品、金额、费用和风险提示后，由您本人确认；如账户存在风险限制，页面会提示人工复核。
+
+问题2：
+业务或用户身份提问：我想申购消费货币现金管理01号，3000块
+回答：
+1. EXECUTE · TRANSACTION
+该子任务会修改业务数据。为避免复合指令误操作，请将这项操作单独发送，系统会展示参数并要求二次确认。
+
+2. UNKNOWN · GENERAL
+我暂时无法准确判断你的目标。请说明你是想查询信息、获取分析建议，还是执行具体业务操作。
+
+问题3：
+客户经理身份提问：帮王浩申购3万元消费货币现金管理01号
+回复：工具执行异常: (pymysql.err.OperationalError) (1054, "Unknown column 'risk_level' in 'field list'")
+[SQL: SELECT risk_level, risk_score, total_assets, investment_experience, confidence_score FROM fin_customer_profile WHERE customer_id = %s]
+[parameters: (3,)]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+📊 产品详情:
+• 名称: 消费货币现金管理01号
+• 代码: PROD-0001
+• 类型: 货币型
+• 风险等级: R1
+• 预期收益: 13.14%
+• 起投金额: 4781.36 元
+
+问题4：用户身份提问：帮我申购3万元消费货币现金管理01号
+回复：可以，我先帮您选到合适的产品，再进入购买确认。请告诉我投资金额、期望期限和风险偏好；您也可以直接说“我有50万，希望稳健配置3年”。
+
+问题5：
+用户身份提问：周末晚上申购
+回复：
+我暂时无法准确判断你的目标。请说明你是想查询信息、获取分析建议，还是执行具体业务操作。
+
+问题6：
+客户经理身份提问：赎回郭丽的消费货币现金管理01号
+回复：
+💼 客户持仓:
+• 科技混合灵活配置55号: 9712.11 份, 市值 527068.0 元, 收益 0.06%
+• 新能源货币现金管理89号: 25620.23 份, 市值 294770.29 元, 收益 0.04%
+• 新能源混合灵活配置87号: 31515.45 份, 市值 66037.46 元, 收益 -0.09%
+工具执行异常: (pymysql.err.OperationalError) (1054, "Unknown column 'risk_level' in 'field list'")
+[SQL: SELECT risk_level, risk_score, total_assets, investment_experience, confidence_score FROM fin_customer_profile WHERE customer_id = %s]
+[parameters: (1,)]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+📊 产品详情:
+• 名称: 消费货币现金管理01号
+• 代码: PROD-0001
+• 类型: 货币型
+• 风险等级: R1
+• 预期收益: 13.14%
+• 起投金额: 4781.36 元
+
+问题7：
+客户经理身份：从郭丽转账给郭丽
+回复：
+我暂时无法准确判断你的目标。请说明你是想查询信息、获取分析建议，还是执行具体业务操作。
+
+问题8：
+理财顾问提问：帮郭丽重做风评
+回复：
+我暂时无法准确判断你的目标。请说明你是想查询信息、获取分析建议，还是执行具体业务操作。
+
+问题9：
+理财顾问提问：更新郭丽的手机号为13812345679
+回复：
+工具执行异常: (pymysql.err.OperationalError) (1054, "Unknown column 'risk_level' in 'field list'")
+[SQL: SELECT risk_level, risk_score, total_assets, investment_experience, confidence_score FROM fin_customer_profile WHERE customer_id = %s]
+[parameters: (1,)]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+
+问题10：
+客户问：我要重新做风评；
+需求澄清助手 · 置信度 90%
+我暂时无法准确判断你的目标。请说明你是想查询信息、获取分析建议，还是执行具体业务操作。

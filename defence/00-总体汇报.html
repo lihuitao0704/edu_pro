@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>总体汇报｜金融多 Agent 智能财富管理平台</title>
+<link rel="stylesheet" href="reports.css">
+</head>
+<body>
+<main class="shell">
+<header class="top">
+<div class="brand">FINTELLIGENCE / 总体汇报</div>
+<nav class="nav">
+<a href="00-index.html">上一页</a>
+<a href="01-投顾Agent汇报.html">下一页</a>
+</nav>
+</header>
+<section class="hero">
+<span class="eyebrow">业务结论</span>
+<h1>把财富服务的“判断、建议、执行、守护”串成可控闭环</h1>
+<p class="lead">平台以统一对话入口承接多角色需求，Router 与编排层将请求分派给六类 Agent；规则、数据与知识底座保证业务过程可解释、可审计、可持续演进。</p>
+</section>
+<section class="requirement"><strong>核心结论：</strong>我将系统设计为“统一路由、专业分工、事件联动、全程留痕”的金融服务链路。Multi-Agent 的价值不在数量，而在每项能力都能被复用、被追溯、被约束。</section>
+<section class="grid two"><article class="card"><h3>统一路由</h3><p>Router Agent 只负责识别意图、校验角色和分发请求，不承载具体业务判断；这样既避免单个 Prompt 膨胀，也让客服、投顾、风控和操作能力各自保持清晰边界。</p></article><article class="card"><h3>亮点与边界</h3><p>LLM 用于理解、编排和解释，权限、规则、业务事实与审计留痕仍由系统控制。系统追求的不是“自动做更多”，而是在金融边界内稳定地做对。</p></article></section>
+<section class="grid">
+<article class="card">
+<div class="metric">6 类</div>
+<h3>专业 Agent</h3>
+<p>客服、画像、投顾、风控、数据分析、业务操作在统一口径下协作。</p>
+</article>
+<article class="card">
+<div class="metric">5 类</div>
+<h3>数据与知识基础设施</h3>
+<p>业务事实、会话缓存、关系推理、语义检索与文件知识各司其职。</p>
+</article>
+<article class="card">
+<div class="metric">1 条</div>
+<h3>统一服务链路</h3>
+<p>HTTP/SSE 请求经 API、路由与编排，交付结构化、可追溯的结果。</p>
+</article>
+</section>
+<h2>项目主流程</h2>
+<section class="flow-diagram">
+<div class="flow">
+<div class="node">
+<strong>Vue 3 前端</strong>
+<span>客户对话、顾问工作台、风控与运营页面</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>FastAPI</strong>
+<span>统一 API、身份边界、HTTP / SSE</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>Router + 编排</strong>
+<span>六类意图识别、风险预检、统一响应</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>业务 Agent</strong>
+<span>客服 / 画像 / 投顾 / 风控 / 分析 / 操作</span>
+</div>
+<div class="arrow">→</div>
+<div class="node">
+<strong>服务与底座</strong>
+<span>规则、工具、MySQL、Redis、Neo4j、Milvus、MinIO</span>
+</div>
+</div>
+<p class="flow-note">当前实现：`main.py` 提供入口；`unified_chat.py` 与 Router/ChatOrchestrator 统一承接自然语言服务。</p>
+</section>
+<h2>技术栈：为什么这样组合</h2>
+<section class="grid two">
+<article class="card">
+<h3>应用与智能层</h3>
+<ul>
+<li>Python + FastAPI：异步 API 与 SSE 流式反馈</li>
+<li>SQLAlchemy Async：业务数据访问</li>
+<li>LangChain + OpenAI 兼容 SDK：工具调用和模型编排</li>
+<li>Pydantic：输入输出契约与参数校验</li>
+</ul>
+</article>
+<article class="card">
+<h3>体验与数据层</h3>
+<ul>
+<li>Vue 3 + TypeScript + Vite：企业级交互界面</li>
+<li>Pinia、Element Plus、ECharts：状态、组件和看板</li>
+<li>MySQL / Redis：事实数据、缓存和会话</li>
+<li>Neo4j / Milvus / MinIO：关系、语义和文档知识</li>
+</ul>
+</article>
+</section>
+<h2>六类 Agent 的分工</h2>
+<section class="grid">
+<article class="card">
+<h3>客服 / 画像</h3>
+<p>回答与理解客户；沉淀画像、偏好与短期行为信号。</p>
+</article>
+<article class="card">
+<h3>投顾 / 风控</h3>
+<p>在适当性约束内生成建议；通过规则、预警和工单守住边界。</p>
+</article>
+<article class="card">
+<h3>操作 / 分析</h3>
+<p>把自然语言转为受控业务办理或只读数据洞察。</p>
+</article>
+</section>
+<p class="quote">总结：AI 负责理解与编排，规则负责确定性约束，数据底座负责事实与记忆——三者共同构成金融服务的可信闭环。</p>
+<h2>从需求到交付：我们完成了什么</h2>
+<section class="requirement"><strong>需求映射：</strong>需求文档要求以五阶段建设客服/RAG、画像/NL2SQL、图谱/投顾/业务操作、风控/记忆和系统集成。当前系统已将这些能力纳入 FastAPI + Vue 3 的统一平台，并通过 Router、ChatOrchestrator 和领域事件连接为可演示闭环。</section>
+<section class="milestone"><div><b>P1 · 服务入口</b>客服问答、知识库与统一 API</div><div><b>P2 · 认知能力</b>画像研判、适当性与 NL2SQL</div><div><b>P3 · 决策执行</b>GraphRAG 投顾与 NL2API 操作</div><div><b>P4 · 控制底座</b>预警、工单、五层记忆</div><div><b>P5 · 集成呈现</b>多 Agent 联动与角色化工作台</div></section>
+<section class="grid two"><article class="card"><h3>领导可见的业务价值</h3><p>把原本分散在客服、顾问、风控、运营和 IT 的工作，压缩为“一个入口、多个专业 Agent、统一留痕”的服务链路；既提升响应效率，也让关键决策有据可查。</p></article><article class="card"><h3>答辩可讲的工程亮点</h3><p>我们不是只展示大模型对话：RAG 给出处，GraphRAG 连接关系，NL2SQL/NL2API 将自然语言转为受控动作，规则引擎和事件总线把合规与协作嵌入主链路。</p></article></section>
+<footer class="footer">
+<span>当前实现 / 业务与技术兼顾</span>
+<a href="01-投顾Agent汇报.html">进入投顾 Agent →</a>
+</footer>
+</main>
+</body>
+</html>

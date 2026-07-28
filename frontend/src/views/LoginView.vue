@@ -3,10 +3,10 @@
     <section class="auth-hero">
       <div class="story-orbit orbit-one" />
       <div class="story-orbit orbit-two" />
-      <div class="login-logo">澄</div>
-      <span class="eyebrow light">FINANCIAL INTELLIGENCE, MADE CLEAR</span>
-      <h1>让每一次财富决策<br />都有据可循。</h1>
-      <p>多 Agent 协同分析客户、产品与风险，把复杂金融服务变成清晰可执行的下一步。</p>
+      <div class="login-logo">澄明</div>
+      <span class="eyebrow light">CLARITY IN MIND · WISDOM IN WEALTH</span>
+      <h1>澄明于心，<br />智投于未来。</h1>
+      <p>以 AI 多 Agent 协同为内核，融合客户洞察、风险研判与资产配置，让每一次财富决策都从容有据。</p>
       <div class="story-stats">
         <div><strong>5</strong><span>专业角色</span></div>
         <div><strong>20</strong><span>AML 规则</span></div>
