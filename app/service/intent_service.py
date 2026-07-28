@@ -490,6 +490,17 @@ class IntentService:
             return cls._build_route_decision(
                 message, RouteTask.CHAT, RouteDomain.GENERAL
             )
+        # 情绪表达类消息 → CHAT（让客服Agent处理情绪安抚，并触发画像联动）
+        emotion_keywords = (
+            # high_distress 级别
+            "亏惨", "睡不着", "崩溃", "活不下去", "绝望", "非常焦虑", "特别焦虑",
+            # negative 级别
+            "焦虑", "害怕", "担心", "亏损", "不安", "后悔", "生气", "投诉",
+            # 情绪表达句式
+            "我很生气", "我太生气了", "气死我了", "烦死了", "郁闷", "不开心",
+        )
+        if any(word in text for word in emotion_keywords):
+            return cls._build_route_decision(message, RouteTask.CHAT, RouteDomain.GENERAL)
         if any(word in text for word in ("转人工", "人工客服", "找人工", "真人客服")):
             return cls._build_route_decision(
                 message, RouteTask.TRANSFER_HUMAN, RouteDomain.GENERAL
@@ -636,8 +647,9 @@ class IntentService:
         # unrestricted employee data analysis or internal risk monitoring.
         if re.search(
             r"(?:我的|本人|我账户|我账号).{0,8}(?:持仓|仓位|余额|可用资金|"
-            r"交易记录|交易流水|流水|风险等级|风评|账户信息|资产)"
-            r"|(?:查|查询|查看|看看).{0,5}我的(?:持仓|余额|交易|流水|风险)",
+            r"交易记录|交易流水|流水|风险等级|风评|账户信息|资产|手机号|电话|联系方式|身份证|邮箱)"
+            r"|(?:查|查询|查看|看看).{0,5}我的(?:持仓|余额|交易|流水|风险|手机号|电话|联系方式|身份证|邮箱)"
+            r"|(?:查|查询|查看|看看).{0,5}(?:手机号|电话|联系方式|身份证|邮箱)",
             text,
         ) and not any(
             word in text for word in ("分析", "诊断", "评估", "建议", "行业分布", "集中度")

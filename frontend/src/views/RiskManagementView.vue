@@ -127,6 +127,11 @@
             <span>置信度</span>
             <strong :class="confidenceClass(selected.confidence)">{{ (selected.confidence * 100).toFixed(0) }}%</strong>
           </div>
+          <!-- 行为偏离 -->
+          <div v-if="selected.anomaly_score != null" class="confidence-bar">
+            <span>行为偏离分</span>
+            <strong :class="anomalyClass(selected.anomaly_score)">{{ (selected.anomaly_score * 100).toFixed(0) }}%</strong>
+          </div>
           <!-- 触发规则（含可解释性条件） -->
           <div class="rule-stack">
             <span v-for="rule in selected.trigger_rules" :key="rule.rule_id">
@@ -276,6 +281,12 @@ function confidenceClass(val: number): string {
   if (val >= 0.8) return 'conf-high'
   if (val < 0.5) return 'conf-low'
   return 'conf-mid'
+}
+
+function anomalyClass(val: number): string {
+  if (val >= 0.5) return 'conf-low'
+  if (val >= 0.2) return 'conf-mid'
+  return 'conf-high'
 }
 
 // ---- 数据加载 ----

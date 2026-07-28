@@ -81,13 +81,18 @@ _PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 # 确认消息正则（模块级常量，避免每次调用重复编译）
+# 支持中文/英文标点结尾（与 intent_service 的 confirm_cancel_rule 一致）
+# 可选地包含"风险揭示"/"已阅读并同意风险揭示"短语，用于大额申购的风险披露确认
 _CONFIRM_RE = re.compile(
     r"^(?:确认|确定|是的|好的|y|yes)"
+    r"(?P<disc>风险揭示|已阅读并同意风险揭示)?"
+    r"[！!。.]?"
     r"(?:\s*(?:[,，:：]?\s*)备注\s*[:：]\s*(?P<note>.+))?$",
     re.IGNORECASE,
 )
 _DISCLOSURE_CONFIRM_RE = re.compile(
     r"^(?:确认风险揭示|已阅读并同意风险揭示)"
+    r"[！!。.]?"
     r"(?:\s*(?:[,，:：]?\s*)备注\s*[:：]\s*(?P<note>.+))?$",
     re.IGNORECASE,
 )
@@ -150,31 +155,84 @@ llm_client = AsyncOpenAI(
 _CONFIRM_PREFIX = "chat:v2:confirm:"
 _CONFIRM_TTL = 120
 
+# ---------- 进程内 fallback（Redis 不可用时使用） ----------
+# 目的：演示/开发环境 Redis 未启动时，二次确认（申购→确认→执行）仍能走通。
+# 限制：仅保存在当前进程内存，重启丢失、多 worker 不共享；生产环境务必启用 Redis。
+import time as _time
+
+_FALLBACK_ENABLED: bool = False      # Redis 曾经失败过 → 后续直接走内存，避免重复 timeout
+_FALLBACK_STORE: dict[str, tuple[float, str]] = {}   # key -> (expire_ts, payload_json)
+
+
+def _fb_key(user_id: int, session_id: str) -> str:
+    return f"{user_id}:{session_id}"
+
+
+def _fb_prune() -> None:
+    """清理过期条目（惰性清理，每次 save/load 时跑一次）"""
+    if not _FALLBACK_STORE:
+        return
+    now = _time.time()
+    for k, (exp, _) in list(_FALLBACK_STORE.items()):
+        if exp < now:
+            del _FALLBACK_STORE[k]
+
+
+def is_using_fallback() -> bool:
+    """暴露给测试/调试：当前是否在使用内存 fallback。"""
+    return _FALLBACK_ENABLED
+
 
 async def _save_pending_confirm(session_id: str, action: str, arguments: dict,
-                                 user_id: int, user_role: str,
-                                 note_required: bool = False,
-                                 estimated_amount: float = 0,
-                                 risk_disclosure: dict | None = None) -> bool:
-    """将待确认操作存入 Redis。note_required: 大额(>=50万)是否强制要求备注。"""
+                                user_id: int, user_role: str,
+                                note_required: bool = False,
+                                estimated_amount: float = 0,
+                                risk_disclosure: dict | None = None) -> bool:
+    """将待确认操作存入 Redis；Redis 不可用时自动降级到进程内 dict。
+
+    note_required: 大额(>=50万)是否强制要求备注。
+    """
+    global _FALLBACK_ENABLED
+    summary = _build_confirmation_summary(action, arguments, estimated_amount=estimated_amount)
+    payload = json.dumps({"action": action, "arguments": arguments,
+                          "user_id": user_id, "user_role": user_role,
+                          "summary": summary, "note_required": note_required,
+                          "risk_disclosure": risk_disclosure,
+                          "session_id": session_id})
+
+    # Redis 曾经失败过 → 直接走内存
+    if _FALLBACK_ENABLED:
+        _fb_prune()
+        _FALLBACK_STORE[_fb_key(user_id, session_id)] = (_time.time() + _CONFIRM_TTL, payload)
+        return True
+
     try:
         r = await get_redis()
-        summary = _build_confirmation_summary(action, arguments, estimated_amount=estimated_amount)
-        await r.setex(
-            f"{_CONFIRM_PREFIX}{user_id}:{session_id}",
-            _CONFIRM_TTL,
-            json.dumps({"action": action, "arguments": arguments,
-                        "user_id": user_id, "user_role": user_role,
-                        "summary": summary, "note_required": note_required,
-                        "risk_disclosure": risk_disclosure,
-                        "session_id": session_id}),
-        )
+        await r.setex(f"{_CONFIRM_PREFIX}{user_id}:{session_id}", _CONFIRM_TTL, payload)
         return True
     except Exception:
-        return False
+        # Redis 不可用，降级到内存
+        _FALLBACK_ENABLED = True
+        _fb_prune()
+        _FALLBACK_STORE[_fb_key(user_id, session_id)] = (_time.time() + _CONFIRM_TTL, payload)
+        return True
 
 
 async def _load_pending_confirm(session_id: str, user_id: int = 0) -> Optional[dict]:
+    global _FALLBACK_ENABLED
+    # 内存 fallback 优先（一旦启用就保持一致，避免 Redis 恢复后出现状态分裂）
+    if _FALLBACK_ENABLED:
+        _fb_prune()
+        entry = _FALLBACK_STORE.get(_fb_key(user_id, session_id))
+        if entry:
+            try:
+                pending = json.loads(entry[1])
+                if int(pending.get("user_id") or 0) == int(user_id):
+                    return pending
+            except Exception:
+                pass
+        return None
+
     try:
         r = await get_redis()
         data = await r.get(f"{_CONFIRM_PREFIX}{user_id}:{session_id}")
@@ -183,16 +241,22 @@ async def _load_pending_confirm(session_id: str, user_id: int = 0) -> Optional[d
             if int(pending.get("user_id") or 0) == int(user_id):
                 return pending
     except Exception:
-        pass
+        _FALLBACK_ENABLED = True
     return None
 
 
 async def _delete_pending_confirm(session_id: str, user_id: int):
+    global _FALLBACK_ENABLED
+    key_fb = _fb_key(user_id, session_id)
+    if _FALLBACK_ENABLED:
+        _FALLBACK_STORE.pop(key_fb, None)
+        return
     try:
         r = await get_redis()
         await r.delete(f"{_CONFIRM_PREFIX}{user_id}:{session_id}")
     except Exception:
-        pass
+        _FALLBACK_ENABLED = True
+        _FALLBACK_STORE.pop(key_fb, None)
 
 
 def _build_confirmation_summary(action: str, arguments: dict,
@@ -1517,9 +1581,9 @@ async def operator_chat(
     msg_stripped = message.strip()
 
     # 0. 确认/取消
-    _disclosure_match = _DISCLOSURE_CONFIRM_RE.match(msg_stripped)
-    _note_match = _disclosure_match or _CONFIRM_RE.match(msg_stripped)
+    _note_match = _CONFIRM_RE.match(msg_stripped) or _DISCLOSURE_CONFIRM_RE.match(msg_stripped)
     _is_confirm = bool(_note_match)
+    _disclosure_match = _note_match and _note_match.groupdict().get("disc")
     _parsed_note = _note_match.group("note").strip() if _note_match and _note_match.group("note") else ""
 
     if _is_confirm:

@@ -38,6 +38,8 @@ class AdvisorNarrativeService:
     @classmethod
     def render_customer(cls, result: dict) -> str:
         """Render only customer-appropriate facts from structured recommendation data."""
+        status = result.get("status") or ""
+        notice = result.get("notice") or ""
         profile = result.get("customer_profile") or {}
         assessment = profile.get("assessment") if isinstance(profile, dict) else {}
         risk_level = (
@@ -49,7 +51,17 @@ class AdvisorNarrativeService:
         alert_level = str(alerts.get("alert_level") or "").lower()
         recommendations = list(result.get("recommendations") or [])[:3]
 
-        lines = [f"已结合您当前的 **{risk_level}** 风险承受能力完成产品筛选。"]
+        # 无风评时：展示降级推荐 + 风评问卷入口
+        if status == "profile_not_found" or (notice and "风评" in notice):
+            lines = [
+                "由于您尚未完成风险测评，系统已按最低风险等级（C1保守型）为您匹配产品。"
+            ]
+            lines.append(
+                "\n> ⚠️ 您的风险测评问卷尚未填写，建议尽快完成测评以便获得更精准的产品推荐。"
+                "风评问卷入口：点击「填写风评问卷」按钮。"
+            )
+        else:
+            lines = [f"已结合您当前的 **{risk_level}** 风险承受能力完成产品筛选。"]
         if alert_level in {"high", "medium"}:
             lines.append(
                 "\n> 您的账户有一项风险事项待确认，本次仅展示 R1-R2 产品。"

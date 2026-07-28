@@ -12,15 +12,15 @@ from typing import Any, Optional
 
 def mask_id_card(s: Optional[str]) -> str:
     """
-    身份证号脱敏: 保留前 3 位和后 4 位
-    例: 110101199001011234 → 110***1234
+    身份证号脱敏: 保留前 3 位和后 4 位，中间用 * 补齐到原长度
+    例: 110101199001011234 → 110**********1234 (18位)
     """
     if not s:
         return ""
     s = str(s)
     if len(s) < 7:
         return s
-    return s[:3] + "***" + s[-4:]
+    return s[:3] + "*" * (len(s) - 7) + s[-4:]
 
 
 def mask_phone(s: Optional[str]) -> str:
@@ -38,9 +38,10 @@ def mask_phone(s: Optional[str]) -> str:
 
 def mask_email(s: Optional[str]) -> str:
     """
-    邮箱脱敏: 短前缀保留首位，较长前缀保留前三位，域名保持可辨认。
+    邮箱脱敏: 保留首字符和完整域名，中间用 * 补齐到原长度
     例: abc@example.com → a**@example.com
-        zhangsan@example.com → zha*****@example.com
+        zhangsan@example.com → z*******@example.com
+        user@example.com → u***@example.com
     """
     if not s:
         return ""
@@ -50,8 +51,8 @@ def mask_email(s: Optional[str]) -> str:
     local, domain = value.rsplit("@", 1)
     if not local or not domain:
         return value
-    visible = 1 if len(local) <= 3 else 3
-    masked_local = local[:visible] + "*" * max(2, len(local) - visible)
+    # 保留首字符，其余用 * 替换，保持总长度不变
+    masked_local = local[0] + "*" * (len(local) - 1)
     return f"{masked_local}@{domain}"
 
 

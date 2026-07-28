@@ -157,8 +157,8 @@ class ProfileService:
     async def assess(self, customer_id: int, trigger_type: str = "manual") -> ProfileResult:
         """执行完整画像研判打分
 
-        当画像记录不存在时，基于 sys_user + 风评问卷 + 持仓/交易等数据动态计算，
-        不会因为 fin_customer_profile 缺失而抛出 ProfileNotFound。
+        当画像记录不存在时，基于 sys_user + 风评问卷 + 持仓/交易等数据动态计算。
+        无风评问卷时也会基于有限数据给出保守评估，但前端应提醒用户完成问卷。
         """
         # 1. 收集客户数据（不依赖 fin_customer_profile 的存在）
         customer_data = await self._collect_customer_data(customer_id)

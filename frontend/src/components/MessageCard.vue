@@ -7,6 +7,11 @@
       </div>
       <p v-if="message.role === 'user'">{{ message.content }}</p>
       <div v-else class="assistant-markdown" v-html="assistantHtml" />
+      <!-- 风评问卷入口：回复中包含 profile_not_found 或 notice 文案时渲染 -->
+      <div v-if="showAssessmentCta" class="assessment-inline-cta">
+        <span>您的风评问卷不存在，请尽快填写风评，以便获得更精准的推荐</span>
+        <button @click="emit('open-assessment')">填写风评问卷</button>
+      </div>
       <!-- 数据查询结果表格 -->
       <div v-if="queryResult.length" class="data-table-preview">
         <div class="dt-preview-header">
@@ -78,6 +83,16 @@ const agentNames: Record<string, string> = {
 const agentName = computed(() => agentNames[props.message.response?.agent || ''] || '金融智能引擎')
 const confidence = computed(() => Math.round((props.message.response?.confidence || 0) * 100))
 const assistantHtml = computed(() => renderAssistantMarkdown(props.message.content))
+
+// 风评问卷入口：回复中包含 profile_not_found 或"风评问卷入口"文案时显示
+const showAssessmentCta = computed(() => {
+  const content = props.message.content || ''
+  const status = (props.message.response as any)?.status
+  const notice = (props.message.response as any)?.notice || ''
+  return status === 'profile_not_found'
+    || content.includes('风评问卷入口')
+    || notice.includes('风评问卷')
+})
 
 // 数据查询结果（从 normalizeStreamResponse 透传的 _queryResult / _sql）
 const showTable = ref(false)

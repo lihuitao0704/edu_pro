@@ -83,6 +83,220 @@ class CustomerServiceAgent:
         self.llm = get_llm_tool()
         self.memory_recall = get_memory_recall_service()
 
+    async def handle_stream(
+        self,
+        session_id: str,
+        user_id: int,
+        message: str,
+        actor_id: int | None = None,
+        route_task: str | None = None,
+        route_domain: str | None = None,
+    ):
+        """
+        处理用户消息的主流程（流式版本）
+
+        Args:
+            session_id: 会话 ID
+            user_id: 用户 ID
+            message: 用户消息
+        Yields:
+            dict: 包含 type 和 content 的事件字典
+        """
+        logger.info(f"客服Agent收到消息（流式）| session={session_id} | user={user_id} | msg={message[:50]}...")
+
+        # 0. 用户输入安全过滤
+        is_safe, block_reason = await self.safety.filter_user_input(message)
+        if not is_safe:
+            yield {
+                "type": "meta",
+                "agent": "customer_service",
+                "session_id": session_id,
+                "intent": "blocked",
+            }
+            yield {
+                "type": "delta",
+                "content": block_reason or "您的输入包含不当内容，请重新描述。",
+            }
+            yield {
+                "type": "done",
+                "reply": block_reason or "您的输入包含不当内容，请重新描述。",
+                "session_id": session_id,
+            }
+            return
+
+        # 1. 加载短期记忆
+        memory_owner_id = int(actor_id if actor_id is not None else user_id)
+        history = await self.memory.get_history(session_id, memory_owner_id)
+
+        # 1b. 跨 session 记忆召回
+        user_profile = await self.memory_recall.build_user_profile_summary(self.db, user_id)
+        historical_preferences = await self.memory_recall.recall_historical_preferences(self.db, user_id)
+        historical_conversations = await self.memory_recall.recall_recent_conversations(self.db, user_id)
+
+        # 2. 意图识别
+        routed_customer_intents = {
+            ("CHAT", None): "chitchat",
+            ("TRANSFER_HUMAN", None): "transfer_human",
+            ("FAQ", "POLICY"): "policy_interpretation",
+            ("FAQ", "TRANSACTION"): "faq",
+            ("FAQ", None): "faq",
+            ("EXECUTE", "TRANSACTION"): "transaction_confirm",
+        }
+        intent = routed_customer_intents.get((route_task, route_domain))
+        if intent is None:
+            intent = routed_customer_intents.get((route_task, None))
+        if intent is not None:
+            intent_confidence = 0.95
+            logger.info(
+                "复用顶层客服路由 | task=%s | domain=%s | sub_intent=%s",
+                route_task, route_domain, intent,
+            )
+        else:
+            intent, intent_confidence = await self.intent_service.classify(message, history)
+
+        # 2b. C4 风控联动
+        risk_context = {}
+        is_sensitive = self._is_sensitive_query(message)
+        if is_sensitive:
+            risk_context = await self._query_risk_context(user_id)
+
+        # 发送 meta 事件
+        yield {
+            "type": "meta",
+            "agent": "customer_service",
+            "session_id": session_id,
+            "intent": intent,
+        }
+
+        # 3. 根据意图执行对应逻辑
+        if intent == "transfer_human":
+            reply = "正在为您转接人工客服，请稍候..."
+            if is_sensitive and risk_context.get("risk_level"):
+                risk_reply = self._get_risk_aware_reply(risk_context)
+                if risk_reply:
+                    reply = risk_reply + "\n\n" + reply
+            yield {"type": "delta", "content": reply}
+
+        elif intent == "transaction_confirm":
+            risk_level = risk_context.get("risk_level", "low")
+            if risk_level == "high":
+                reply = (
+                    "⚠️ **风控提示**：您的账户当前处于高风险关注状态，"
+                    "大额交易暂时无法通过智能助手提交。\n\n"
+                    "请先在业务页面查看风险提示并申请人工复核；"
+                    "审核完成后再办理交易。如有疑问，请拨打客服热线。"
+                )
+            elif risk_level == "medium":
+                reply = (
+                    "ℹ️ **账户提示**：您的账户近期有待关注事项。\n\n"
+                    "如办理大额交易，可能需要补充确认或人工复核。"
+                    "请确认您要执行的操作：\n"
+                    "- 转账金额、收款方信息\n"
+                    "- 申购/赎回的产品和金额\n\n"
+                    "如需继续，请提供具体的操作详情（如产品名、金额等），"
+                    "我将协助您完成操作。"
+                )
+            else:
+                reply = (
+                    "请确认您要执行的操作详情：\n"
+                    "- 转账：请提供收款方姓名和金额\n"
+                    "- 申购：请提供产品名称和金额\n"
+                    "- 赎回：请提供产品名称和份额\n\n"
+                    "请补充具体信息，我将协助您完成操作。"
+                )
+            yield {"type": "delta", "content": reply}
+
+        elif intent == "chitchat":
+            reply = await self._handle_chitchat(message, history)
+            if is_sensitive and risk_context.get("risk_level"):
+                risk_reply = self._get_risk_aware_reply(risk_context)
+                if risk_reply:
+                    reply = risk_reply + "\n\n---\n\n" + reply
+            yield {"type": "delta", "content": reply}
+
+        else:
+            # RAG 检索
+            knowledge_type = self.intent_service.get_knowledge_type(intent)
+            if not knowledge_type:
+                knowledge_type = "product_knowledge"
+
+            rag_results = await self.rag_service.retrieve(
+                query=message,
+                knowledge_type=knowledge_type,
+            )
+
+            # 置信度检测
+            check = await self.safety.check_confidence(rag_results, intent_confidence)
+            if check["should_fallback"]:
+                fallback_reply = self._keyword_fallback(message, intent)
+                if fallback_reply:
+                    reply = fallback_reply
+                else:
+                    reply = check["message"]
+                if is_sensitive and risk_context.get("risk_level"):
+                    risk_reply = self._get_risk_aware_reply(risk_context)
+                    if risk_reply:
+                        reply = risk_reply + "\n\n---\n\n" + reply
+                yield {"type": "delta", "content": reply}
+            else:
+                # 流式生成回答
+                full_reply = ""
+                async for chunk in self._generate_with_context_stream(
+                    message, rag_results, history,
+                    user_profile=user_profile,
+                    historical_preferences=historical_preferences,
+                    historical_conversations=historical_conversations,
+                ):
+                    full_reply += chunk
+                    # 按字符流式输出，每个字符间隔 20ms
+                    for char in chunk:
+                        yield {"type": "delta", "content": char}
+                        import asyncio
+                        await asyncio.sleep(0.02)
+
+                # 解析 JSON 并提取 reply
+                try:
+                    json_result = self._extract_json_from_text(full_reply)
+                    if json_result:
+                        reply = json_result.get("reply", full_reply)
+                    else:
+                        reply = full_reply
+                except Exception:
+                    reply = full_reply
+
+                # C4 风控联动
+                if is_sensitive and risk_context.get("risk_level"):
+                    risk_reply = self._get_risk_aware_reply(risk_context)
+                    if risk_reply:
+                        reply = risk_reply + "\n\n---\n\n" + reply
+
+                # 安全审核
+                safety_result = await self.safety.check_content(reply)
+                if not safety_result.passed:
+                    if is_sensitive and risk_context.get("risk_level"):
+                        risk_reply = self._get_risk_aware_reply(risk_context)
+                        if risk_reply:
+                            reply = risk_reply + "\n\n该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
+                        else:
+                            reply = "抱歉，该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
+                    else:
+                        reply = "抱歉，该问题需要人工客服进一步确认，请通过平台人工客服入口提交咨询。"
+
+                # 强制风险提示
+                if intent in ("product_inquiry", "faq"):
+                    reply = self._append_risk_disclaimer(reply, intent)
+
+        # 4. 更新短期记忆
+        await self.memory.save_message(session_id, "user", message, memory_owner_id)
+        await self.memory.save_message(session_id, "assistant", reply, memory_owner_id)
+
+        # 5. 发送 done 事件
+        yield {
+            "type": "done",
+            "reply": reply,
+            "session_id": session_id,
+        }
+
     async def handle(
         self,
         session_id: str,
@@ -131,6 +345,7 @@ class CustomerServiceAgent:
             ("FAQ", "POLICY"): "policy_interpretation",
             ("FAQ", "TRANSACTION"): "faq",
             ("FAQ", None): "faq",  # 默认 FAQ 意图，而不是 product_inquiry
+            ("EXECUTE", "TRANSACTION"): "transaction_confirm",  # 风控预检强制路由的交易确认
         }
         intent = routed_customer_intents.get((route_task, route_domain))
         if intent is None:
@@ -183,6 +398,37 @@ class CustomerServiceAgent:
                 risk_reply = self._get_risk_aware_reply(risk_context)
                 if risk_reply:
                     reply = risk_reply + "\n\n" + reply
+            sources = []
+
+        elif intent == "transaction_confirm":
+            # 风控预检强制路由的交易确认场景
+            # 根据风险等级给出不同响应
+            risk_level = risk_context.get("risk_level", "low")
+            if risk_level == "high":
+                reply = (
+                    "⚠️ **风控提示**：您的账户当前处于高风险关注状态，"
+                    "大额交易暂时无法通过智能助手提交。\n\n"
+                    "请先在业务页面查看风险提示并申请人工复核；"
+                    "审核完成后再办理交易。如有疑问，请拨打客服热线。"
+                )
+            elif risk_level == "medium":
+                reply = (
+                    "ℹ️ **账户提示**：您的账户近期有待关注事项。\n\n"
+                    "如办理大额交易，可能需要补充确认或人工复核。"
+                    "请确认您要执行的操作：\n"
+                    "- 转账金额、收款方信息\n"
+                    "- 申购/赎回的产品和金额\n\n"
+                    "如需继续，请提供具体的操作详情（如产品名、金额等），"
+                    "我将协助您完成操作。"
+                )
+            else:
+                reply = (
+                    "请确认您要执行的操作详情：\n"
+                    "- 转账：请提供收款方姓名和金额\n"
+                    "- 申购：请提供产品名称和金额\n"
+                    "- 赎回：请提供产品名称和份额\n\n"
+                    "请补充具体信息，我将协助您完成操作。"
+                )
             sources = []
 
         elif intent == "chitchat":
@@ -370,13 +616,24 @@ class CustomerServiceAgent:
         """C4 联动：检测用户消息是否涉及敏感金融操作"""
         import re
         sensitive_patterns = [
+            # 大额转账/汇款
             r'大额.*(?:转账|转出|汇款)',
             r'(?:转账|转出|汇款).*大额',
-            r'(?:大额|大量).*(?:赎回|取出|提现)',
-            r'(?:赎回|取出|提现).*(?:大额|大量)',
-            r'(?:大额|大量).*(?:申购|买入|购买)',
-            r'想.*(?:转账|转出|汇款)',
-            r'怎么.*(?:转账|汇款|大额)',
+            r'(?:转|汇).*(?:\d+\s*万|\d{4,})',  # 转/汇 + 金额
+
+            # 大额赎回/取出/提现
+            r'(?:大额|大量|全部).*(?:赎回|取出|提现|提款)',
+            r'(?:赎回|取出|提现|提款).*(?:大额|大量|全部)',
+            r'(?:赎回|提现).*(?:\d+\s*万|\d{4,})',  # 赎回/提现 + 金额
+
+            # 大额申购/买入
+            r'(?:大额|大量).*(?:申购|买入|购买|建仓)',
+            r'(?:申购|买入|购买|建仓).*(?:大额|大量)',
+            r'(?:申购|买入).*(?:\d+\s*万|\d{4,})',  # 申购/买入 + 金额
+
+            # 直接表达转账/赎回意图（带金额）
+            r'(?:我要|我想|帮我|给我).*(?:转|汇|赎回|提现|申购|买入).*(?:\d+)',
+            r'(?:\d+\s*(?:万|元)).*(?:转|汇|赎回|提现|申购|买入)',
         ]
         for pattern in sensitive_patterns:
             if re.search(pattern, message):
@@ -476,6 +733,58 @@ class CustomerServiceAgent:
                 "confidence": 0.0
             }
             return json.dumps(error_json, ensure_ascii=False)
+
+    async def _generate_with_context_stream(
+        self,
+        message: str,
+        rag_results: list[dict],
+        history: list[dict],
+        user_profile: str = "",
+        historical_preferences: str = "",
+        historical_conversations: str = "",
+    ):
+        """基于 RAG 上下文生成回答（流式版本）"""
+        import json
+        import re
+
+        # 加载 System Prompt（使用缓存）
+        system_prompt = _load_customer_prompt()
+
+        # 拼接参考资料
+        context_docs = []
+        for i, r in enumerate(rag_results):
+            content = r.get("content", "")
+            source_info = r.get("source_info", {})
+            title = source_info.get("title", "未知")
+            context_docs.append(f"[资料{i+1}] 来源：《{title}》\n{content}")
+        context_text = "\n\n".join(context_docs)
+
+        # 拼接对话历史
+        history_text = ""
+        for msg in history[-4:]:
+            role = "客户" if msg["role"] == "user" else "客服"
+            history_text += f"{role}：{msg['content']}\n"
+
+        # 组装完整 Prompt
+        full_prompt = system_prompt.replace("{context_documents}", context_text)
+        full_prompt = full_prompt.replace("{chat_history}", history_text)
+        full_prompt = full_prompt.replace("{user_question}", message)
+        full_prompt = full_prompt.replace("{user_profile}", user_profile or "暂无客户画像信息")
+        full_prompt = full_prompt.replace("{historical_preferences}", historical_preferences or "暂无历史偏好记录")
+        full_prompt = full_prompt.replace("{historical_conversations}", historical_conversations or "")
+
+        messages = [{"role": "user", "content": full_prompt}]
+
+        try:
+            # 使用流式 LLM 调用
+            full_reply = ""
+            async for chunk in self.llm.chat_stream(messages=messages, temperature=0.3, max_tokens=1024):
+                full_reply += chunk
+                yield chunk
+
+        except Exception as e:
+            logger.error(f"LLM 流式生成失败: {e}")
+            yield "抱歉，系统繁忙，请稍后重试。"
 
     def _extract_json_from_text(self, text: str) -> Optional[dict]:
         """从 LLM 返回的文本中提取 JSON 对象（含推理文本剥离）"""

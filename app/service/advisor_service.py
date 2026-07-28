@@ -143,9 +143,17 @@ class AdvisorService:
 
         if not profile_not_found:
             customer_risk = risk_level or (
-                profile.get("risk_level") if isinstance(profile, dict)
-                else getattr(profile, "risk_level", None)
-            ) or "C2"
+                profile.risk_level_code if hasattr(profile, "risk_level_code") else None
+            ) or (
+                profile.get("risk_level_code") if isinstance(profile, dict) else None
+            )
+            # 空画像（注册时创建但尚未填写风评）→ 走 fallback 回退
+            if not customer_risk:
+                if fallback_risk:
+                    profile_not_found = True
+                    customer_risk = fallback_risk
+                else:
+                    customer_risk = "C2"
         allowed_levels = SUITABILITY_MATRIX.get(customer_risk, ["R1", "R2"])
 
         # 只从当前在售产品中筛选，不再使用演示产品回退。
