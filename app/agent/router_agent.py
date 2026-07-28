@@ -682,21 +682,12 @@ class RouterAgent:
         if user_role != "客户":
             return None
 
-        # Only intercept a concrete transaction request. Questions and vague
-        # intent such as "我想申购" must first receive guidance, not a hard block.
+        # 检测敏感操作（放宽条件：只要有敏感词即可，不强制要求金额+执行标记）
         has_sensitive = any(kw in message for kw in self._SENSITIVE_PATTERNS)
-        has_amount = bool(
-            __import__("re").search(r"\d+(?:\.\d+)?\s*(?:万|万元|元|份)", message)
-        )
-        has_execute_marker = any(
-            marker in message
-            for marker in ("确认", "立即", "马上", "提交", "执行", "现在就")
-        )
-        has_sensitive = has_sensitive and has_amount and has_execute_marker
         if not has_sensitive:
             return None
 
-        # 2. 查询客户 risk_flag
+        # 查询客户 risk_flag
         try:
             from sqlalchemy import text
             row = await self.db.execute(
@@ -712,8 +703,11 @@ class RouterAgent:
             risk_flag = profile_row[0]
             # 只有 warning / high 才拦截
             if risk_flag in ("warning", "high"):
+                logger.info(
+                    f"C4风控预检命中 | user={user_id} | risk_flag={risk_flag} | msg={message[:50]}"
+                )
                 return {"risk_flag": risk_flag}
         except Exception as e:
-            logger.debug(f"风控预检查询失败(非阻断): {e}")
+            logger.warning(f"风控预检查询失败(非阻断): {e}")
 
         return None
