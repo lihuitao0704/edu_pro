@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import text
 
 from app.engine.confidence import ConfidenceCalculator
+from app.engine.anomaly_detector import AnomalyDetector
 from app.service.risk_monitor_service import RiskMonitorService
 
 
@@ -15,6 +16,7 @@ class TransactionFlowService:
     ):
         self.monitor_engine = monitor or RiskMonitorService()
         self.confidence = confidence or ConfidenceCalculator()
+        self.anomaly_detector = AnomalyDetector()
 
     @staticmethod
     def derive_context(event: dict, customer: dict, stats: dict) -> dict:
@@ -66,8 +68,10 @@ class TransactionFlowService:
     async def monitor(self, db, event: dict) -> dict:
         payload = await self.enrich_context(db, event)
         triggered = self.monitor_engine.evaluate_all(payload)
+        # 行为偏离检测（不管有没有触发规则都跑）
+        anomaly_score = self.anomaly_detector.score(payload, payload, payload)
         if not triggered:
-            return {"alert": None, "triggered_count": 0}
+            return {"alert": None, "triggered_count": 0, "anomaly_score": anomaly_score}
 
         _, history = await self.monitor_engine.get_alerts(
             db, customer_id=payload["customer_id"]
@@ -77,7 +81,7 @@ class TransactionFlowService:
             source="ai_extract", evidence_count=len(triggered)
         )
         alert = self.monitor_engine.build_alert(
-            payload, triggered, level, confidence
+            payload, triggered, level, confidence, anomaly_score
         )
         alert_id = await self.monitor_engine.save_alert(db, alert)
         alert["alert_id"] = alert_id
@@ -92,15 +96,16 @@ class TransactionFlowService:
         """
         payload = await self.enrich_context(db, event)
         triggered = self.monitor_engine.evaluate_all(payload)
+        anomaly_score = self.anomaly_detector.score(payload, payload, payload)
         if not triggered:
-            return {"decision": "allow", "alert": None, "triggered_count": 0}
+            return {"decision": "allow", "alert": None, "triggered_count": 0, "anomaly_score": anomaly_score}
 
         _, history = await self.monitor_engine.get_alerts(db, customer_id=payload["customer_id"])
         level = self.monitor_engine.grade(triggered, history, payload)
         confidence = self.confidence.calc_single(
             source="ai_extract", evidence_count=len(triggered)
         )
-        alert = self.monitor_engine.build_alert(payload, triggered, level, confidence)
+        alert = self.monitor_engine.build_alert(payload, triggered, level, confidence, anomaly_score)
         alert_id = await self.monitor_engine.save_alert(db, alert)
         alert["alert_id"] = alert_id
         decision = "block" if level == "high" else "review" if level == "medium" else "allow"
